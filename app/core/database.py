@@ -45,3 +45,5 @@ submission_review_collection = db["submission_reviews"]
 judge_score_collection = db["judge_scores"]
 audience_vote_collection = db["audience_votes"]
 leaderboard_result_collection = db["leaderboard_results"]
+
+judge_assignment_collection = db['judge_assignments']

@@ -146,3 +146,76 @@ async def recalculate_rankings(comp_id: str, admin: dict = Depends(get_current_a
             
     await leaderboard_result_collection.insert_many(docs)
     return {"message": "Rankings recalculated successfully", "total_ranked": len(docs)}
+
+@router.post("/{comp_id}/judging/lock")
+async def lock_scores(comp_id: str, admin: dict = Depends(get_current_admin)):
+    """Locks all scores for a competition so judges cannot casually edit them."""
+    res = await judge_score_collection.update_many(
+        {"competition_id": comp_id, "is_locked": {"$ne": True}},
+        {"$set": {
+            "is_locked": True, 
+            "locked_by": admin.get("email"),
+            "locked_at": datetime.now(timezone.utc)
+        }}
+    )
+    return {"message": "Scores locked successfully.", "locked_count": res.modified_count}
+
+@router.post("/{comp_id}/results/approve")
+async def approve_results(comp_id: str, admin: dict = Depends(get_current_admin)):
+    """
+    Recalculates the leaderboard ONLY from LOCKED scores.
+    This acts as the official provisional ranking.
+    """
+    comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+        
+    pipeline = [
+        {"$match": {"competition_id": comp_id, "is_locked": True}},
+        {"$group": {
+            "_id": "$submission_id",
+            "total_judge_score": {"$sum": "$total_score"},
+            "judge_count": {"$sum": 1}
+        }}
+    ]
+    
+    score_agg = await judge_score_collection.aggregate(pipeline).to_list(length=1000)
+    
+    await leaderboard_result_collection.delete_many({"competition_id": comp_id})
+    
+    docs = []
+    for s in score_agg:
+        docs.append({
+            "competition_id": comp_id,
+            "submission_id": s["_id"],
+            "total_score": s["total_judge_score"],
+            "rank": 0,
+            "status": "APPROVED"
+        })
+        
+    if not docs:
+        return {"message": "No locked scores available to calculate."}
+        
+    docs.sort(key=lambda x: x["total_score"], reverse=True)
+    current_rank = 1
+    for i, doc in enumerate(docs):
+        if i > 0 and docs[i]["total_score"] == docs[i-1]["total_score"]:
+            doc["rank"] = docs[i-1]["rank"]
+        else:
+            doc["rank"] = current_rank
+        current_rank += 1
+            
+    await leaderboard_result_collection.insert_many(docs)
+    return {"message": "Results approved and Leaderboard generated successfully.", "total_ranked": len(docs)}
+
+@router.post("/{comp_id}/results/publish")
+async def publish_results(comp_id: str, admin: dict = Depends(get_current_admin)):
+    """Publishes the approved leaderboard to the public."""
+    # In a real app, this might just flip a boolean on the Competition.
+    res = await competition_collection.update_one(
+        {"_id": ObjectId(comp_id)},
+        {"$set": {"results_published": True, "results_published_at": datetime.now(timezone.utc)}}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Competition not found")
+    return {"message": "Results published successfully."}

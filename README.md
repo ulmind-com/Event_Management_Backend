@@ -124,3 +124,9 @@ Swagger UI will be available at: `http://127.0.0.1:8000/docs`
 - **Dynamic File Submissions:** Fully dynamic schema for images, videos, audio, external links, PDFs configured per competition.
 - **Judging & Leaderboards:** Judges can submit weighted criteria scores. Admins can hit a single API to instantly recalculate competition rankings, break ties, and push results live.
 - **Secure File Handling & Cleanup:** Deleting a competition cascades to safely remove all associated submissions and media references to prevent orphaned data.
+
+## ⚖️ Judge Management & Private Live Judging
+- **Judge Setup Workflow:** Secure cryptographic invitation tokens for judges to self-setup passwords.
+- **Strict Competition Authorization:** Judges are explicitly mapped to specific competitions. A judge cannot access or score submissions for unassigned competitions.
+- **Live Scoring & Locking:** Judges score assigned criteria. Admins can lock the scores to freeze edits.
+- **Automated Tie-breakers & Approval:** Administrator approves the locked scores to publish the official leaderboard securely.

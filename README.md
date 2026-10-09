@@ -111,3 +111,10 @@ Swagger UI will be available at: `http://127.0.0.1:8000/docs`
 
 ---
 *Built with ❤️ for Eventora.*
+
+## 🎟️ Event Booking & Payment System
+- **Oversell Protection:** MongoDB atomic operations ensure tickets are never oversold.
+- **Free vs Paid Flow:** Free bookings are instantly confirmed. Paid bookings remain pending until the mock payment webhook verifies them.
+- **Payment Abstraction:** A ready-to-integrate `PaymentService` is prepared for Razorpay/Stripe.
+- **Secure QR Ticketing:** Cryptographically signed tokens prevent forged check-ins.
+- **Admin Verification:** Dedicated endpoints for event staff to scan QR codes and check-in attendees securely.

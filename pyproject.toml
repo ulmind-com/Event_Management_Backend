@@ -17,6 +17,7 @@ dependencies = [
     "pyjwt>=2.15.1",
     "python-dotenv>=1.2.4",
     "python-multipart>=0.0.32",
+    "qrcode[pil]>=8.2",
     "resend>=2.49.1",
     "slowapi>=0.1.10",
     "uvicorn>=0.54.0",

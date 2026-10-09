@@ -34,3 +34,5 @@ contest_promotion_collection = db["contest_promotions"]
 app_promotion_collection = db["app_promotions"]
 important_link_collection = db["important_links"]
 audit_log_collection = db["audit_logs"]
+
+issued_ticket_collection = db['issued_tickets']

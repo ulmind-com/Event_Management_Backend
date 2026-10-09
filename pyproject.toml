@@ -1,0 +1,30 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "sagnik mondal", email = "sagnikmondal011@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "bcrypt>=5.0.0",
+    "cloudinary>=1.46.3",
+    "fastapi>=0.143.0",
+    "motor>=3.7.1",
+    "passlib>=1.7.4",
+    "pydantic[email]>=2.14.0",
+    "pyjwt>=2.15.1",
+    "python-dotenv>=1.2.4",
+    "python-multipart>=0.0.32",
+    "resend>=2.49.1",
+    "slowapi>=0.1.10",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+backend = "backend:main"
+
+[build-system]
+requires = ["uv_build>=0.12.24,<0.13.0"]
+build-backend = "uv_build"

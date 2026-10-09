@@ -1,13 +1,20 @@
-# Python-generated files
+# Python
 __pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+*.py[cod]
 
 # Virtual environments
-.venv
+.venv/
+**/.venv/
 
-# Secrets
+# Environment secrets
 .env
+.env.*
+!.env.example
+**/.env
+
+# Python cache
+.pytest_cache/
+.ruff_cache/
+
+# IDE
+.vscode/

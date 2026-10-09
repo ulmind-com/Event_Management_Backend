@@ -1,5 +1,9 @@
 ﻿from fastapi import APIRouter
-from app.api.routes import auth, profile, activities, registrations, bookings, merchandise, rewards, admin_auth, admin_cms, public, payments, admin_checkin
+from app.api.routes import (
+    auth, profile, activities, registrations, bookings, merchandise, rewards,
+    admin_auth, admin_cms, admin_checkin, admin_competitions, public, payments,
+    advanced_competitions, judge_competitions
+)
 
 api_router = APIRouter()
 
@@ -12,11 +16,14 @@ api_router.include_router(bookings.router, prefix="/bookings", tags=["bookings"]
 api_router.include_router(payments.router, prefix="/payments", tags=["payments"])
 api_router.include_router(merchandise.router, prefix="/merchandise", tags=["merchandise"])
 api_router.include_router(rewards.router, prefix="/rewards", tags=["rewards"])
+api_router.include_router(advanced_competitions.router, tags=["advanced-competitions"])
+api_router.include_router(judge_competitions.router, prefix="/judge", tags=["judge-competitions"])
 
 # ── Admin APIs ──
 api_router.include_router(admin_auth.router, prefix="/admin", tags=["admin-auth"])
 api_router.include_router(admin_cms.router, prefix="/admin", tags=["admin-cms"])
 api_router.include_router(admin_checkin.router, prefix="/admin/tickets", tags=["admin-checkin"])
+api_router.include_router(admin_competitions.router, prefix="/admin/advanced-competitions", tags=["admin-advanced-competitions"])
 
 # ── Public Homepage APIs ──
 api_router.include_router(public.router, prefix="/v1", tags=["public"])

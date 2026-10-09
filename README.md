@@ -118,3 +118,9 @@ Swagger UI will be available at: `http://127.0.0.1:8000/docs`
 - **Payment Abstraction:** A ready-to-integrate `PaymentService` is prepared for Razorpay/Stripe.
 - **Secure QR Ticketing:** Cryptographically signed tokens prevent forged check-ins.
 - **Admin Verification:** Dedicated endpoints for event staff to scan QR codes and check-in attendees securely.
+
+## 🏆 Advanced Contests & Competitions
+- **Configurable Age Groups & Eligibility:** Automatic validation based on verified profile DOB without trusting client input.
+- **Dynamic File Submissions:** Fully dynamic schema for images, videos, audio, external links, PDFs configured per competition.
+- **Judging & Leaderboards:** Judges can submit weighted criteria scores. Admins can hit a single API to instantly recalculate competition rankings, break ties, and push results live.
+- **Secure File Handling & Cleanup:** Deleting a competition cascades to safely remove all associated submissions and media references to prevent orphaned data.

@@ -36,3 +36,12 @@ important_link_collection = db["important_links"]
 audit_log_collection = db["audit_logs"]
 
 issued_ticket_collection = db['issued_tickets']
+
+# Advanced Competition System Collections
+competition_rules_collection = db["competition_rules"]
+competition_registration_collection = db["competition_registrations"]
+competition_submission_collection = db["competition_submissions"]
+submission_review_collection = db["submission_reviews"]
+judge_score_collection = db["judge_scores"]
+audience_vote_collection = db["audience_votes"]
+leaderboard_result_collection = db["leaderboard_results"]

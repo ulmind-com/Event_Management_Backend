@@ -94,13 +94,12 @@ async def submit_audience_vote(comp_id: str, req: VoteReq, user: dict = Depends(
     if existing_vote:
         raise HTTPException(status_code=400, detail="You have already voted for this contestant.")
         
-    voting_power = 1
     if getattr(req, "is_paid_pack", False):
-        voting_power = 10
+        voting_power = comp.get("voting_power_paid", 10)
     elif getattr(req, "source", "WEBSITE") == "MOBILE_APP":
-        voting_power = 5
+        voting_power = comp.get("voting_power_mobile", 5)
     else:
-        voting_power = 1
+        voting_power = comp.get("voting_power_website", 1)
 
     vote_doc = {
         "competition_id": comp_id,

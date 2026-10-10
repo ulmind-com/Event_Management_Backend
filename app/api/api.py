@@ -2,6 +2,7 @@
 from app.api.routes import (
     auth, profile, activities, registrations, bookings, merchandise, rewards,
     admin_auth, admin_cms, admin_checkin, admin_competitions, public, payments,
+    admin_courses, admin_workshops, admin_users,
     advanced_competitions, judge_competitions, admin_judges, ws_live,
     public_competitions, judge_auth, admin_volunteers, volunteer_auth
 )
@@ -27,6 +28,9 @@ api_router.include_router(volunteer_auth.router, prefix="/volunteer/auth", tags=
 # ── Admin APIs ──
 api_router.include_router(admin_auth.router, prefix="/admin", tags=["admin-auth"])
 api_router.include_router(admin_cms.router, prefix="/admin", tags=["admin-cms"])
+api_router.include_router(admin_courses.router, prefix="/admin/courses", tags=["admin-courses"])
+api_router.include_router(admin_workshops.router, prefix="/admin/workshops", tags=["admin-workshops"])
+api_router.include_router(admin_users.router, prefix="/admin/users", tags=["admin-users"])
 api_router.include_router(admin_checkin.router, prefix="/admin/tickets", tags=["admin-checkin"])
 api_router.include_router(admin_competitions.router, prefix="/admin/advanced-competitions", tags=["admin-advanced-competitions"])
 api_router.include_router(admin_judges.router, prefix="/admin/judges", tags=["admin-judges"])

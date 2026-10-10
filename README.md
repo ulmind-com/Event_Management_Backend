@@ -130,3 +130,14 @@ Swagger UI will be available at: `http://127.0.0.1:8000/docs`
 - **Strict Competition Authorization:** Judges are explicitly mapped to specific competitions. A judge cannot access or score submissions for unassigned competitions.
 - **Live Scoring & Locking:** Judges score assigned criteria. Admins can lock the scores to freeze edits.
 - **Automated Tie-breakers & Approval:** Administrator approves the locked scores to publish the official leaderboard securely.
+
+## 🎓 Courses & Workshop Management
+- **Strict Registration Deadlines:** API strictly rejects registrations if server UTC time falls outside the dynamic egistration_start_at or egistration_end_at window.
+- **Dynamic Public Status:** Auto-calculated 'UPCOMING', 'OPEN', or 'CLOSED' statuses for public listings without background cron jobs.
+- **Price Separation:** Free courses are instantly CONFIRMED; priced ones enter PENDING_PAYMENT.
+- **PDF Report Generation:** Dedicated Admin endpoints export comprehensive registration tables natively using ReportLab.
+
+## ♻️ Recycle Bin & User Recovery
+- **7-Day TTL Expiration:** Soft-deleted users are automatically wiped from the database after 7 days utilizing MongoDB native TTL indexes.
+- **Identity Mangling:** Soft-deleted users have their emails aliased to free up their identity, allowing them to instantly register fresh accounts.
+- **Safe Restoration:** Admin restoration handles potential collisions if a user registered anew before the 7-day expiry.

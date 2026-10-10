@@ -324,3 +324,64 @@ async def list_feedbacks(comp_id: str, admin: dict = Depends(get_current_admin))
     for f in feedbacks:
         f["_id"] = str(f["_id"])
     return feedbacks
+
+# ══════════════════════════════════════════════
+# EXPORT PARTICIPANTS (PDF)
+# ══════════════════════════════════════════════
+
+@router.get("/{comp_id}/participants/export-pdf")
+async def export_participants_pdf(comp_id: str, admin: dict = Depends(get_current_admin)):
+    """Downloads a PDF report of all registered participants, only if registration is closed."""
+    from app.core.database import competition_collection, competition_submission_collection, user_collection
+    from app.services.pdf_generator import PDFGenerator
+    from fastapi.responses import Response
+    from bson import ObjectId
+    
+    comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found.")
+        
+    # Check if registration is closed
+    reg_deadline = comp.get("registration_deadline")
+    if not reg_deadline:
+        raise HTTPException(status_code=400, detail="Registration deadline is not set for this competition.")
+        
+    # Ensure timezone awareness for comparison
+    if reg_deadline.tzinfo is None:
+        reg_deadline = reg_deadline.replace(tzinfo=timezone.utc)
+        
+    if datetime.now(timezone.utc) <= reg_deadline:
+        raise HTTPException(
+            status_code=400, 
+            detail="Registration is still open. You can download the PDF once it closes."
+        )
+        
+    # Fetch all successful submissions
+    submissions = await competition_submission_collection.find({
+        "competition_id": comp_id,
+        "status": {"$in": ["APPROVED", "SUBMITTED"]}
+    }).to_list(length=5000)
+    
+    if not submissions:
+        raise HTTPException(status_code=404, detail="No participants found for this competition.")
+        
+    # Fetch user details
+    participants_data = []
+    for sub in submissions:
+        user = await user_collection.find_one({"email": sub["user_email"]})
+        if user:
+            participants_data.append({
+                "name": user.get("name", "Unknown"),
+                "email": user.get("email", ""),
+                "phone": user.get("phone_number", ""),
+                "status": sub.get("status", "")
+            })
+            
+    # Generate PDF
+    pdf_bytes = PDFGenerator.generate_participants_pdf(comp.get("title", "Competition"), participants_data)
+    
+    # Return as downloadable file
+    headers = {
+        'Content-Disposition': f'attachment; filename="participants_{comp_id}.pdf"'
+    }
+    return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)

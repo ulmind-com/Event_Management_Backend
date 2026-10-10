@@ -94,10 +94,21 @@ async def submit_audience_vote(comp_id: str, req: VoteReq, user: dict = Depends(
     if existing_vote:
         raise HTTPException(status_code=400, detail="You have already voted for this contestant.")
         
+    voting_power = 1
+    if getattr(req, "is_paid_pack", False):
+        voting_power = 10
+    elif getattr(req, "source", "WEBSITE") == "MOBILE_APP":
+        voting_power = 5
+    else:
+        voting_power = 1
+
     vote_doc = {
         "competition_id": comp_id,
         "participant_id": req.participant_id,
         "voter_email": user["email"],
+        "source": getattr(req, "source", "WEBSITE"),
+        "is_paid_pack": getattr(req, "is_paid_pack", False),
+        "voting_power": voting_power,
         "created_at": datetime.now(timezone.utc)
     }
     await audience_vote_collection.insert_one(vote_doc)
@@ -124,7 +135,14 @@ async def provisional_leaderboard(comp_id: str):
     
     for sub in submissions:
         user_email = sub["user_email"]
-        votes = await audience_vote_collection.count_documents({"competition_id": comp_id, "participant_id": user_email})
+        # Sum voting power
+        pipeline = [
+            {"$match": {"competition_id": comp_id, "participant_id": user_email}},
+            {"$group": {"_id": None, "total": {"$sum": "$voting_power"}}}
+        ]
+        agg_res = await audience_vote_collection.aggregate(pipeline).to_list(1)
+        votes = agg_res[0]["total"] if agg_res else 0
+        
         if votes > max_audience_votes: max_audience_votes = votes
         
         # Calculate avg judge score for this user

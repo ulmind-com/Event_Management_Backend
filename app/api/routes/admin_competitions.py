@@ -446,7 +446,14 @@ async def start_finalization(comp_id: str, admin: dict = Depends(get_current_adm
     max_audience_votes = 0
     for sub in submissions:
         user_email = sub["user_email"]
-        votes = await audience_vote_collection.count_documents({"competition_id": comp_id, "participant_id": user_email})
+        # Sum voting power
+        pipeline = [
+            {"$match": {"competition_id": comp_id, "participant_id": user_email}},
+            {"$group": {"_id": None, "total": {"$sum": "$voting_power"}}}
+        ]
+        agg_res = await audience_vote_collection.aggregate(pipeline).to_list(1)
+        votes = agg_res[0]["total"] if agg_res else 0
+        
         if votes > max_audience_votes: max_audience_votes = votes
         
         # Calculate avg judge score for this user

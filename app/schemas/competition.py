@@ -110,6 +110,9 @@ class ScoreReq(BaseModel):
     
 class VoteReq(BaseModel):
     participant_id: str
+    source: str = "WEBSITE"  # WEBSITE or MOBILE_APP
+    is_paid_pack: bool = False
+    payment_reference: Optional[str] = None
 
 
 # ── Advanced Judging Schemas ──

@@ -34,6 +34,8 @@ def parse_date(date_str: str) -> date:
 async def register_step1(req: EmailRequest):
     """Step 1: Check if user exists, if not send OTP."""
     existing_user = await user_collection.find_one({"email": req.email})
+    if existing_user and existing_user.get("is_deleted"):
+        raise HTTPException(status_code=403, detail="Account has been deleted.")
     if existing_user and existing_user.get("registration_complete"):
         raise HTTPException(status_code=400, detail="User already exists. Please login.")
     
@@ -155,6 +157,9 @@ async def user_login(req: UserLoginReq):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
+    if user.get("is_deleted"):
+        raise HTTPException(status_code=403, detail="Account is disabled or deleted. Contact support.")
+        
     if not user.get("registration_complete"):
         raise HTTPException(status_code=400, detail="Registration incomplete. Please register first.")
         
@@ -186,4 +191,7 @@ async def get_user_profile(authorization: str = Header(...)):
     user = await user_collection.find_one({"email": payload["sub"]}, {"_id": 0, "password_hash": 0})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+        
+    if user.get("is_deleted"):
+        raise HTTPException(status_code=403, detail="Account is disabled or deleted. Contact support.")
     return user

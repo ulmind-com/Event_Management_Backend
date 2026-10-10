@@ -10,6 +10,12 @@ class SocialMediaLinks(BaseModel):
     youtube: Optional[str] = None
     linkedin: Optional[str] = None
 
+
+class VotingPowerSettings(BaseModel):
+    voting_power_website: int = 1
+    voting_power_mobile: int = 5
+    voting_power_paid: int = 10
+
 class WebsiteSettingsUpdate(BaseModel):
     brand_name: Optional[str] = None
     logo_url: Optional[str] = None

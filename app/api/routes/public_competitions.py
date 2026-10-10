@@ -98,6 +98,16 @@ async def submit_audience_vote(comp_id: str, req: VoteReq, user: dict = Depends(
     v_settings = await website_settings_collection.find_one({"_id": "voting_settings"}) or {}
     
     if getattr(req, "is_paid_pack", False):
+        if not req.payment_reference:
+            raise HTTPException(status_code=400, detail="Payment reference is required for paid vote packs.")
+        
+        # Payment Gateway Placeholder Integration
+        from app.services.payment import PaymentService
+        # TODO: Uncomment this when payment gateway is implemented!
+        # is_valid = await PaymentService.verify_payment(req.payment_reference)
+        # if not is_valid:
+        #     raise HTTPException(status_code=400, detail="Invalid or unverified payment.")
+            
         voting_power = v_settings.get("voting_power_paid", 10)
     elif getattr(req, "source", "WEBSITE") == "MOBILE_APP":
         voting_power = v_settings.get("voting_power_mobile", 5)

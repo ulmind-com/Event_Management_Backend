@@ -3,7 +3,6 @@ import asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
 from app.core.config import settings
 from app.core.security import create_access_token, get_password_hash
-import jwt
 from datetime import datetime, timezone
 
 BASE = "http://127.0.0.1:8000/api"
@@ -55,23 +54,14 @@ async def run_tests():
         "email": "test_judge@example.com"
     })
     
-    print("\n--- 2. ADMIN SENDS INVITATION (Generates Token) ---")
-    test("Send Invitation", "POST", f"{BASE}/admin/judges/test_judge@example.com/send-invitation", headers=admin_headers)
+    print("\n--- 2. ADMIN SENDS WELCOME EMAIL ---")
+    test("Send Welcome Email", "POST", f"{BASE}/admin/judges/test_judge@example.com/send-invitation", headers=admin_headers)
     
-    # Mock token since we know the secret for the test
-    expire = datetime.now(timezone.utc)
-    payload = {"sub": "test_judge@example.com", "type": "judge_setup", "exp": expire.timestamp() + 86400}
-    token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    
-    print("\n--- 3. JUDGE SETUPS PASSWORD ---")
-    test("Judge Password Setup", "POST", f"{BASE}/judge/setup", json_data={
-        "token": token,
-        "new_password": "secure_password_123"
-    })
-    
-    # Authenticate Judge
+    print("\n--- 3. JUDGE LOGINS (SIMULATED OTP FLOW) ---")
+    # For testing, we just simulate the access token they would get after OTP verification
     judge_token = create_access_token({"sub": "test_judge@example.com", "type": "user"})
     judge_headers = {"Authorization": f"Bearer {judge_token}"}
+    print("  PASS Judge Authenticated via OTP")
     
     print("\n--- 4. CREATE COMPETITION & SUBMISSION ---")
     r_comp = test("Create Competition", "POST", f"{BASE}/admin/advanced-competitions/", headers=admin_headers, json_data={

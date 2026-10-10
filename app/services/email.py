@@ -1,6 +1,8 @@
-import resend
+﻿import resend
 from app.core.config import settings
+import logging
 
+logger = logging.getLogger(__name__)
 resend.api_key = settings.RESEND_API_KEY
 
 def send_otp_email(to_email: str, otp_code: str):
@@ -14,24 +16,22 @@ def send_otp_email(to_email: str, otp_code: str):
         response = resend.Emails.send(params)
         return response
     except Exception as e:
-        print(f"Error sending email: {e}")
+        logger.error(f"Error sending email: {e}")
         return None
-import logging
-logger = logging.getLogger(__name__)
 
 class EmailService:
     @staticmethod
-    def send_judge_invitation(email: str, name: str, setup_token: str):
-        setup_url = f"https://eventora.com/judge-setup?token={setup_token}"
+    def send_judge_invitation(email: str, name: str):
+        login_url = f"https://eventora.com/login"
         params = {
             "from": f"Eventora <{settings.MAIL_ADDRESS}>",
             "to": [email],
-            "subject": "You have been invited to judge at Eventora",
-            "html": f"<strong>Hello {name},</strong><br>You have been invited to judge competitions at Eventora.<br>Please set up your password using this secure link: <a href='{setup_url}'>Set up Account</a>",
+            "subject": "Welcome to Eventora Judges Panel",
+            "html": f"<strong>Hello {name},</strong><br><br>Congratulations! You have been officially appointed as a Judge for Eventora competitions.<br><br>You can now access your private judges panel by logging into our website at <a href='{login_url}'>Eventora Login</a>.<br><br><b>How to login:</b><br>1. Enter this email address ({email}).<br>2. You will receive a secure OTP.<br>3. Enter the OTP to access your assigned competitions and start scoring.<br><br>Thank you!",
         }
         try:
             resend.Emails.send(params)
-            logger.info(f"Sent Judge Invitation Email to {email}")
+            logger.info(f"Sent Judge Welcome Email to {email}")
             return True
         except Exception as e:
             logger.error(f"Error sending email: {e}")

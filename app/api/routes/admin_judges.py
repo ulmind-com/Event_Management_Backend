@@ -4,7 +4,6 @@ from app.core.database import user_collection, judge_assignment_collection
 from app.schemas.judge import JudgeCreateReq, JudgeUpdateReq, JudgeAssignmentReq
 from app.services.email import EmailService
 from datetime import datetime, timezone
-import jwt
 from app.core.config import settings
 
 router = APIRouter()
@@ -18,6 +17,9 @@ async def create_judge(req: JudgeCreateReq, admin: dict = Depends(get_current_ad
         
     doc = req.model_dump()
     doc["role"] = "JUDGE"
+    doc["status"] = "ACTIVE"
+    doc["is_verified"] = True
+    doc["registration_complete"] = True
     doc["created_at"] = datetime.now(timezone.utc)
     
     await user_collection.insert_one(doc)
@@ -33,21 +35,12 @@ async def list_judges(admin: dict = Depends(get_current_admin)):
 
 @router.post("/{email}/send-invitation")
 async def send_invitation(email: str, bg_tasks: BackgroundTasks, admin: dict = Depends(get_current_admin)):
-    """Sends a secure account setup email with a cryptographic token."""
+    """Sends a welcome email instructing the judge to log in via OTP."""
     judge = await user_collection.find_one({"email": email, "role": "JUDGE"})
     if not judge:
         raise HTTPException(status_code=404, detail="Judge not found")
         
-    # Generate cryptographic token for setup
-    expire = datetime.now(timezone.utc)
-    payload = {
-        "sub": email,
-        "type": "judge_setup",
-        "exp": expire.timestamp() + (60 * 60 * 24) # 24 hours
-    }
-    token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    
-    bg_tasks.add_task(EmailService.send_judge_invitation, email, judge.get("full_name", "Judge"), token)
+    bg_tasks.add_task(EmailService.send_judge_invitation, email, judge.get("full_name", "Judge"))
     return {"message": "Invitation sent successfully."}
 
 @router.post("/assignments")
@@ -56,9 +49,6 @@ async def assign_judge(req: JudgeAssignmentReq, admin: dict = Depends(get_curren
     judge = await user_collection.find_one({"email": req.judge_email, "role": "JUDGE"})
     if not judge:
         raise HTTPException(status_code=404, detail="Judge not found")
-        
-    if judge.get("status") != "ACTIVE":
-        raise HTTPException(status_code=400, detail="Judge must setup their password and be active first.")
         
     existing_assignment = await judge_assignment_collection.find_one({
         "judge_email": req.judge_email,

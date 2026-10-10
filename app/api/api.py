@@ -2,7 +2,7 @@
 from app.api.routes import (
     auth, profile, activities, registrations, bookings, merchandise, rewards,
     admin_auth, admin_cms, admin_checkin, admin_competitions, public, payments,
-    advanced_competitions, judge_competitions, admin_judges, judge_auth
+    advanced_competitions, judge_competitions, admin_judges
 )
 
 api_router = APIRouter()
@@ -19,7 +19,6 @@ api_router.include_router(rewards.router, prefix="/rewards", tags=["rewards"])
 api_router.include_router(advanced_competitions.router, tags=["advanced-competitions"])
 
 # ── Judge APIs ──
-api_router.include_router(judge_auth.router, prefix="/judge", tags=["judge-auth"])
 api_router.include_router(judge_competitions.router, prefix="/judge", tags=["judge-competitions"])
 
 # ── Admin APIs ──

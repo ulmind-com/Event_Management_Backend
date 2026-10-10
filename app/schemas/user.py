@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+﻿from pydantic import BaseModel, EmailStr
 from typing import Optional
 
 class EmailRequest(BaseModel):
@@ -7,6 +7,10 @@ class EmailRequest(BaseModel):
 class OTPVerifyRequest(BaseModel):
     email: EmailStr
     otp: str
+
+class UserLoginReq(BaseModel):
+    email: EmailStr
+    password: str
 
 class Token(BaseModel):
     access_token: str

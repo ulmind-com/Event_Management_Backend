@@ -9,7 +9,7 @@ from app.core.database import (
     app_promotion_collection, important_link_collection, audit_log_collection,
 )
 from app.schemas.cms import (
-    WebsiteSettingsUpdate, EventCreate, EventUpdate,
+    WebsiteSettingsUpdate, VotingPowerSettings, EventCreate, EventUpdate,
     LiveEventCreate, LiveEventUpdate, BannerCreate, BannerUpdate,
     TestimonialCreate, TestimonialUpdate, CourseCreate, CourseUpdate,
     TicketCreate, TicketUpdate, ContestPromotionCreate, ContestPromotionUpdate,
@@ -46,7 +46,7 @@ async def get_website_settings(admin=Depends(get_current_admin)):
     return clean(doc) if doc else {}
 
 @router.put("/website-settings", tags=["admin-settings"])
-async def update_website_settings(data: WebsiteSettingsUpdate, admin=Depends(get_current_admin)):
+async def update_website_settings(data: WebsiteSettingsUpdate, VotingPowerSettings, admin=Depends(get_current_admin)):
     update = {k: v for k, v in data.model_dump().items() if v is not None}
     if "social_media" in update and update["social_media"]:
         update["social_media"] = {k: v for k, v in update["social_media"].items() if v is not None}
@@ -413,7 +413,7 @@ async def get_contact_info(admin=Depends(get_current_admin)):
     }
 
 @router.put("/contact-info", tags=["admin-contact"])
-async def update_contact_info(data: WebsiteSettingsUpdate, admin=Depends(get_current_admin)):
+async def update_contact_info(data: WebsiteSettingsUpdate, VotingPowerSettings, admin=Depends(get_current_admin)):
     update = {k: v for k, v in data.model_dump().items() if v is not None}
     if "social_media" in update and update["social_media"]:
         update["social_media"] = {k: v for k, v in update["social_media"].items() if v is not None}
@@ -470,3 +470,23 @@ async def list_audit_logs(skip: int = 0, limit: int = 50, action: Optional[str] 
         q["resource_type"] = resource_type
     docs = await audit_log_collection.find(q).sort("timestamp", -1).skip(skip).limit(limit).to_list(length=limit)
     return clean_list(docs)
+
+#  Voting Power Settings 
+@router.get("/voting-settings")
+async def get_voting_settings(admin: dict = Depends(get_current_admin)):
+    settings = await website_settings_collection.find_one({"_id": "voting_settings"})
+    if not settings:
+        return {"voting_power_website": 1, "voting_power_mobile": 5, "voting_power_paid": 10}
+    return clean(settings)
+
+@router.put("/voting-settings")
+async def update_voting_settings(req: VotingPowerSettings, admin: dict = Depends(get_current_admin)):
+    update_data = req.model_dump()
+    update_data["updated_at"] = datetime.now(timezone.utc)
+    
+    await website_settings_collection.update_one(
+        {"_id": "voting_settings"},
+        {"$set": update_data},
+        upsert=True
+    )
+    return {"message": "Voting settings updated successfully"}

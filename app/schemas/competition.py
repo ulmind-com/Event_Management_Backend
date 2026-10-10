@@ -65,10 +65,6 @@ class CompetitionCreateReq(BaseModel):
     audience_vote_weight: float = 0.0
     judge_score_weight: float = 0.0
     
-    voting_power_website: int = 1
-    voting_power_mobile: int = 5
-    voting_power_paid: int = 10
-    
     rules: Optional[CompetitionRules] = None
     dynamic_submission_fields: List[DynamicFieldConfig] = []
     judging_criteria: List[JudgingCriterion] = []

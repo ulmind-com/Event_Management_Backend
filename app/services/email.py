@@ -36,3 +36,19 @@ class EmailService:
         except Exception as e:
             logger.error(f"Error sending email: {e}")
             return False
+    @staticmethod
+    def send_volunteer_invitation(email: str):
+        login_url = f"https://eventora.com/volunteer/login"
+        params = {
+            "from": f"Eventora <{settings.MAIL_ADDRESS}>",
+            "to": [email],
+            "subject": "You have been added as a Volunteer (Ticket Scanner)",
+            "html": f"<strong>Hello,</strong><br><br>You have been assigned as a Volunteer for Eventora!<br><br>Your primary role is to scan and verify attendee tickets at the entrance.<br><br><b>How to login:</b><br>1. Go to <a href='{login_url}'>Volunteer Login</a>.<br>2. Enter your email ({email}).<br>3. You will receive a secure OTP to log in.<br>4. Once logged in, your device camera will turn on to scan tickets.<br><br>Thank you!",
+        }
+        try:
+            resend.Emails.send(params)
+            logger.info(f"Sent Volunteer Email to {email}")
+            return True
+        except Exception as e:
+            logger.error(f"Error sending email: {e}")
+            return False

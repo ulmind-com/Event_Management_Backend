@@ -11,7 +11,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="Eventora — Event Management Platform API",
+    description="Eventora - Event Management Platform API",
     version="2.0.0",
 )
 
@@ -19,11 +19,10 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS
-origins = settings.CORS_ORIGINS.split(",") if settings.CORS_ORIGINS != "*" else ["*"]
+# CORS Policy (Allowed for ALL Origins)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origin_regex=".*", # This allows all origins even with credentials
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

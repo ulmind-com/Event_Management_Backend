@@ -61,7 +61,9 @@ class CompetitionCreateReq(BaseModel):
     
     is_published: bool = False
     audience_voting_enabled: bool = False
+    judge_scoring_enabled: bool = False
     audience_vote_weight: float = 0.0
+    judge_score_weight: float = 0.0
     
     rules: Optional[CompetitionRules] = None
     dynamic_submission_fields: List[DynamicFieldConfig] = []
@@ -73,6 +75,20 @@ class CompetitionUpdateReq(BaseModel):
     image_url: Optional[str] = None
     is_published: Optional[bool] = None
     # Add other fields as needed for partial updates
+
+
+class VotingStatus(str, Enum):
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+
+class JudgingStatus(str, Enum):
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+
+class ResultStatus(str, Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    PUBLISHED = "PUBLISHED"
 
 class RegistrationStatus(str, Enum):
     PENDING = "PENDING"

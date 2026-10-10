@@ -18,6 +18,20 @@ router = APIRouter()
 async def create_competition(req: CompetitionCreateReq, admin: dict = Depends(get_current_admin)):
     """Creates a new advanced competition with rules, criteria, and dynamic fields."""
     comp_dict = req.model_dump()
+    
+    # Validation for ranking modes
+    if comp_dict.get("audience_voting_enabled") and comp_dict.get("judge_scoring_enabled"):
+        w_a = comp_dict.get("audience_vote_weight", 0.0)
+        w_j = comp_dict.get("judge_score_weight", 0.0)
+        if abs((w_a + w_j) - 1.0) > 0.001 and abs((w_a + w_j) - 100.0) > 0.001:
+            raise HTTPException(status_code=400, detail="Combined weights must total 1.0 or 100%")
+    elif not comp_dict.get("audience_voting_enabled") and not comp_dict.get("judge_scoring_enabled"):
+        raise HTTPException(status_code=400, detail="At least one ranking mode must be enabled.")
+        
+    comp_dict["voting_status"] = "OPEN" if comp_dict.get("audience_voting_enabled") else "CLOSED"
+    comp_dict["judging_status"] = "OPEN" if comp_dict.get("judge_scoring_enabled") else "CLOSED"
+    comp_dict["result_status"] = "PENDING"
+    
     comp_dict["created_at"] = datetime.now(timezone.utc)
     comp_dict["updated_at"] = datetime.now(timezone.utc)
     
@@ -385,3 +399,146 @@ async def export_participants_pdf(comp_id: str, admin: dict = Depends(get_curren
         'Content-Disposition': f'attachment; filename="participants_{comp_id}.pdf"'
     }
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+
+# ══════════════════════════════════════════════
+# LIFECYCLE CONTROLS
+# ══════════════════════════════════════════════
+
+@router.post("/{comp_id}/voting/close")
+async def close_audience_voting(comp_id: str, admin: dict = Depends(get_current_admin)):
+    comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp: raise HTTPException(status_code=404, detail="Competition not found")
+    if not comp.get("audience_voting_enabled"):
+        raise HTTPException(status_code=400, detail="Audience voting is not enabled for this competition.")
+        
+    await competition_collection.update_one({"_id": ObjectId(comp_id)}, {"$set": {"voting_status": "CLOSED"}})
+    return {"message": "Audience voting closed successfully."}
+
+@router.post("/{comp_id}/judging/close")
+async def close_judge_scoring(comp_id: str, admin: dict = Depends(get_current_admin)):
+    comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp: raise HTTPException(status_code=404, detail="Competition not found")
+    if not comp.get("judge_scoring_enabled"):
+        raise HTTPException(status_code=400, detail="Judge scoring is not enabled for this competition.")
+        
+    await competition_collection.update_one({"_id": ObjectId(comp_id)}, {"$set": {"judging_status": "CLOSED"}})
+    return {"message": "Judge scoring closed successfully."}
+
+@router.post("/{comp_id}/finalization/start")
+async def start_finalization(comp_id: str, admin: dict = Depends(get_current_admin)):
+    """Validates if phases are closed, generates the immutable final ranking snapshot."""
+    from app.services.ranking_service import RankingService
+    comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp: raise HTTPException(status_code=404, detail="Competition not found")
+    
+    if comp.get("audience_voting_enabled") and comp.get("voting_status", "OPEN") != "CLOSED":
+        raise HTTPException(status_code=400, detail="Audience voting must be closed first.")
+    if comp.get("judge_scoring_enabled") and comp.get("judging_status", "OPEN") != "CLOSED":
+        raise HTTPException(status_code=400, detail="Judge scoring must be closed first.")
+        
+    # Get all submissions
+    submissions = await competition_submission_collection.find({"competition_id": comp_id, "status": {"$in": ["APPROVED", "SUBMITTED"]}}).to_list(length=5000)
+    
+    # Get max possible judge score
+    max_judge_score = sum(crit.get("max_score", 0) for crit in comp.get("judging_criteria", []))
+    
+    participants_data = []
+    max_audience_votes = 0
+    for sub in submissions:
+        user_email = sub["user_email"]
+        votes = await audience_vote_collection.count_documents({"competition_id": comp_id, "participant_id": user_email})
+        if votes > max_audience_votes: max_audience_votes = votes
+        
+        # Calculate avg judge score for this user
+        scores = await judge_score_collection.find({"competition_id": comp_id, "participant_id": user_email}).to_list(length=100)
+        total_judge = 0
+        if scores:
+            for s in scores:
+                total_judge += sum(s.get("scores", {}).values())
+            total_judge = total_judge / len(scores)
+            
+        participants_data.append({
+            "participant_id": user_email,
+            "audience_votes": votes,
+            "judge_score": total_judge
+        })
+        
+    final_leaderboard = RankingService.calculate_leaderboard(participants_data, max_audience_votes, max_judge_score, comp)
+    
+    # Store Snapshot
+    from app.core.database import db
+    result_snapshots_collection = db["result_snapshots"]
+    
+    snapshot_doc = {
+        "competition_id": comp_id,
+        "calculated_at": datetime.now(timezone.utc),
+        "ranking_mode": final_leaderboard[0]["ranking_mode"] if final_leaderboard else "UNKNOWN",
+        "leaderboard": final_leaderboard,
+        "is_approved": False,
+        "is_published": False,
+        "approved_by": None,
+        "published_by": None
+    }
+    
+    # Delete existing unapproved snapshot if exists
+    await result_snapshots_collection.delete_many({"competition_id": comp_id, "is_approved": False})
+    res = await result_snapshots_collection.insert_one(snapshot_doc)
+    
+    await competition_collection.update_one({"_id": ObjectId(comp_id)}, {"$set": {"result_status": "PENDING"}})
+    
+    return {"message": "Finalization complete. Snapshot generated for review.", "snapshot_id": str(res.inserted_id)}
+
+@router.post("/{comp_id}/results/approve")
+async def approve_results(comp_id: str, admin: dict = Depends(get_current_admin)):
+    from app.core.database import db
+    result_snapshots = db["result_snapshots"]
+    
+    snapshot = await result_snapshots.find_one({"competition_id": comp_id, "is_published": False})
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="No un-published snapshot found. Start finalization first.")
+        
+    await result_snapshots.update_one({"_id": snapshot["_id"]}, {"$set": {"is_approved": True, "approved_by": admin.get("email"), "approved_at": datetime.now(timezone.utc)}})
+    await competition_collection.update_one({"_id": ObjectId(comp_id)}, {"$set": {"result_status": "APPROVED"}})
+    return {"message": "Result snapshot approved successfully."}
+
+@router.post("/{comp_id}/results/publish")
+async def publish_results(comp_id: str, admin: dict = Depends(get_current_admin)):
+    from app.core.database import db
+    result_snapshots = db["result_snapshots"]
+    
+    snapshot = await result_snapshots.find_one({"competition_id": comp_id, "is_approved": True})
+    if not snapshot:
+        raise HTTPException(status_code=400, detail="Result must be approved before publication.")
+        
+    await result_snapshots.update_one({"_id": snapshot["_id"]}, {"$set": {"is_published": True, "published_by": admin.get("email"), "published_at": datetime.now(timezone.utc)}})
+    await competition_collection.update_one({"_id": ObjectId(comp_id)}, {"$set": {"result_status": "PUBLISHED"}})
+    return {"message": "Result published officially!"}
+
+@router.get("/{comp_id}/overview")
+async def competition_dashboard_overview(comp_id: str, admin: dict = Depends(get_current_admin)):
+    """Admin Dashboard overview for competition."""
+    comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp: raise HTTPException(status_code=404, detail="Competition not found")
+    
+    total_participants = await competition_submission_collection.count_documents({"competition_id": comp_id, "status": {"$in": ["APPROVED", "SUBMITTED"]}})
+    total_votes = await audience_vote_collection.count_documents({"competition_id": comp_id})
+    total_scores = await judge_score_collection.count_documents({"competition_id": comp_id})
+    
+    return {
+        "competition_id": comp_id,
+        "title": comp.get("title"),
+        "ranking_mode": {
+            "audience_voting_enabled": comp.get("audience_voting_enabled"),
+            "judge_scoring_enabled": comp.get("judge_scoring_enabled"),
+        },
+        "lifecycle": {
+            "voting_status": comp.get("voting_status"),
+            "judging_status": comp.get("judging_status"),
+            "result_status": comp.get("result_status")
+        },
+        "metrics": {
+            "total_participants": total_participants,
+            "total_audience_votes": total_votes,
+            "total_judge_scores": total_scores
+        }
+    }

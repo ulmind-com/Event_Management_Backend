@@ -189,6 +189,14 @@ async def submit_score(submission_id: str, req: ScoreReq, judge: dict = Depends(
         raise HTTPException(status_code=400, detail="Submission is not in a scorable state.")
 
     comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+        
+    if not comp.get("judge_scoring_enabled", False):
+        raise HTTPException(status_code=400, detail="Judge scoring is disabled for this competition.")
+        
+    if comp.get("judging_status", "OPEN") == "CLOSED":
+        raise HTTPException(status_code=400, detail="Judging phase is closed for this competition.")
 
     # Check COI skip
     coi = await coi_skip_collection.find_one({

@@ -33,13 +33,36 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
         activity = await event_collection.find_one({"_id": obj_id})
     elif req.activity_type == "competition":
         activity = await competition_collection.find_one({"_id": obj_id})
-    elif req.activity_type == "course":
-        activity = await course_collection.find_one({"_id": obj_id})
+    elif req.activity_type in ["course", "workshop"]:
+        activity = await course_collection.find_one({"_id": obj_id, "course_type": req.activity_type})
     else:
         raise HTTPException(status_code=400, detail="Invalid activity type")
 
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
+        
+    now = datetime.now(timezone.utc)
+        
+    # STRICT REGISTRATION DEADLINE ENFORCEMENT FOR COURSES AND WORKSHOPS
+    if req.activity_type in ["course", "workshop"]:
+        if not activity.get("is_published"):
+            raise HTTPException(status_code=400, detail="Activity is not published or archived")
+            
+        start_at = activity.get("registration_start_at")
+        end_at = activity.get("registration_end_at")
+        
+        # Make sure they are datetimes, though motor/pymongo returns datetime objects
+        if start_at and now < start_at.replace(tzinfo=timezone.utc) if start_at.tzinfo is None else start_at:
+            raise HTTPException(status_code=400, detail="Registration has not opened yet (UPCOMING)")
+            
+        if end_at and now >= end_at.replace(tzinfo=timezone.utc) if end_at.tzinfo is None else end_at:
+            raise HTTPException(status_code=400, detail="Registration closed")
+            
+        capacity = activity.get("available_seats", 0)
+        registered_count = await registration_collection.count_documents({"activity_id": req.activity_id, "activity_type": req.activity_type})
+        if registered_count >= capacity:
+            raise HTTPException(status_code=400, detail="Activity is full")
+
 
     # Check capacity/deadlines (simplified logic for now)
     if "deadline" in activity:
@@ -51,13 +74,26 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
         if activity["registered_count"] >= activity["capacity"]:
             raise HTTPException(status_code=400, detail="Activity is full")
 
+    # Determine Payment Status
+    price = activity.get("price", 0.0)
+    final_status = "CONFIRMED" if price == 0 else "PENDING_PAYMENT"
+    
+    if final_status == "PENDING_PAYMENT":
+        # PAYMENT GATEWAY PLACEHOLDER (Do not simulate fake success)
+        # from app.services.payment import PaymentService
+        # payment_session = await PaymentService.initiate_payment(req.activity_id, price)
+        pass
+
     # Register
     new_reg = {
         "email": email,
+        "participant_name": current_user.get("full_name", email.split('@')[0]),
+        "participant_email": email,
         "activity_id": req.activity_id,
         "activity_type": req.activity_type,
-        "registered_at": datetime.now(timezone.utc),
-        "status": "confirmed"
+        "price_snapshot": price,
+        "created_at": datetime.now(timezone.utc),
+        "status": final_status
     }
     
     await registration_collection.insert_one(new_reg)

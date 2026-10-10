@@ -148,19 +148,45 @@ async def get_public_testimonials():
     docs = await testimonial_collection.find({"is_approved": True, "is_published": True}).sort("display_order", 1).to_list(length=20)
     return clean_list(docs)
 
+
+def calculate_dynamic_status(doc):
+    now = datetime.now(timezone.utc)
+    start = doc.get("registration_start_at")
+    end = doc.get("registration_end_at")
+    
+    if start and start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end and end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+        
+    if start and now < start:
+        status = "UPCOMING"
+        can_register = False
+    elif end and now >= end:
+        status = "CLOSED"
+        can_register = False
+    else:
+        status = "OPEN"
+        can_register = True
+        
+    doc["registration_status"] = status
+    doc["can_register"] = can_register
+    return doc
+
 @router.get("/courses", tags=["public"])
 async def get_public_courses(skip: int = 0, limit: int = 10):
     docs = await course_collection.find({
         "is_published": True, "is_visible": True, "is_deleted": {"$ne": True}, "course_type": "course"
     }).sort("display_order", 1).skip(skip).limit(limit).to_list(length=limit)
-    return clean_list(docs)
+    return [calculate_dynamic_status(d) for d in clean_list(docs)]
 
 @router.get("/workshops", tags=["public"])
 async def get_public_workshops(skip: int = 0, limit: int = 10):
     docs = await course_collection.find({
         "is_published": True, "is_visible": True, "is_deleted": {"$ne": True}, "course_type": "workshop"
     }).sort("display_order", 1).skip(skip).limit(limit).to_list(length=limit)
-    return clean_list(docs)
+    return [calculate_dynamic_status(d) for d in clean_list(docs)]
+
 
 @router.get("/contest-promotions", tags=["public"])
 async def get_public_contest_promotions():

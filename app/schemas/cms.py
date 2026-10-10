@@ -141,12 +141,12 @@ class CourseCreate(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     price: float = 0.0
-    registration_deadline: Optional[str] = None
+    registration_start_at: datetime
+    registration_end_at: datetime
     available_seats: int = 50
     course_type: str = "course"  # "course" or "workshop"
     is_published: bool = False
     is_visible: bool = True
-    registration_enabled: bool = True
     display_order: int = 0
 
 class CourseUpdate(BaseModel):
@@ -158,12 +158,12 @@ class CourseUpdate(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     price: Optional[float] = None
-    registration_deadline: Optional[str] = None
+    registration_start_at: Optional[datetime] = None
+    registration_end_at: Optional[datetime] = None
     available_seats: Optional[int] = None
     course_type: Optional[str] = None
     is_published: Optional[bool] = None
     is_visible: Optional[bool] = None
-    registration_enabled: Optional[bool] = None
     display_order: Optional[int] = None
 
 # ── Tickets ──

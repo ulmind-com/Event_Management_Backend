@@ -249,52 +249,6 @@ async def toggle_testimonial_publish(tid: str, data: PublishToggle, admin=Depend
     return {"message": f"Testimonial {'published' if data.is_published else 'unpublished'}"}
 
 # ════════════════════════════════════════
-# COURSES / WORKSHOPS
-# ════════════════════════════════════════
-@router.get("/courses", tags=["admin-courses"])
-async def list_courses(course_type: Optional[str] = None, admin=Depends(get_current_admin)):
-    q = {"is_deleted": {"$ne": True}}
-    if course_type:
-        q["course_type"] = course_type
-    docs = await course_collection.find(q).sort("display_order", 1).to_list(length=100)
-    return clean_list(docs)
-
-@router.post("/courses", tags=["admin-courses"])
-async def create_course(data: CourseCreate, admin=Depends(get_current_admin)):
-    doc = data.model_dump()
-    doc["enrolled_count"] = 0
-    doc["created_at"] = datetime.now(timezone.utc)
-    result = await course_collection.insert_one(doc)
-    await log_admin_action(admin["email"], "create", "course", str(result.inserted_id))
-    doc["_id"] = str(result.inserted_id)
-    return doc
-
-@router.put("/courses/{cid}", tags=["admin-courses"])
-async def update_course(cid: str, data: CourseUpdate, admin=Depends(get_current_admin)):
-    update = {k: v for k, v in data.model_dump().items() if v is not None}
-    update["updated_at"] = datetime.now(timezone.utc)
-    result = await course_collection.update_one({"_id": oid(cid), "is_deleted": {"$ne": True}}, {"$set": update})
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Course not found")
-    await log_admin_action(admin["email"], "update", "course", cid)
-    doc = await course_collection.find_one({"_id": oid(cid)})
-    return clean(doc)
-
-@router.delete("/courses/{cid}", tags=["admin-courses"])
-async def delete_course(cid: str, admin=Depends(get_current_admin)):
-    result = await course_collection.update_one({"_id": oid(cid)}, {"$set": {"is_deleted": True}})
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Course not found")
-    await log_admin_action(admin["email"], "soft_delete", "course", cid)
-    return {"message": "Course deleted"}
-
-@router.patch("/courses/{cid}/publish", tags=["admin-courses"])
-async def toggle_course_publish(cid: str, data: PublishToggle, admin=Depends(get_current_admin)):
-    await course_collection.update_one({"_id": oid(cid)}, {"$set": {"is_published": data.is_published}})
-    await log_admin_action(admin["email"], "publish" if data.is_published else "unpublish", "course", cid)
-    return {"message": f"Course {'published' if data.is_published else 'unpublished'}"}
-
-# ════════════════════════════════════════
 # TICKETS
 # ════════════════════════════════════════
 @router.get("/tickets", tags=["admin-tickets"])

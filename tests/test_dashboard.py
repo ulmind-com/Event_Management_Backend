@@ -1,7 +1,7 @@
 ﻿from pymongo import MongoClient
 
 # Simulate DB state for Rank & Certificate
-client = MongoClient("mongodb+srv://sagnikm997_db_user:qxNZsxzxx7FXHqSD@cluster0.xz63ghm.mongodb.net/")
+from app.core.config import settings; client = MongoClient(settings.MONGODB_URI)
 db = client.eventora_db
 
 # Get email of any recent user

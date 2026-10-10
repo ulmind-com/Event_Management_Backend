@@ -19,7 +19,7 @@ print_result("Send OTP", r)
 # Direct DB access to get OTP
 from pymongo import MongoClient
 import os
-client = MongoClient("mongodb+srv://sagnikm997_db_user:qxNZsxzxx7FXHqSD@cluster0.xz63ghm.mongodb.net/")
+from app.core.config import settings; client = MongoClient(settings.MONGODB_URI)
 db = client.eventora_db
 otp_doc = db.otps.find_one({"email": test_email})
 otp = otp_doc["otp"]

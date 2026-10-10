@@ -94,3 +94,23 @@ class ScoreReq(BaseModel):
     
 class VoteReq(BaseModel):
     participant_id: str
+
+
+# ── Advanced Judging Schemas ──
+
+class DraftScoreReq(BaseModel):
+    scores: Dict[str, float]
+    comments: Optional[str] = None
+
+class COISkipReq(BaseModel):
+    reason: str = "Conflict of Interest"
+
+class JudgeFeedbackReq(BaseModel):
+    text_feedback: Optional[str] = None
+    audio_feedback_url: Optional[str] = None
+
+class SessionPINReq(BaseModel):
+    pin: str
+
+class SessionCreateReq(BaseModel):
+    pin: Optional[str] = None

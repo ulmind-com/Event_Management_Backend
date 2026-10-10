@@ -47,3 +47,15 @@ audience_vote_collection = db["audience_votes"]
 leaderboard_result_collection = db["leaderboard_results"]
 
 judge_assignment_collection = db['judge_assignments']
+
+# ── Live Judging Session & Advanced Features ──
+judging_session_collection = db["judging_sessions"]
+draft_score_collection = db["draft_scores"]
+judge_feedback_collection = db["judge_feedbacks"]
+coi_skip_collection = db["coi_skips"]
+
+# ── Live Judging Session & Advanced Features ──
+judging_session_collection = db["judging_sessions"]
+draft_score_collection = db["draft_scores"]
+judge_feedback_collection = db["judge_feedbacks"]
+coi_skip_collection = db["coi_skips"]

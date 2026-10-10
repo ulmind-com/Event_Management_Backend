@@ -219,3 +219,108 @@ async def publish_results(comp_id: str, admin: dict = Depends(get_current_admin)
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Competition not found")
     return {"message": "Results published successfully."}
+
+# ══════════════════════════════════════════════
+# LIVE SESSION PIN MANAGEMENT (Admin)
+# ══════════════════════════════════════════════
+
+@router.post("/{comp_id}/session/open")
+async def open_judging_session(comp_id: str, pin: str = None, admin: dict = Depends(get_current_admin)):
+    """Opens a live judging session. Optionally sets a PIN judges must enter to score."""
+    from app.core.database import judging_session_collection
+    
+    existing = await judging_session_collection.find_one({"competition_id": comp_id, "status": "OPEN"})
+    if existing:
+        raise HTTPException(status_code=409, detail="A session is already open for this competition.")
+    
+    import hashlib
+    pin_hash = None
+    if pin:
+        pin_hash = pin  # In production, hash this
+    
+    doc = {
+        "competition_id": comp_id,
+        "status": "OPEN",
+        "pin": pin_hash,
+        "verified_judges": [],
+        "opened_by": admin.get("email"),
+        "opened_at": datetime.now(timezone.utc)
+    }
+    await judging_session_collection.insert_one(doc)
+    return {"message": "Live judging session opened.", "pin_required": bool(pin)}
+
+@router.post("/{comp_id}/session/close")
+async def close_judging_session(comp_id: str, admin: dict = Depends(get_current_admin)):
+    """Closes the live judging session."""
+    from app.core.database import judging_session_collection
+    
+    res = await judging_session_collection.update_one(
+        {"competition_id": comp_id, "status": "OPEN"},
+        {"$set": {"status": "CLOSED", "closed_at": datetime.now(timezone.utc)}}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="No open session found.")
+    return {"message": "Live judging session closed."}
+
+# ══════════════════════════════════════════════
+# ADMIN: JUDGING PROGRESS DASHBOARD
+# ══════════════════════════════════════════════
+
+@router.get("/{comp_id}/judging/progress")
+async def judging_progress(comp_id: str, admin: dict = Depends(get_current_admin)):
+    """Returns detailed judging progress for admin dashboard."""
+    from app.core.database import (
+        judge_assignment_collection, judge_score_collection, 
+        competition_submission_collection, coi_skip_collection
+    )
+    
+    total_judges = await judge_assignment_collection.count_documents({"competition_id": comp_id})
+    total_subs = await competition_submission_collection.count_documents({
+        "competition_id": comp_id,
+        "status": {"$in": ["SUBMITTED", "APPROVED"]}
+    })
+    total_scores = await judge_score_collection.count_documents({"competition_id": comp_id})
+    locked_scores = await judge_score_collection.count_documents({"competition_id": comp_id, "is_locked": True})
+    total_skips = await coi_skip_collection.count_documents({"competition_id": comp_id})
+    
+    expected_total = total_judges * total_subs
+    completed = total_scores + total_skips
+    
+    # Per-judge breakdown
+    judges = await judge_assignment_collection.find({"competition_id": comp_id}).to_list(100)
+    judge_details = []
+    for j in judges:
+        email = j["judge_email"]
+        scored = await judge_score_collection.count_documents({"competition_id": comp_id, "judge_email": email})
+        skipped = await coi_skip_collection.count_documents({"competition_id": comp_id, "judge_email": email})
+        judge_details.append({
+            "judge_email": email,
+            "scored": scored,
+            "skipped": skipped,
+            "pending": total_subs - scored - skipped,
+            "completion_pct": round((scored + skipped) / total_subs * 100, 1) if total_subs > 0 else 0
+        })
+    
+    return {
+        "total_judges": total_judges,
+        "total_contestants": total_subs,
+        "total_scores_submitted": total_scores,
+        "total_scores_locked": locked_scores,
+        "total_coi_skips": total_skips,
+        "expected_total_scores": expected_total,
+        "overall_completion_pct": round(completed / expected_total * 100, 1) if expected_total > 0 else 0,
+        "judges": judge_details
+    }
+
+# ══════════════════════════════════════════════
+# ADMIN: VIEW CONTESTANT FEEDBACKS
+# ══════════════════════════════════════════════
+
+@router.get("/{comp_id}/feedbacks")
+async def list_feedbacks(comp_id: str, admin: dict = Depends(get_current_admin)):
+    """Lists all judge feedbacks for a competition."""
+    from app.core.database import judge_feedback_collection
+    feedbacks = await judge_feedback_collection.find({"competition_id": comp_id}).to_list(length=1000)
+    for f in feedbacks:
+        f["_id"] = str(f["_id"])
+    return feedbacks

@@ -21,6 +21,7 @@ dependencies = [
     "resend>=2.49.1",
     "slowapi>=0.1.10",
     "uvicorn>=0.54.0",
+    "websockets>=17.2",
 ]
 
 [project.scripts]

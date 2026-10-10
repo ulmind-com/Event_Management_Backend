@@ -2,7 +2,8 @@
 from app.api.routes import (
     auth, profile, activities, registrations, bookings, merchandise, rewards,
     admin_auth, admin_cms, admin_checkin, admin_competitions, public, payments,
-    advanced_competitions, judge_competitions, admin_judges
+    advanced_competitions, judge_competitions, admin_judges, ws_live,
+    public_competitions
 )
 
 api_router = APIRouter()
@@ -28,5 +29,9 @@ api_router.include_router(admin_checkin.router, prefix="/admin/tickets", tags=["
 api_router.include_router(admin_competitions.router, prefix="/admin/advanced-competitions", tags=["admin-advanced-competitions"])
 api_router.include_router(admin_judges.router, prefix="/admin/judges", tags=["admin-judges"])
 
-# ── Public Homepage APIs ──
+# ── Public APIs ──
 api_router.include_router(public.router, prefix="/v1", tags=["public"])
+api_router.include_router(public_competitions.router, prefix="/v1", tags=["public-competitions"])
+
+# ── WebSocket (Real-time) ──
+api_router.include_router(ws_live.router, tags=["websocket-live"])

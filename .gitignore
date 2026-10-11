@@ -18,3 +18,5 @@ __pycache__/
 
 # IDE
 .vscode/
+firebase_service_account.json
+*.json.secret

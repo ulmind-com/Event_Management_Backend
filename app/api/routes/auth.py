@@ -1,4 +1,5 @@
-﻿from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Header, status
+from app.services.referral_service import ReferralService
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Header, status
 from app.schemas.user import EmailRequest, OTPVerifyRequest, UserLoginReq, Token
 from app.services.email import send_otp_email
 from app.services.cloudinary_srv import upload_image
@@ -55,6 +56,12 @@ async def register_step1(req: EmailRequest):
         upsert=True
     )
     
+    if req.referral_code:
+        try:
+            await ReferralService.attribute_referral(req.email, req.referral_code)
+        except Exception:
+            pass
+
     send_otp_email(req.email, otp_code)
     return {"message": "OTP sent successfully."}
 
@@ -136,6 +143,13 @@ async def register_step3(
     await user_collection.update_one({"email": email}, {"$set": update_data})
     await otp_collection.delete_one({"email": email})
 
+    # Generate user referral code and qualify referral attribution
+    try:
+        await ReferralService.get_or_create_user_referral_code(email)
+        await ReferralService.qualify_and_reward_referral(email)
+    except Exception:
+        pass
+
     # Return final access token for login
     access_token = create_access_token(data={"sub": email, "type": "user"})
     return {
@@ -169,6 +183,12 @@ async def user_login(req: UserLoginReq):
     if not verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
         
+    try:
+        await ReferralService.get_or_create_user_referral_code(req.email)
+        await ReferralService.qualify_and_reward_referral(req.email)
+    except Exception:
+        pass
+
     access_token = create_access_token(data={"sub": req.email, "type": "user"})
     return {
         "message": "Login successful",

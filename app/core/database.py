@@ -1,4 +1,4 @@
-﻿from motor.motor_asyncio import AsyncIOMotorClient
+from motor.motor_asyncio import AsyncIOMotorClient
 from app.core.config import settings
 
 client = AsyncIOMotorClient(settings.MONGODB_URI)
@@ -59,3 +59,11 @@ judging_session_collection = db["judging_sessions"]
 draft_score_collection = db["draft_scores"]
 judge_feedback_collection = db["judge_feedbacks"]
 coi_skip_collection = db["coi_skips"]
+
+# Referral, Reward, Wallet & Discount Collections
+referral_program_config_collection = db["referral_program_config"]
+referral_collection = db["referrals"]
+coin_reward_lot_collection = db["coin_reward_lots"]
+coin_ledger_collection = db["coin_ledger"]
+user_wallet_collection = db["user_wallets"]
+coin_reservation_collection = db["coin_reservations"]

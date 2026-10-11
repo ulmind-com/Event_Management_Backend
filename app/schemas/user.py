@@ -1,8 +1,9 @@
-﻿from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr
 from typing import Optional
 
 class EmailRequest(BaseModel):
     email: EmailStr
+    referral_code: Optional[str] = None
 
 class OTPVerifyRequest(BaseModel):
     email: EmailStr

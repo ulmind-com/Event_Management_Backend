@@ -1,4 +1,5 @@
-﻿from fastapi import FastAPI
+from app.services.expiry_worker import ExpiryWorker
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -33,3 +34,12 @@ app.include_router(api_router, prefix="/api")
 @app.get("/", tags=["root"])
 def root():
     return {"message": "Eventora API is running", "docs": "/docs"}
+
+@app.on_event("startup")
+async def startup_event():
+    # Start background coin expiry worker (runs periodically, fully idempotent)
+    ExpiryWorker.start(interval_seconds=3600)
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await ExpiryWorker.stop()

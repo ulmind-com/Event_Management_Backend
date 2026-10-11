@@ -1,4 +1,5 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from app.services.wallet_service import WalletService
+from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 from bson import ObjectId
 from app.api.deps import get_current_user
@@ -74,15 +75,45 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
         if activity["registered_count"] >= activity["capacity"]:
             raise HTTPException(status_code=400, detail="Activity is full")
 
-    # Determine Payment Status
-    price = activity.get("price", 0.0)
-    final_status = "CONFIRMED" if price == 0 else "PENDING_PAYMENT"
+    # Determine Payment Status & Apply Course/Workshop Coin Discounts
+    price = float(activity.get("price", 0.0))
+    discount_amount = 0.0
+    coins_applied = 0
+    order_ref = req.order_reference or f"ORD_{req.activity_type}_{int(now.timestamp())}_{ObjectId()}"
+
+    if req.activity_type in ["course", "workshop"] and req.coins_to_use and req.coins_to_use > 0:
+        quote = await WalletService.calculate_discount_quote(
+            user_email=email,
+            item_id=req.activity_id,
+            item_type=req.activity_type,
+            coins_to_use=req.coins_to_use
+        )
+        if not quote.get("is_eligible"):
+            raise HTTPException(status_code=400, detail=quote.get("ineligible_reason", "Coin discount not eligible"))
+        
+        coins_applied = quote.get("coins_applied", 0)
+        discount_amount = quote.get("discount_amount", 0.0)
+        
+        if coins_applied > 0:
+            res_result = await WalletService.reserve_coins_for_order(
+                user_email=email,
+                item_id=req.activity_id,
+                item_type=req.activity_type,
+                coins_to_reserve=coins_applied,
+                order_reference=order_ref
+            )
+            if not res_result.get("reserved"):
+                raise HTTPException(status_code=400, detail=res_result.get("reason", "Failed to reserve coins"))
+
+    payable_amount = max(0.0, price - discount_amount)
     
-    if final_status == "PENDING_PAYMENT":
-        # PAYMENT GATEWAY PLACEHOLDER (Do not simulate fake success)
-        # from app.services.payment import PaymentService
-        # payment_session = await PaymentService.initiate_payment(req.activity_id, price)
-        pass
+    if payable_amount == 0.0:
+        # Fully covered by coins or free: confirm and commit reserved coins
+        final_status = "CONFIRMED"
+        if coins_applied > 0:
+            await WalletService.commit_reserved_coins(order_ref)
+    else:
+        final_status = "PENDING_PAYMENT"
 
     # Register
     new_reg = {
@@ -92,7 +123,12 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
         "activity_id": req.activity_id,
         "activity_type": req.activity_type,
         "price_snapshot": price,
-        "created_at": datetime.now(timezone.utc),
+        "original_price": price,
+        "coins_applied": coins_applied,
+        "discount_amount": discount_amount,
+        "payable_amount": payable_amount,
+        "order_reference": order_ref,
+        "created_at": now,
         "status": final_status
     }
     
@@ -121,6 +157,12 @@ async def cancel_registration(registration_id: str, current_user: dict = Depends
         raise HTTPException(status_code=404, detail="Registration not found")
         
     # Delete
+    if reg.get("status") == "PENDING_PAYMENT" and reg.get("order_reference"):
+        try:
+            await WalletService.release_reserved_coins(reg["order_reference"])
+        except Exception:
+            pass
+
     await registration_collection.delete_one({"_id": obj_id})
     
     # Decrement count

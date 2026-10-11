@@ -1,3 +1,4 @@
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import List, Optional, Dict, Any
 
@@ -130,3 +131,47 @@ async def cancel_my_merchandise_order(
 ):
     """User cancels an eligible order. Releases reserved stock or submits refund request."""
     return await MerchandiseService.cancel_order(order_id, current_user.get("email"), req.reason, admin_view=False)
+
+
+class MerchandisePaymentVerifyReq(BaseModel):
+    order_number: str
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+
+@router.post("/orders/verify-payment", response_model=Dict[str, Any])
+async def verify_merchandise_payment_client(
+    req: MerchandisePaymentVerifyReq,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Client-side verification for Razorpay Merchandise order checkout.
+    Verifies cryptographic signature and confirms order completion.
+    """
+    from app.services.merchandise_payment_gateway import MerchandisePaymentGatewayAdapter
+    is_valid = MerchandisePaymentGatewayAdapter.verify_payment_signature(
+        razorpay_order_id=req.razorpay_order_id,
+        razorpay_payment_id=req.razorpay_payment_id,
+        razorpay_signature=req.razorpay_signature
+    )
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid Razorpay payment signature."
+        )
+
+    order = await merchandise_order_collection.find_one({"order_number": req.order_number})
+    if not order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchandise order not found.")
+
+    if order.get("user_email") != current_user.get("email") and current_user.get("role") != "super_admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized order access.")
+
+    return await MerchandiseService.confirm_payment_and_complete_order(
+        order_number=req.order_number,
+        payment_txn_id=req.razorpay_payment_id,
+        amount_paid=float(order.get("total_amount", 0.0)),
+        currency=order.get("currency", "INR"),
+        provider_order_id=req.razorpay_order_id
+    )

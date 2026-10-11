@@ -29,6 +29,14 @@ class Settings:
     # CORS
     CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 
+    # Razorpay & Payment Gateway Configuration (from .env only - never hardcode)
+    RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
+    RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
+    PAYMENT_GATEWAY_PROVIDER = os.getenv("PAYMENT_GATEWAY_PROVIDER", "RAZORPAY")
+    PAYMENT_PROVIDER = os.getenv("PAYMENT_PROVIDER", "RAZORPAY")
+    MERCHANDISE_PAYMENT_PROVIDER = os.getenv("MERCHANDISE_PAYMENT_PROVIDER", "RAZORPAY")
+    PAYMENT_WEBHOOK_SECRET = os.getenv("PAYMENT_WEBHOOK_SECRET")
+
     # Project
     FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "event-management-4fe6f")
     PROJECT_NAME = "Eventora API"

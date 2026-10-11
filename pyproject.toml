@@ -19,6 +19,7 @@ dependencies = [
     "python-dotenv>=1.2.4",
     "python-multipart>=0.0.32",
     "qrcode[pil]>=8.2",
+    "razorpay>=2.0.1",
     "reportlab>=5.0.1",
     "resend>=2.49.1",
     "slowapi>=0.1.10",

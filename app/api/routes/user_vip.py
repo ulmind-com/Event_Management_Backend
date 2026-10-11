@@ -1,3 +1,4 @@
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import List, Optional, Dict, Any
 from bson import ObjectId
@@ -166,3 +167,47 @@ async def get_my_vip_pass_qr(
         "validity_start": pass_doc.get("validity_start"),
         "validity_end": pass_doc.get("validity_end")
     }
+
+
+class VIPPaymentVerifyReq(BaseModel):
+    booking_reference: str
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+
+@router.post("/vip/verify-payment", response_model=Dict[str, Any])
+async def verify_vip_payment(
+    req: VIPPaymentVerifyReq,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Client-side verification for Razorpay VIP pass checkout.
+    Verifies cryptographic signature and confirms pass issuance.
+    """
+    from app.services.vip_payment_gateway import VIPPaymentGatewayAdapter
+    is_valid = VIPPaymentGatewayAdapter.verify_payment_signature(
+        razorpay_order_id=req.razorpay_order_id,
+        razorpay_payment_id=req.razorpay_payment_id,
+        razorpay_signature=req.razorpay_signature
+    )
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid Razorpay payment signature."
+        )
+
+    booking = await vip_booking_collection.find_one({"booking_reference": req.booking_reference})
+    if not booking:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="VIP Booking reference not found.")
+
+    if booking.get("user_email") != current_user.get("email") and current_user.get("role") != "super_admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized VIP booking access.")
+
+    return await VIPService.confirm_payment_and_issue_pass(
+        booking_reference=req.booking_reference,
+        payment_txn_id=req.razorpay_payment_id,
+        amount_paid=float(booking.get("total_amount", 0.0)),
+        currency=booking.get("currency", "INR"),
+        provider_order_id=req.razorpay_order_id
+    )

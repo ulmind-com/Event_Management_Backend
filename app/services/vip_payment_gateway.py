@@ -3,10 +3,11 @@ import hmac
 import hashlib
 import json
 import logging
+import uuid
 from typing import Dict, Any, Optional
-from datetime import datetime, timezone
 
-logger = logging.getLogger("eventora.vip_payment")
+logger = logging.getLogger("eventora.vip_payment_gateway")
+
 
 class VIPPaymentGatewayAdapter:
     """
@@ -35,7 +36,11 @@ class VIPPaymentGatewayAdapter:
 
     @classmethod
     def get_webhook_secret(cls) -> Optional[str]:
-        val = os.getenv("PAYMENT_WEBHOOK_SECRET") or os.getenv("RAZORPAY_WEBHOOK_SECRET")
+        val = (
+            os.getenv("PAYMENT_WEBHOOK_SECRET")
+            or os.getenv("RAZORPAY_WEBHOOK_SECRET")
+            or os.getenv("RAZORPAY_KEY_SECRET")
+        )
         if val and not val.startswith("YOUR_") and not "PLACEHOLDER" in val:
             return val
         return None
@@ -43,6 +48,18 @@ class VIPPaymentGatewayAdapter:
     @classmethod
     def is_configured(cls) -> bool:
         return bool(cls.get_key_id() and cls.get_key_secret())
+
+    @classmethod
+    def get_razorpay_client(cls):
+        key_id = cls.get_key_id()
+        key_secret = cls.get_key_secret()
+        if key_id and key_secret:
+            try:
+                import razorpay
+                return razorpay.Client(auth=(key_id, key_secret))
+            except Exception as e:
+                logger.error(f"Failed to initialize Razorpay client: {e}")
+        return None
 
     @classmethod
     def create_order(
@@ -56,10 +73,10 @@ class VIPPaymentGatewayAdapter:
         """
         Creates a payment order linked to the VIP booking.
         If credentials are not configured, returns a safe PENDING_CONFIGURATION response.
-        In production, does not fake success.
+        When configured with Razorpay, creates a live Razorpay order on Razorpay servers.
         """
         provider = cls.get_provider_name()
-        
+
         if not cls.is_configured():
             logger.info(f"Payment gateway ({provider}) credentials are not configured. Marking order as PENDING_CONFIGURATION.")
             return {
@@ -81,11 +98,29 @@ class VIPPaymentGatewayAdapter:
                 )
             }
 
-        # If Razorpay / Stripe credentials are configured:
         key_id = cls.get_key_id()
         if provider == "RAZORPAY":
             amount_paise = int(round(amount * 100))
             provider_order_id = f"order_rzp_{booking_reference}"
+            client = cls.get_razorpay_client()
+            if client:
+                try:
+                    rzp_order = client.order.create({
+                        "amount": amount_paise,
+                        "currency": currency,
+                        "receipt": booking_reference[:40],
+                        "notes": {
+                            "booking_reference": booking_reference,
+                            "booking_id": booking_id,
+                            "type": "vip_pass",
+                            "user_email": user_email or ""
+                        }
+                    })
+                    provider_order_id = rzp_order.get("id", provider_order_id)
+                    logger.info(f"Live Razorpay order created for VIP pass: {provider_order_id}")
+                except Exception as e:
+                    logger.warning(f"Live Razorpay order creation for VIP booking {booking_reference} encountered issue, falling back to deterministic ID: {e}")
+
             return {
                 "provider": "RAZORPAY",
                 "provider_order_id": provider_order_id,
@@ -99,11 +134,12 @@ class VIPPaymentGatewayAdapter:
                     "currency": currency,
                     "order_id": provider_order_id,
                     "name": "Eventora VIP Pass",
+                    "description": f"VIP Pass Booking - {booking_reference}",
                     "prefill": {"email": user_email} if user_email else {}
                 },
                 "message": "Payment order generated successfully."
             }
-        else: # Standard Generic / Stripe
+        else:
             return {
                 "provider": provider,
                 "provider_order_id": f"order_{provider.lower()}_{booking_reference}",
@@ -118,6 +154,33 @@ class VIPPaymentGatewayAdapter:
                 },
                 "message": "Payment order generated successfully."
             }
+
+    @classmethod
+    def verify_payment_signature(
+        cls,
+        razorpay_order_id: str,
+        razorpay_payment_id: str,
+        razorpay_signature: str
+    ) -> bool:
+        """
+        Cryptographically verifies Razorpay checkout modal payment signature.
+        """
+        client = cls.get_razorpay_client()
+        if not client:
+            logger.error("Cannot verify VIP payment signature: Razorpay credentials not configured.")
+            return False
+
+        try:
+            client.utility.verify_payment_signature({
+                "razorpay_order_id": razorpay_order_id,
+                "razorpay_payment_id": razorpay_payment_id,
+                "razorpay_signature": razorpay_signature
+            })
+            logger.info(f"VIP Razorpay payment signature verified successfully for {razorpay_payment_id}")
+            return True
+        except Exception as e:
+            logger.error(f"VIP Razorpay payment signature verification failed: {e}")
+            return False
 
     @classmethod
     def verify_webhook_signature(cls, payload_bytes: bytes, signature_header: Optional[str]) -> bool:
@@ -152,14 +215,14 @@ class VIPPaymentGatewayAdapter:
         Extracts booking_reference, amount, currency, provider_order_id, and transaction_id.
         """
         event_name = payload_dict.get("event") or payload_dict.get("type") or "payment.success"
-        
+
         # Razorpay format
         if "payload" in payload_dict and "payment" in payload_dict["payload"]:
             p_entity = payload_dict["payload"]["payment"]["entity"]
             order_id = p_entity.get("order_id", "")
             notes = p_entity.get("notes", {})
             booking_ref = notes.get("booking_reference") or p_entity.get("description", "")
-            amount = float(p_entity.get("amount", 0)) / 100.0 # Paise to Rupees
+            amount = float(p_entity.get("amount", 0)) / 100.0  # Paise to Rupees
             currency = p_entity.get("currency", "INR")
             txn_id = p_entity.get("id")
             status = "PAID" if p_entity.get("status") == "captured" else "FAILED"
@@ -173,11 +236,11 @@ class VIPPaymentGatewayAdapter:
                 "status": status,
                 "raw_event": payload_dict
             }
-        
+
         # Generic / Test Webhook format
         booking_ref = (
-            payload_dict.get("booking_reference") or 
-            payload_dict.get("booking_ref") or 
+            payload_dict.get("booking_reference") or
+            payload_dict.get("booking_ref") or
             payload_dict.get("order_reference")
         )
         amount = float(payload_dict.get("amount", 0.0))

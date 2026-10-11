@@ -1,3 +1,4 @@
+import os
 import hmac
 import hashlib
 import json
@@ -10,6 +11,7 @@ from app.core.config import settings
 
 logger = logging.getLogger("eventora.merchandise_payment_gateway")
 
+
 class MerchandisePaymentGatewayAdapter:
     """
     Production-ready modular payment gateway abstraction for Event Merchandise.
@@ -19,7 +21,11 @@ class MerchandisePaymentGatewayAdapter:
 
     @classmethod
     def get_provider_name(cls) -> str:
-        provider = getattr(settings, "PAYMENT_PROVIDER", None) or getattr(settings, "MERCHANDISE_PAYMENT_PROVIDER", None)
+        provider = (
+            getattr(settings, "PAYMENT_PROVIDER", None)
+            or getattr(settings, "MERCHANDISE_PAYMENT_PROVIDER", None)
+            or getattr(settings, "PAYMENT_GATEWAY_PROVIDER", None)
+        )
         if provider:
             return provider.upper()
         if getattr(settings, "RAZORPAY_KEY_ID", None) and getattr(settings, "RAZORPAY_KEY_SECRET", None):
@@ -40,6 +46,18 @@ class MerchandisePaymentGatewayAdapter:
         return False
 
     @classmethod
+    def get_razorpay_client(cls):
+        key_id = getattr(settings, "RAZORPAY_KEY_ID", None)
+        key_secret = getattr(settings, "RAZORPAY_KEY_SECRET", None)
+        if key_id and key_secret:
+            try:
+                import razorpay
+                return razorpay.Client(auth=(key_id, key_secret))
+            except Exception as e:
+                logger.error(f"Failed to initialize Razorpay client in Merchandise gateway: {e}")
+        return None
+
+    @classmethod
     def create_order(
         cls,
         order_id: str,
@@ -51,6 +69,7 @@ class MerchandisePaymentGatewayAdapter:
         """
         Creates a payment gateway order.
         If credentials are not configured, safely returns PENDING_CONFIGURATION.
+        When Razorpay is configured, creates a live Razorpay order.
         """
         provider = cls.get_provider_name()
         configured = cls.is_configured()
@@ -73,12 +92,36 @@ class MerchandisePaymentGatewayAdapter:
                 "checkout_data": None
             }
 
+        key_id = getattr(settings, "RAZORPAY_KEY_ID", None) or getattr(settings, "STRIPE_PUBLIC_KEY", "pk_live")
+
+        if provider == "RAZORPAY":
+            client = cls.get_razorpay_client()
+            if client:
+                try:
+                    rzp_order = client.order.create({
+                        "amount": amount_in_cents,
+                        "currency": currency,
+                        "receipt": order_number[:40],
+                        "notes": {
+                            "order_number": order_number,
+                            "order_id": order_id,
+                            "user_email": user_email,
+                            "type": "merchandise"
+                        }
+                    })
+                    provider_order_id = rzp_order.get("id", provider_order_id)
+                    logger.info(f"Live Razorpay order created for merchandise: {provider_order_id}")
+                except Exception as e:
+                    logger.warning(f"Live Razorpay order creation for merchandise {order_number} fallback: {e}")
+
         checkout_data = {
-            "key": getattr(settings, "RAZORPAY_KEY_ID", None) or getattr(settings, "STRIPE_PUBLIC_KEY", "pk_live"),
+            "key": key_id,
             "order_id": provider_order_id,
             "order_number": order_number,
             "amount": amount_in_cents,
             "currency": currency,
+            "name": "Eventora Merchandise",
+            "description": f"Order {order_number}",
             "prefill": {"email": user_email}
         }
 
@@ -90,6 +133,33 @@ class MerchandisePaymentGatewayAdapter:
             "status": "INITIATED",
             "checkout_data": checkout_data
         }
+
+    @classmethod
+    def verify_payment_signature(
+        cls,
+        razorpay_order_id: str,
+        razorpay_payment_id: str,
+        razorpay_signature: str
+    ) -> bool:
+        """
+        Cryptographically verifies Razorpay payment signature from client checkout modal.
+        """
+        client = cls.get_razorpay_client()
+        if not client:
+            logger.error("Cannot verify merchandise payment signature: Razorpay client unconfigured.")
+            return False
+
+        try:
+            client.utility.verify_payment_signature({
+                "razorpay_order_id": razorpay_order_id,
+                "razorpay_payment_id": razorpay_payment_id,
+                "razorpay_signature": razorpay_signature
+            })
+            logger.info(f"Merchandise Razorpay payment signature verified successfully: {razorpay_payment_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Merchandise Razorpay signature verification failed: {e}")
+            return False
 
     @classmethod
     def verify_webhook_signature(cls, raw_body: bytes, signature_header: str) -> bool:
@@ -127,7 +197,12 @@ class MerchandisePaymentGatewayAdapter:
         event_type = payload.get("event") or payload.get("type") or "payment.captured"
         data = payload.get("data") or payload.get("payload") or payload
 
-        payment_obj = data.get("payment", {}) or data.get("object", {}) or data
+        entity = None
+        if isinstance(data, dict):
+            pay = data.get("payment")
+            if isinstance(pay, dict):
+                entity = pay.get("entity")
+        payment_obj = entity or (data.get("payment", {}) if isinstance(data, dict) else {}) or (data.get("object", {}) if isinstance(data, dict) else {}) or data
         order_number = (
             payment_obj.get("order_number")
             or payment_obj.get("notes", {}).get("order_number")
@@ -147,7 +222,7 @@ class MerchandisePaymentGatewayAdapter:
         currency = payment_obj.get("currency") or payload.get("currency", "INR")
 
         amount = float(raw_amount)
-        if amount > 1000 and payload.get("provider") == "RAZORPAY":
+        if amount > 1000 and (payload.get("provider") == "RAZORPAY" or "payment" in data):
             amount = amount / 100.0
 
         status = "SUCCESS" if ("success" in str(event_type).lower() or "captured" in str(event_type).lower()) else "FAILED"

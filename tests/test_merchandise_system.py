@@ -425,3 +425,22 @@ async def test_admin_stock_adjustment_and_analytics(merch_test_context):
         assert analytics["total_products"] >= 1
         assert "gross_revenue" in analytics
         assert "units_sold" in analytics
+
+async def test_unauthenticated_user_cannot_place_order():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url='http://test') as ac:
+        res = await ac.post(
+            '/api/merchandise/orders',
+            json={
+                'items': [{'product_id': '507f1f77bcf86cd799439011', 'quantity': 1}],
+                'shipping_address': {
+                    'full_name': 'Anonymous',
+                    'phone': '9876543210',
+                    'address_line1': 'Unknown Street',
+                    'city': 'Kolkata',
+                    'state': 'WB',
+                    'postal_code': '700001'
+                }
+            }
+        )
+        assert res.status_code == 401

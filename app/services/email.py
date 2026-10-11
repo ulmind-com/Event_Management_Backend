@@ -102,3 +102,27 @@ class EmailService:
         except Exception as e:
             logger.error(f'Error sending certificate email to {email}: {e}')
             return False
+
+    @staticmethod
+    def send_vip_pass_confirmation(email: str, name: str, event_title: str, pass_name: str, quantity: int, booking_reference: str) -> bool:
+        params = {
+            'from': f'Eventora VIP <{settings.MAIL_ADDRESS}>',
+            'to': [email],
+            'subject': f'VIP Pass Confirmed: {event_title}',
+            'html': f'''<strong>Hello {name},</strong><br><br>
+Your VIP Pass booking for <b>{event_title}</b> has been successfully confirmed and payment verified!<br><br>
+<b>Booking Details:</b><br>
+- Reference: <code>{booking_reference}</code><br>
+- Pass Type: {pass_name}<br>
+- Quantity: {quantity}<br><br>
+Your digital VIP Pass with your secure entrance QR Code is now ready in your Eventora account under My VIP Passes.<br>
+Please present your QR code at the VIP Gate / Entrance on event day for priority access.<br><br>
+Thank you,<br>The Eventora Team'''
+        }
+        try:
+            resend.Emails.send(params)
+            logger.info(f"Sent VIP Pass confirmation email to {email}")
+            return True
+        except Exception as e:
+            logger.error(f"Error sending VIP Pass confirmation email: {e}")
+            return False

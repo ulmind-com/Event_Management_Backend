@@ -74,3 +74,10 @@ certificate_job_collection = db['certificate_generation_jobs']
 badge_definition_collection = db['badge_definitions']
 badge_policy_collection = db['badge_policies']
 user_badge_award_collection = db['user_badge_awards']
+
+# VIP Pass Collections
+vip_configuration_collection = db["vip_configurations"]
+vip_booking_collection = db["vip_bookings"]
+vip_pass_collection = db["vip_passes"]
+vip_checkin_collection = db["vip_checkins"]
+vip_payment_attempt_collection = db["vip_payment_attempts"]

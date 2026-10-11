@@ -184,3 +184,41 @@ async def get_admin_user_activity_summary(user_id: str, admin=Depends(get_curren
     if not res:
         raise HTTPException(status_code=404, detail="User not found")
     return res.get("activity_summary", {})
+
+@router.get("/{user_id}/vip-bookings")
+async def get_admin_user_vip_bookings(user_id: str, admin=Depends(get_current_admin)):
+    """
+    Super Admin inspects user's VIP bookings and passes history.
+    """
+    from app.core.database import vip_booking_collection, vip_pass_collection
+    from app.services.vip_service import serialize_mongo
+    from app.services.user_activity_service import UserActivityService
+
+    user = await UserActivityService.get_user_doc(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    email = user.get("email")
+
+    bookings = await vip_booking_collection.find({"user_email": email}).sort("booked_at", -1).to_list(length=100)
+    passes = await vip_pass_collection.find({"user_email": email}).sort("issued_at", -1).to_list(length=100)
+    
+    for b in bookings:
+        b["booking_id"] = str(b["_id"])
+        b["_id"] = str(b["_id"])
+    for p in passes:
+        p["pass_id"] = str(p["_id"])
+        p["_id"] = str(p["_id"])
+
+    return serialize_mongo({
+        "user_id": user_id,
+        "email": email,
+        "total_bookings": len(bookings),
+        "confirmed_bookings": sum(1 for b in bookings if b.get("booking_status") == "CONFIRMED"),
+        "pending_bookings": sum(1 for b in bookings if b.get("booking_status") == "PENDING_PAYMENT"),
+        "cancelled_bookings": sum(1 for b in bookings if b.get("booking_status") == "CANCELLED"),
+        "active_passes": sum(1 for p in passes if p.get("status") == "VALID"),
+        "revoked_passes": sum(1 for p in passes if p.get("status") == "REVOKED"),
+        "expired_passes": sum(1 for p in passes if p.get("status") == "EXPIRED"),
+        "bookings": bookings,
+        "passes": passes
+    })

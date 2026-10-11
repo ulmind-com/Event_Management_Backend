@@ -5,7 +5,8 @@ from app.api.routes import (
     admin_courses, admin_workshops, admin_users, admin_referrals, admin_certificates,
     admin_badges, public_certificates, user_certificates,
     advanced_competitions, judge_competitions, admin_judges, ws_live,
-    public_competitions, judge_auth, admin_volunteers, volunteer_auth
+    public_competitions, judge_auth, admin_volunteers, volunteer_auth,
+    admin_vip, user_vip, vip_webhooks
 )
 
 api_router = APIRouter()
@@ -48,3 +49,8 @@ api_router.include_router(public_certificates.router, prefix="/public/certificat
 
 # ── WebSocket (Real-time) ──
 api_router.include_router(ws_live.router, tags=["websocket-live"])
+
+# ── VIP Pass APIs ──
+api_router.include_router(user_vip.router, tags=["vip-passes"])
+api_router.include_router(vip_webhooks.router, tags=["vip-webhooks"])
+api_router.include_router(admin_vip.router, prefix="/admin", tags=["admin-vip"])

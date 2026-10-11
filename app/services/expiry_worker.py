@@ -15,6 +15,12 @@ class ExpiryWorker:
         try:
             logger.info("Starting automated coin expiry cycle...")
             result = await WalletService.process_expired_coins()
+            try:
+                from app.services.vip_service import VIPService
+                vip_exp_res = await VIPService.expire_pending_reservations()
+                result["vip_expired_reservations"] = vip_exp_res.get("expired_count", 0)
+            except Exception as e:
+                logger.error(f"Error in VIP reservation expiry cycle: {e}")
             logger.info(
                 f"Automated coin expiry cycle complete. Lots expired: {result.get('lots_expired_count', 0)}, "
                 f"Coins expired: {result.get('total_coins_expired', 0)}"

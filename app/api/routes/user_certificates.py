@@ -18,7 +18,7 @@ async def get_my_certificates(
 ):
     """Retrieves all certificates owned by the authenticated user."""
     email = current_user.get('email')
-    query = {'user_email': email}
+    query = {'$or': [{'user_email': email}, {'email': email}]}
     if cert_type:
         query['certificate_type'] = cert_type
     if activity_id:
@@ -43,7 +43,7 @@ async def get_my_certificate_details(
 ):
     """Retrieves a single certificate with strict ownership authorization."""
     email = current_user.get('email')
-    cert = await certificate_collection.find_one({'certificate_id': certificate_id, 'user_email': email})
+    cert = await certificate_collection.find_one({'certificate_id': certificate_id, '$or': [{'user_email': email}, {'email': email}]})
     if not cert:
         raise HTTPException(status_code=404, detail='Certificate not found or unauthorized')
 
@@ -57,7 +57,7 @@ async def download_my_certificate_pdf(
 ):
     """Downloads the official PDF certificate with QR code for the authenticated owner."""
     email = current_user.get('email')
-    cert = await certificate_collection.find_one({'certificate_id': certificate_id, 'user_email': email})
+    cert = await certificate_collection.find_one({'certificate_id': certificate_id, '$or': [{'user_email': email}, {'email': email}]})
     if not cert:
         raise HTTPException(status_code=404, detail='Certificate not found or unauthorized')
 
@@ -89,7 +89,7 @@ async def get_certificate_share_metadata(
 ):
     """Generates social sharing metadata and preview link for the certificate."""
     email = current_user.get('email')
-    cert = await certificate_collection.find_one({'certificate_id': certificate_id, 'user_email': email})
+    cert = await certificate_collection.find_one({'certificate_id': certificate_id, '$or': [{'user_email': email}, {'email': email}]})
     if not cert:
         raise HTTPException(status_code=404, detail='Certificate not found or unauthorized')
 

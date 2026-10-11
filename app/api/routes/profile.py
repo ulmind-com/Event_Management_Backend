@@ -75,7 +75,7 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user)):
     orders = await order_collection.find({"email": email}).to_list(length=100)
     
     # 5. Fetch Certificates
-    certs = await certificate_collection.find({"email": email}).to_list(length=100)
+    certs = await certificate_collection.find({"$or": [{"email": email}, {"user_email": email}]}).to_list(length=100)
     
     # 6. Fetch Rewards and Calculate Total Coins
     rewards_docs = await reward_collection.find({"email": email}).to_list(length=100)

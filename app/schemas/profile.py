@@ -21,3 +21,5 @@ class DashboardRes(BaseModel):
     merchandise_orders: List[dict]
     certificates: List[dict]
     rewards: dict
+
+    badges: Optional[List[dict]] = None

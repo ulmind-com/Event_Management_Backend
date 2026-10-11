@@ -1,7 +1,7 @@
 ﻿from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from typing import Optional
 from app.api.deps import get_current_user
-from app.core.database import user_collection, registration_collection, booking_collection, order_collection, certificate_collection, reward_collection
+from app.core.database import user_collection, registration_collection, booking_collection, order_collection, certificate_collection, reward_collection, user_badge_award_collection
 from app.schemas.profile import ProfileUpdateReq, ProfileUpdateRes, DashboardRes
 from app.services.cloudinary_srv import upload_image
 from datetime import datetime, timezone
@@ -81,8 +81,11 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user)):
     rewards_docs = await reward_collection.find({"email": email}).to_list(length=100)
     total_coins = sum([r.get("coins", 0) for r in rewards_docs])
     
+    # 7. Fetch Badges
+    badges = await user_badge_award_collection.find({"$or": [{"user_email": email}, {"email": email}], "status": "ACTIVE"}).to_list(length=100)
+    
     # Strip _id from all for JSON serialization
-    for lst in [events, competitions, courses, tickets, orders, certs, rewards_docs]:
+    for lst in [events, competitions, courses, tickets, orders, certs, rewards_docs, badges]:
         for item in lst:
             item["_id"] = str(item["_id"])
             if "activity_id" in item and type(item["activity_id"]) != str:
@@ -99,6 +102,7 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user)):
         "my_ranks": my_ranks,
         "my_courses": courses,
         "my_certificates": certs,
+        "my_badges": badges,
         "my_rewards_and_coins": {
             "total_coins": total_coins,
             "reward_history": rewards_docs

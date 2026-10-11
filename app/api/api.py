@@ -6,7 +6,8 @@ from app.api.routes import (
     admin_badges, public_certificates, user_certificates,
     advanced_competitions, judge_competitions, admin_judges, ws_live,
     public_competitions, judge_auth, admin_volunteers, volunteer_auth,
-    admin_vip, user_vip, vip_webhooks
+    admin_vip, user_vip, vip_webhooks,
+    admin_merchandise, user_merchandise, merchandise_webhooks
 )
 
 api_router = APIRouter()
@@ -18,7 +19,9 @@ api_router.include_router(activities.router, prefix="/activities", tags=["activi
 api_router.include_router(registrations.router, prefix="/registrations", tags=["registrations"])
 api_router.include_router(bookings.router, prefix="/bookings", tags=["bookings"])
 api_router.include_router(payments.router, prefix="/payments", tags=["payments"])
-api_router.include_router(merchandise.router, prefix="/merchandise", tags=["merchandise"])
+api_router.include_router(user_merchandise.router, prefix="/merchandise", tags=["merchandise"])
+api_router.include_router(admin_merchandise.router, prefix="/admin/merchandise", tags=["admin-merchandise"])
+api_router.include_router(merchandise_webhooks.router, prefix="/merchandise", tags=["merchandise-webhooks"])
 api_router.include_router(rewards.router, prefix="/rewards", tags=["rewards"])
 api_router.include_router(user_certificates.router, prefix="/users/me", tags=["user-certificates"])
 api_router.include_router(advanced_competitions.router, tags=["advanced-competitions"])

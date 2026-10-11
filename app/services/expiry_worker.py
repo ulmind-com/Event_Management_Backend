@@ -21,6 +21,13 @@ class ExpiryWorker:
                 result["vip_expired_reservations"] = vip_exp_res.get("expired_count", 0)
             except Exception as e:
                 logger.error(f"Error in VIP reservation expiry cycle: {e}")
+            try:
+                from app.services.merchandise_service import MerchandiseService
+                merch_exp_res = await MerchandiseService.expire_pending_orders()
+                result["merchandise_expired_orders"] = merch_exp_res.get("expired_orders_count", 0)
+            except Exception as e:
+                logger.error(f"Error in Merchandise order expiry cycle: {e}")
+
             logger.info(
                 f"Automated coin expiry cycle complete. Lots expired: {result.get('lots_expired_count', 0)}, "
                 f"Coins expired: {result.get('total_coins_expired', 0)}"

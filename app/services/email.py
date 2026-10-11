@@ -126,3 +126,55 @@ Thank you,<br>The Eventora Team'''
         except Exception as e:
             logger.error(f"Error sending VIP Pass confirmation email: {e}")
             return False
+
+    @staticmethod
+    def send_merchandise_order_confirmation(
+        email: str,
+        name: str,
+        order_number: str,
+        total_amount: float,
+        currency: str,
+        items_count: int
+    ):
+        subject = f"Order Confirmed: {order_number} - Eventora Merchandise"
+        html = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
+            <h2 style="color: #4F46E5;">Eventora Merchandise Order Confirmed</h2>
+            <p>Dear {name or 'Customer'},</p>
+            <p>Thank you for purchasing Eventora official merchandise! Your order has been successfully placed and payment verified.</p>
+            <div style="background-color: #F3F4F6; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                <p style="margin: 5px 0;"><strong>Order Number:</strong> {order_number}</p>
+                <p style="margin: 5px 0;"><strong>Items Count:</strong> {items_count}</p>
+                <p style="margin: 5px 0;"><strong>Total Paid:</strong> {total_amount} {currency}</p>
+                <p style="margin: 5px 0;"><strong>Payment Status:</strong> PAID</p>
+            </div>
+            <p>We are currently packing your items. You will receive another notification with tracking details once shipped.</p>
+            <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;">
+            <p style="color: #6B7280; font-size: 12px;">Eventora E-Commerce Team &bull; Official Event Store</p>
+        </div>
+        """
+        EmailService._send(email, subject, html)
+
+    @staticmethod
+    def send_merchandise_fulfillment_update(
+        email: str,
+        name: str,
+        order_number: str,
+        status: str,
+        courier_name: str = None,
+        tracking_number: str = None
+    ):
+        subject = f"Order Update: {order_number} is now {status}"
+        tracking_info = f"<p><strong>Courier:</strong> {courier_name}</p><p><strong>Tracking #:</strong> {tracking_number}</p>" if tracking_number else ""
+        html = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
+            <h2 style="color: #4F46E5;">Eventora Order Status Update</h2>
+            <p>Dear {name or 'Customer'},</p>
+            <p>Your order <strong>{order_number}</strong> status has been updated to: <strong>{status}</strong>.</p>
+            {tracking_info}
+            <p>You can track your order status live on the Eventora platform.</p>
+            <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;">
+            <p style="color: #6B7280; font-size: 12px;">Eventora E-Commerce Team</p>
+        </div>
+        """
+        EmailService._send(email, subject, html)

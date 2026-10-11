@@ -81,3 +81,10 @@ vip_booking_collection = db["vip_bookings"]
 vip_pass_collection = db["vip_passes"]
 vip_checkin_collection = db["vip_checkins"]
 vip_payment_attempt_collection = db["vip_payment_attempts"]
+
+# Event Merchandise E-Commerce Collections
+merchandise_product_collection = db["merchandise_products"]
+merchandise_order_collection = db["merchandise_orders"]
+merchandise_inventory_movement_collection = db["merchandise_inventory_movements"]
+merchandise_payment_attempt_collection = db["merchandise_payment_attempts"]
+merchandise_refund_collection = db["merchandise_refunds"]

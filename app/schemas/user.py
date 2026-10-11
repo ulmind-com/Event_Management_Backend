@@ -16,3 +16,7 @@ class UserLoginReq(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str
+
+class GoogleLoginReq(BaseModel):
+    id_token: str
+    referral_code: Optional[str] = None

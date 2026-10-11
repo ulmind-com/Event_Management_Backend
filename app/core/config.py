@@ -30,6 +30,7 @@ class Settings:
     CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 
     # Project
+    FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "event-management-4fe6f")
     PROJECT_NAME = "Eventora API"
 
 settings = Settings()

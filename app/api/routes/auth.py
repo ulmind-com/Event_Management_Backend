@@ -1,6 +1,7 @@
+from app.services.firebase_auth_service import FirebaseAuthService
 from app.services.referral_service import ReferralService
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Header, status
-from app.schemas.user import EmailRequest, OTPVerifyRequest, UserLoginReq, Token
+from app.schemas.user import EmailRequest, OTPVerifyRequest, UserLoginReq, Token, GoogleLoginReq
 from app.services.email import send_otp_email
 from app.services.cloudinary_srv import upload_image
 from app.core.database import user_collection, otp_collection
@@ -197,6 +198,103 @@ async def user_login(req: UserLoginReq):
         "user_email": req.email,
         "role": user.get("role", "USER")
     }
+
+
+# ══════════════════════════════════════════════
+# GOOGLE AUTHENTICATION (Firebase ID Token)
+# STRICTLY FOR 'USER' ROLE ONLY
+# ══════════════════════════════════════════════
+
+@router.post("/google-login")
+async def google_login(req: GoogleLoginReq):
+    """
+    Login or register regular users via Google (Firebase ID Token).
+    SECURITY: Only accounts with role 'USER' are permitted.
+    Admin, Super Admin, and Coordinator roles are strictly prohibited from using Google Auth.
+    """
+    # 1. Verify Google Firebase ID Token
+    google_user = await FirebaseAuthService.verify_firebase_id_token(req.id_token)
+    email = google_user["email"]
+    name = google_user.get("name") or email.split("@")[0]
+    picture = google_user.get("picture")
+
+    # 2. Check if user already exists
+    existing_user = await user_collection.find_one({"email": email})
+
+    if existing_user:
+        # Check deletion status
+        if existing_user.get("is_deleted"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is disabled or deleted. Contact support."
+            )
+
+        # STRICT ROLE CHECK: Only standard USER role permitted
+        role = existing_user.get("role", "USER")
+        if role != "USER":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Google authentication is only permitted for regular User accounts. Staff and Admin accounts must log in with their credentials."
+            )
+
+        # Update profile photo if missing and ensure registration is complete
+        update_fields = {"updated_at": datetime.now(timezone.utc), "email_verified": True}
+        if not existing_user.get("registration_complete"):
+            update_fields["registration_complete"] = True
+        if picture and not existing_user.get("profile_photo"):
+            update_fields["profile_photo"] = picture
+
+        await user_collection.update_one({"email": email}, {"$set": update_fields})
+        user_doc = {**existing_user, **update_fields}
+    else:
+        # 3. Auto-register new USER
+        new_user_data = {
+            "email": email,
+            "name": name,
+            "profile_photo": picture,
+            "role": "USER",
+            "email_verified": True,
+            "registration_complete": True,
+            "auth_provider": "GOOGLE",
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
+        }
+        await user_collection.insert_one(new_user_data)
+        user_doc = new_user_data
+
+        # Attribute referral if provided
+        if req.referral_code:
+            try:
+                await ReferralService.attribute_referral(email, req.referral_code)
+                await ReferralService.qualify_and_reward_referral(email)
+            except Exception:
+                pass
+
+    # Ensure referral code exists for this user
+    try:
+        await ReferralService.get_or_create_user_referral_code(email)
+        await ReferralService.qualify_and_reward_referral(email)
+    except Exception:
+        pass
+
+    # 4. Generate Eventora JWT access token
+    access_token = create_access_token(data={"sub": email, "type": "user"})
+
+    return {
+        "message": "Google login successful",
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user_email": email,
+        "role": "USER",
+        "user": {
+            "email": email,
+            "name": user_doc.get("name", name),
+            "role": "USER",
+            "profile_photo": user_doc.get("profile_photo", picture),
+            "registration_complete": True
+        }
+    }
+
 
 # ══════════════════════════════════════════════
 # PROFILE

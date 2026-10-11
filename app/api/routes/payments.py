@@ -186,35 +186,81 @@ async def handle_razorpay_booking_webhook(
     if event in ["payment.captured", "order.paid"]:
         payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
         notes = payment_entity.get("notes", {})
-        booking_ref = notes.get("booking_reference") or payment_entity.get("description")
+        booking_ref = notes.get("booking_reference") or notes.get("order_reference") or payment_entity.get("description")
         payment_id = payment_entity.get("id")
         order_id = payment_entity.get("order_id")
 
         if booking_ref:
-            booking = await booking_collection.find_one({"booking_reference": booking_ref})
-            if booking and booking.get("payment_status") != PaymentStatus.PAID.value:
-                b_id = booking["_id"]
-                await booking_collection.update_one(
-                    {"_id": b_id},
-                    {"$set": {
-                        "payment_status": PaymentStatus.PAID.value,
-                        "booking_status": BookingStatus.CONFIRMED.value,
-                        "payment_reference": payment_id,
-                        "provider_order_id": order_id,
-                        "payment_provider": "RAZORPAY"
-                    }}
-                )
-                bg_tasks.add_task(
-                    generate_tickets,
-                    str(b_id),
-                    booking["booking_reference"],
-                    booking["event_id"],
-                    "PaidTicket",
-                    booking["user_email"],
-                    booking["quantity"],
-                    []
-                )
-                logger.info(f"Webhook confirmed booking {booking_ref}")
+            # 1. Check Competition Registration
+            if booking_ref.startswith("CRG-") or notes.get("type") == "competition_registration":
+                from app.core.database import competition_registration_collection, competition_collection
+                from app.schemas.competition import RegistrationStatus
+                reg = await competition_registration_collection.find_one({"registration_reference": booking_ref})
+                if reg and reg.get("payment_status") != PaymentStatus.PAID.value:
+                    await competition_registration_collection.update_one(
+                        {"_id": reg["_id"]},
+                        {"$set": {
+                            "status": RegistrationStatus.CONFIRMED.value,
+                            "payment_status": PaymentStatus.PAID.value,
+                            "payment_reference": payment_id,
+                            "provider_order_id": order_id,
+                            "payment_provider": "RAZORPAY"
+                        }}
+                    )
+                    try:
+                        await competition_collection.update_one(
+                            {"_id": ObjectId(reg["competition_id"])},
+                            {"$inc": {"registered_count": 1}}
+                        )
+                    except Exception:
+                        pass
+                    logger.info(f"Webhook confirmed paid competition registration {booking_ref}")
+
+            # 2. Check General Activity / Course / Workshop Registration
+            elif booking_ref.startswith("ORD_") or notes.get("type") == "activity_registration":
+                from app.core.database import registration_collection
+                from app.services.wallet_service import WalletService
+                reg = await registration_collection.find_one({"order_reference": booking_ref})
+                if reg and reg.get("status") != "CONFIRMED":
+                    await registration_collection.update_one(
+                        {"_id": reg["_id"]},
+                        {"$set": {
+                            "status": "CONFIRMED",
+                            "payment_status": "PAID",
+                            "payment_reference": payment_id,
+                            "provider_order_id": order_id,
+                            "payment_provider": "RAZORPAY"
+                        }}
+                    )
+                    await WalletService.commit_reserved_coins(booking_ref)
+                    logger.info(f"Webhook confirmed activity registration {booking_ref}")
+
+            # 3. Check Event Ticket Bookings
+            else:
+                booking = await booking_collection.find_one({"booking_reference": booking_ref})
+                if booking and booking.get("payment_status") != PaymentStatus.PAID.value:
+                    b_id = booking["_id"]
+                    await booking_collection.update_one(
+                        {"_id": b_id},
+                        {"$set": {
+                            "payment_status": PaymentStatus.PAID.value,
+                            "booking_status": BookingStatus.CONFIRMED.value,
+                            "payment_reference": payment_id,
+                            "provider_order_id": order_id,
+                            "payment_provider": "RAZORPAY"
+                        }}
+                    )
+                    bg_tasks.add_task(
+                        generate_tickets,
+                        str(b_id),
+                        booking["booking_reference"],
+                        booking["event_id"],
+                        "PaidTicket",
+                        booking["user_email"],
+                        booking["quantity"],
+                        []
+                    )
+                    logger.info(f"Webhook confirmed ticket booking {booking_ref}")
 
     return {"status": "PROCESSED"}
 

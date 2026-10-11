@@ -1,3 +1,4 @@
+from pydantic import BaseModel
 from app.services.wallet_service import WalletService
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
@@ -142,7 +143,32 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
     elif req.activity_type == "course":
         await course_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
 
-    return {"message": "Registration successful"}
+    payment_info = None
+    if payable_amount > 0.0:
+        from app.services.payment import PaymentService
+        payment_info = await PaymentService.initiate_payment(
+            booking_reference=order_ref,
+            amount=payable_amount,
+            currency="INR",
+            notes={
+                "type": "activity_registration",
+                "activity_type": req.activity_type,
+                "activity_id": req.activity_id,
+                "order_reference": order_ref,
+                "user_email": email
+            }
+        )
+
+    response_data = {
+        "message": "Registration successful" if final_status == "CONFIRMED" else "Registration pending payment. Please proceed to payment.",
+        "registration_id": str(new_reg["_id"]),
+        "order_reference": order_ref,
+        "status": final_status,
+        "payable_amount": payable_amount
+    }
+    if payment_info:
+        response_data["payment_info"] = payment_info
+    return response_data
 
 @router.delete("/{registration_id}")
 async def cancel_registration(registration_id: str, current_user: dict = Depends(get_current_user)):
@@ -175,3 +201,72 @@ async def cancel_registration(registration_id: str, current_user: dict = Depends
         await course_collection.update_one({"_id": act_obj_id}, {"$inc": {"registered_count": -1}})
 
     return {"message": "Registration cancelled successfully"}
+
+
+class ActivityPaymentVerifyReq(BaseModel):
+    order_reference: str
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+
+@router.post("/verify-payment")
+async def verify_activity_registration_payment(
+    req: ActivityPaymentVerifyReq,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Client-side verification for paid activity/competition/course registration.
+    Verifies cryptographic HMAC signature and marks registration as CONFIRMED.
+    """
+    from app.services.payment import PaymentService
+    is_valid = PaymentService.verify_payment_signature(
+        razorpay_order_id=req.razorpay_order_id,
+        razorpay_payment_id=req.razorpay_payment_id,
+        razorpay_signature=req.razorpay_signature
+    )
+    if not is_valid:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid Razorpay payment signature. Verification failed."
+        )
+
+    reg = await registration_collection.find_one({"order_reference": req.order_reference})
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registration not found")
+
+    if reg.get("email") != current_user.get("email") and current_user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    if reg.get("status") == "CONFIRMED":
+        return {
+            "status": "CONFIRMED",
+            "message": "Registration already confirmed.",
+            "order_reference": req.order_reference
+        }
+
+    # Commit any reserved coins
+    try:
+        await WalletService.commit_reserved_coins(req.order_reference)
+    except Exception:
+        pass
+
+    # Update registration to CONFIRMED
+    await registration_collection.update_one(
+        {"_id": reg["_id"]},
+        {"$set": {
+            "status": "CONFIRMED",
+            "payment_status": "PAID",
+            "payment_reference": req.razorpay_payment_id,
+            "provider_order_id": req.razorpay_order_id,
+            "payment_provider": "RAZORPAY",
+            "paid_at": datetime.now(timezone.utc)
+        }}
+    )
+
+    return {
+        "status": "CONFIRMED",
+        "message": "Payment verified and registration confirmed successfully.",
+        "order_reference": req.order_reference,
+        "payment_id": req.razorpay_payment_id
+    }

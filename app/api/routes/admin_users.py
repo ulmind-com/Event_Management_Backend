@@ -1,10 +1,11 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
-from typing import Optional
+﻿from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Optional, List
 from datetime import datetime, timezone
 from bson import ObjectId
 from app.core.admin_auth import get_current_admin
 from app.core.database import user_collection
 from app.services.audit import log_admin_action
+from app.services.user_activity_service import UserActivityService
 import pymongo
 
 router = APIRouter()
@@ -31,11 +32,20 @@ async def ensure_ttl_index():
         pass
 
 @router.get("/")
-async def list_active_users(role: Optional[str] = None, admin=Depends(get_current_admin)):
-    """List all ACTIVE users (not in recycle bin)."""
+async def list_active_users(
+    role: Optional[str] = None,
+    search: Optional[str] = None,
+    admin=Depends(get_current_admin)
+):
+    """List all ACTIVE users (not in recycle bin) with optional search."""
     q = {"is_deleted": {"$ne": True}}
     if role:
         q["role"] = role
+    if search:
+        q["$or"] = [
+            {"name": {"$regex": search, "$options": "i"}},
+            {"email": {"$regex": search, "$options": "i"}}
+        ]
     docs = await user_collection.find(q).sort("created_at", -1).to_list(length=500)
     return [clean(d) for d in docs]
 
@@ -46,11 +56,10 @@ async def soft_delete_user(email: str, admin=Depends(get_current_admin)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found or already deleted")
         
-    # Mangle the email so the user can register a new account with the original email
     timestamp = int(datetime.now(timezone.utc).timestamp())
     mangled_email = f"deleted_{timestamp}_{email}"
     
-    result = await user_collection.update_one(
+    await user_collection.update_one(
         {"_id": user["_id"]},
         {"$set": {
             "email": mangled_email,
@@ -81,7 +90,6 @@ async def restore_user(user_id: str, admin=Depends(get_current_admin)):
     if not original_email:
         raise HTTPException(status_code=400, detail="Original email unknown, cannot restore.")
         
-    # Check if a new account has taken this email
     conflict = await user_collection.find_one({"email": original_email, "is_deleted": {"$ne": True}})
     if conflict:
         raise HTTPException(
@@ -106,3 +114,73 @@ async def force_delete_user(user_id: str, admin=Depends(get_current_admin)):
         
     await log_admin_action(admin["email"], "force_delete_user", "user", user_id)
     return {"message": "User permanently deleted."}
+
+# ── Complete Admin User 360° Activity & Profile Endpoints ──
+
+@router.get("/{user_id}/profile-summary")
+async def get_admin_user_profile_summary(user_id: str, admin=Depends(get_current_admin)):
+    """Complete 360° profile summary with registration, participation, and completion metrics."""
+    res = await UserActivityService.get_user_profile_summary(user_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="User not found")
+    return res
+
+@router.get("/{user_id}/activity")
+async def get_admin_user_activity_timeline(
+    user_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    admin=Depends(get_current_admin)
+):
+    """Unified chronological activity timeline across all Eventora activities."""
+    timeline = await UserActivityService.get_user_activity_timeline(user_id, limit=limit)
+    return {"user_id": user_id, "timeline": timeline, "total": len(timeline)}
+
+@router.get("/{user_id}/events")
+async def get_admin_user_events_history(user_id: str, admin=Depends(get_current_admin)):
+    """Complete event registration and attendance history."""
+    events = await UserActivityService.get_user_events(user_id)
+    return {"user_id": user_id, "events": events, "total": len(events)}
+
+@router.get("/{user_id}/competitions")
+async def get_admin_user_competitions_history(user_id: str, admin=Depends(get_current_admin)):
+    """Complete competition registration, submission, official rank, and award history."""
+    competitions = await UserActivityService.get_user_competitions(user_id)
+    return {"user_id": user_id, "competitions": competitions, "total": len(competitions)}
+
+@router.get("/{user_id}/courses")
+async def get_admin_user_courses_history(user_id: str, admin=Depends(get_current_admin)):
+    """Complete course enrollment and completion history."""
+    courses = await UserActivityService.get_user_courses(user_id)
+    return {"user_id": user_id, "courses": courses, "total": len(courses)}
+
+@router.get("/{user_id}/workshops")
+async def get_admin_user_workshops_history(user_id: str, admin=Depends(get_current_admin)):
+    """Complete workshop enrollment and completion history."""
+    workshops = await UserActivityService.get_user_workshops(user_id)
+    return {"user_id": user_id, "workshops": workshops, "total": len(workshops)}
+
+@router.get("/{user_id}/badges")
+async def get_admin_user_badges_history(user_id: str, admin=Depends(get_current_admin)):
+    """Complete badges earned by the user including Top Participation qualification."""
+    badges = await UserActivityService.get_user_badges(user_id)
+    return {"user_id": user_id, "badges": badges, "total": len(badges)}
+
+@router.get("/{user_id}/certificates")
+async def get_admin_user_certificates_history(user_id: str, admin=Depends(get_current_admin)):
+    """Complete certificates issued to the user (Participation and Award separate)."""
+    certs = await UserActivityService.get_user_certificates(user_id)
+    return {"user_id": user_id, "certificates": certs, "total": len(certs)}
+
+@router.get("/{user_id}/achievements")
+async def get_admin_user_achievements(user_id: str, admin=Depends(get_current_admin)):
+    """Consolidated achievements, awards, and milestones."""
+    achievements = await UserActivityService.get_user_achievements(user_id)
+    return {"user_id": user_id, "achievements": achievements}
+
+@router.get("/{user_id}/activity-summary")
+async def get_admin_user_activity_summary(user_id: str, admin=Depends(get_current_admin)):
+    """Aggregated activity summary statistics."""
+    res = await UserActivityService.get_user_profile_summary(user_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="User not found")
+    return res.get("activity_summary", {})

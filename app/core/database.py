@@ -67,3 +67,10 @@ coin_reward_lot_collection = db["coin_reward_lots"]
 coin_ledger_collection = db["coin_ledger"]
 user_wallet_collection = db["user_wallets"]
 coin_reservation_collection = db["coin_reservations"]
+
+# Certificate & Badge Collections
+award_certificate_config_collection = db['award_certificate_configs']
+certificate_job_collection = db['certificate_generation_jobs']
+badge_definition_collection = db['badge_definitions']
+badge_policy_collection = db['badge_policies']
+user_badge_award_collection = db['user_badge_awards']

@@ -496,7 +496,7 @@ async def start_finalization(comp_id: str, admin: dict = Depends(get_current_adm
     return {"message": "Finalization complete. Snapshot generated for review.", "snapshot_id": str(res.inserted_id)}
 
 @router.post("/{comp_id}/results/approve")
-async def approve_results(comp_id: str, admin: dict = Depends(get_current_admin)):
+async def approve_results_snapshot(comp_id: str, admin: dict = Depends(get_current_admin)):
     from app.core.database import db
     result_snapshots = db["result_snapshots"]
     
@@ -509,7 +509,7 @@ async def approve_results(comp_id: str, admin: dict = Depends(get_current_admin)
     return {"message": "Result snapshot approved successfully."}
 
 @router.post("/{comp_id}/results/publish")
-async def publish_results(comp_id: str, admin: dict = Depends(get_current_admin)):
+async def publish_results_snapshot(comp_id: str, admin: dict = Depends(get_current_admin)):
     from app.core.database import db
     result_snapshots = db["result_snapshots"]
     

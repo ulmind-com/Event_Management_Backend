@@ -1,8 +1,9 @@
-from fastapi import APIRouter
+﻿from fastapi import APIRouter
 from app.api.routes import (
     auth, profile, activities, registrations, bookings, merchandise, rewards,
     admin_auth, admin_cms, admin_checkin, admin_competitions, public, payments,
-    admin_courses, admin_workshops, admin_users, admin_referrals,
+    admin_courses, admin_workshops, admin_users, admin_referrals, admin_certificates,
+    admin_badges, public_certificates, user_certificates,
     advanced_competitions, judge_competitions, admin_judges, ws_live,
     public_competitions, judge_auth, admin_volunteers, volunteer_auth
 )
@@ -18,6 +19,7 @@ api_router.include_router(bookings.router, prefix="/bookings", tags=["bookings"]
 api_router.include_router(payments.router, prefix="/payments", tags=["payments"])
 api_router.include_router(merchandise.router, prefix="/merchandise", tags=["merchandise"])
 api_router.include_router(rewards.router, prefix="/rewards", tags=["rewards"])
+api_router.include_router(user_certificates.router, prefix="/users/me", tags=["user-certificates"])
 api_router.include_router(advanced_competitions.router, tags=["advanced-competitions"])
 
 # ── Judge & Volunteer APIs ──
@@ -32,6 +34,8 @@ api_router.include_router(admin_courses.router, prefix="/admin/courses", tags=["
 api_router.include_router(admin_workshops.router, prefix="/admin/workshops", tags=["admin-workshops"])
 api_router.include_router(admin_users.router, prefix="/admin/users", tags=["admin-users"])
 api_router.include_router(admin_referrals.router, prefix="/admin", tags=["admin-referrals"])
+api_router.include_router(admin_certificates.router, prefix="/admin", tags=["admin-certificates"])
+api_router.include_router(admin_badges.router, prefix="/admin/badges", tags=["admin-badges"])
 api_router.include_router(admin_checkin.router, prefix="/admin/tickets", tags=["admin-checkin"])
 api_router.include_router(admin_competitions.router, prefix="/admin/advanced-competitions", tags=["admin-advanced-competitions"])
 api_router.include_router(admin_judges.router, prefix="/admin/judges", tags=["admin-judges"])
@@ -40,6 +44,7 @@ api_router.include_router(admin_volunteers.router, prefix="/admin/volunteers", t
 # ── Public APIs ──
 api_router.include_router(public.router, prefix="/v1", tags=["public"])
 api_router.include_router(public_competitions.router, prefix="/v1", tags=["public-competitions"])
+api_router.include_router(public_certificates.router, prefix="/public/certificates", tags=["public-certificates"])
 
 # ── WebSocket (Real-time) ──
 api_router.include_router(ws_live.router, tags=["websocket-live"])

@@ -1,4 +1,4 @@
-﻿import secrets
+import secrets
 from datetime import datetime, timezone
 from bson import ObjectId
 from typing import Dict, Any, List, Optional
@@ -253,6 +253,29 @@ class CertificateService:
 
                 await certificate_collection.insert_one(doc)
                 part_created += 1
+
+                # Authoritative trigger: CERTIFICATE_AVAILABLE
+                try:
+                    from app.services.notification_service import NotificationService
+                    from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+                    from app.schemas.notification import NotificationCreate
+
+                    await NotificationService.create_notification(NotificationCreate(
+                        recipient_user_id=user_email,
+                        notification_type=NotificationType.CERTIFICATE_AVAILABLE,
+                        title="Certificate Available",
+                        message=f"Your Participation Certificate for '{comp_title}' is ready to download.",
+                        resource_type="certificate",
+                        resource_id=cert_id,
+                        action_url=f"/profile/certificates/{cert_id}",
+                        priority=NotificationPriority.HIGH,
+                        sound_category=SoundCategory.SUCCESS,
+                        deduplication_key=f"cert_avail_{cert_id}",
+                        source_module="certificates",
+                        source_event_id=competition_id,
+                    ))
+                except Exception:
+                    pass
             else:
                 already_existing += 1
 
@@ -326,6 +349,29 @@ class CertificateService:
 
                     await certificate_collection.insert_one(award_doc)
                     award_created += 1
+
+                    # Authoritative trigger: CERTIFICATE_AVAILABLE (Award)
+                    try:
+                        from app.services.notification_service import NotificationService
+                        from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+                        from app.schemas.notification import NotificationCreate
+
+                        await NotificationService.create_notification(NotificationCreate(
+                            recipient_user_id=user_email,
+                            notification_type=NotificationType.CERTIFICATE_AVAILABLE,
+                            title="Award Certificate Available!",
+                            message=f"Congratulations! Your {award_title} certificate for '{comp_title}' is ready to download.",
+                            resource_type="certificate",
+                            resource_id=award_cert_id,
+                            action_url=f"/profile/certificates/{award_cert_id}",
+                            priority=NotificationPriority.HIGH,
+                            sound_category=SoundCategory.SUCCESS,
+                            deduplication_key=f"cert_avail_{award_cert_id}",
+                            source_module="certificates",
+                            source_event_id=competition_id,
+                        ))
+                    except Exception:
+                        pass
                 else:
                     already_existing += 1
 

@@ -88,3 +88,12 @@ merchandise_order_collection = db["merchandise_orders"]
 merchandise_inventory_movement_collection = db["merchandise_inventory_movements"]
 merchandise_payment_attempt_collection = db["merchandise_payment_attempts"]
 merchandise_refund_collection = db["merchandise_refunds"]
+
+# ── Unified Notification System Collections ──
+notification_collection = db["notifications"]
+notification_preference_collection = db["notification_preferences"]
+notification_device_collection = db["notification_devices"]
+notification_delivery_collection = db["notification_deliveries"]
+notification_job_collection = db["notification_jobs"]
+notification_announcement_collection = db["notification_announcements"]
+

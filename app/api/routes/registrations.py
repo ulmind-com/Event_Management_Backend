@@ -135,6 +135,31 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
     
     await registration_collection.insert_one(new_reg)
     
+    # Authoritative trigger: REGISTRATION_CONFIRMATION (if free or fully covered by coins)
+    if final_status == "CONFIRMED":
+        try:
+            from app.services.notification_service import NotificationService
+            from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+            from app.schemas.notification import NotificationCreate
+
+            act_title = activity.get("title") or activity.get("name") or req.activity_type.capitalize()
+            await NotificationService.create_notification(NotificationCreate(
+                recipient_user_id=email,
+                notification_type=NotificationType.REGISTRATION_CONFIRMATION,
+                title=f"Registration Confirmed: {act_title}",
+                message=f"Your registration for {req.activity_type} '{act_title}' has been successfully confirmed.",
+                resource_type=req.activity_type,
+                resource_id=req.activity_id,
+                action_url=f"/{req.activity_type}s/{req.activity_id}",
+                priority=NotificationPriority.HIGH,
+                sound_category=SoundCategory.SUCCESS,
+                deduplication_key=f"reg_conf_{new_reg['_id']}",
+                source_module="registrations",
+                source_event_id=order_ref,
+            ))
+        except Exception:
+            pass
+
     # Update count
     if req.activity_type == "event":
         await event_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
@@ -142,6 +167,7 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
         await competition_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
     elif req.activity_type == "course":
         await course_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
+
 
     payment_info = None
     if payable_amount > 0.0:
@@ -263,6 +289,50 @@ async def verify_activity_registration_payment(
             "paid_at": datetime.now(timezone.utc)
         }}
     )
+
+    # Authoritative triggers: PAYMENT_CONFIRMATION and REGISTRATION_CONFIRMATION
+    try:
+        from app.services.notification_service import NotificationService
+        from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+        from app.schemas.notification import NotificationCreate
+
+        user_email = reg.get("email")
+        act_type = reg.get("activity_type", "activity")
+        act_id = reg.get("activity_id", "")
+
+        # 1. Payment confirmation
+        await NotificationService.create_notification(NotificationCreate(
+            recipient_user_id=user_email,
+            notification_type=NotificationType.PAYMENT_CONFIRMATION,
+            title="Payment Successful",
+            message=f"Your payment of ₹{reg.get('payable_amount', 0)} for order {req.order_reference} was successful.",
+            resource_type="payment",
+            resource_id=req.razorpay_payment_id,
+            action_url=f"/orders/{req.order_reference}",
+            priority=NotificationPriority.HIGH,
+            sound_category=SoundCategory.SUCCESS,
+            deduplication_key=f"pay_conf_{req.razorpay_payment_id}",
+            source_module="registrations",
+            source_event_id=req.order_reference,
+        ))
+
+        # 2. Registration confirmation
+        await NotificationService.create_notification(NotificationCreate(
+            recipient_user_id=user_email,
+            notification_type=NotificationType.REGISTRATION_CONFIRMATION,
+            title="Registration Confirmed",
+            message=f"Your registration for {act_type} has been officially confirmed.",
+            resource_type=act_type,
+            resource_id=act_id,
+            action_url=f"/{act_type}s/{act_id}",
+            priority=NotificationPriority.HIGH,
+            sound_category=SoundCategory.SUCCESS,
+            deduplication_key=f"reg_conf_{reg['_id']}",
+            source_module="registrations",
+            source_event_id=req.order_reference,
+        ))
+    except Exception:
+        pass
 
     return {
         "status": "CONFIRMED",

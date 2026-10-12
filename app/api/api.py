@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter
+from fastapi import APIRouter
 from app.api.routes import (
     auth, profile, activities, registrations, bookings, merchandise, rewards,
     admin_auth, admin_cms, admin_checkin, admin_competitions, public, payments,
@@ -7,7 +7,8 @@ from app.api.routes import (
     advanced_competitions, judge_competitions, admin_judges, ws_live,
     public_competitions, judge_auth, admin_volunteers, volunteer_auth,
     admin_vip, user_vip, vip_webhooks,
-    admin_merchandise, user_merchandise, merchandise_webhooks
+    admin_merchandise, user_merchandise, merchandise_webhooks,
+    notifications, admin_notifications, notification_ws
 )
 
 api_router = APIRouter()
@@ -24,6 +25,8 @@ api_router.include_router(admin_merchandise.router, prefix="/admin/merchandise",
 api_router.include_router(merchandise_webhooks.router, prefix="/merchandise", tags=["merchandise-webhooks"])
 api_router.include_router(rewards.router, prefix="/rewards", tags=["rewards"])
 api_router.include_router(user_certificates.router, prefix="/users/me", tags=["user-certificates"])
+api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
+api_router.include_router(notification_ws.router, prefix="/notifications", tags=["notification-ws"])
 api_router.include_router(advanced_competitions.router, tags=["advanced-competitions"])
 
 # ── Judge & Volunteer APIs ──
@@ -44,6 +47,8 @@ api_router.include_router(admin_checkin.router, prefix="/admin/tickets", tags=["
 api_router.include_router(admin_competitions.router, prefix="/admin/advanced-competitions", tags=["admin-advanced-competitions"])
 api_router.include_router(admin_judges.router, prefix="/admin/judges", tags=["admin-judges"])
 api_router.include_router(admin_volunteers.router, prefix="/admin/volunteers", tags=["admin-volunteers"])
+api_router.include_router(admin_notifications.router, prefix="/admin/notifications", tags=["admin-notifications"])
+
 
 # ── Public APIs ──
 api_router.include_router(public.router, prefix="/v1", tags=["public"])

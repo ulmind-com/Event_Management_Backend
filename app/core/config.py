@@ -1,4 +1,4 @@
-﻿import os
+import os
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -41,4 +41,23 @@ class Settings:
     FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "event-management-4fe6f")
     PROJECT_NAME = "Eventora API"
 
+    # Notification System Configuration
+    NOTIFICATIONS_ENABLED = os.getenv("NOTIFICATIONS_ENABLED", "true").lower() in ("true", "1", "yes")
+    NOTIFICATION_WEBSOCKET_ENABLED = os.getenv("NOTIFICATION_WEBSOCKET_ENABLED", "true").lower() in ("true", "1", "yes")
+    NOTIFICATION_SCHEDULER_ENABLED = os.getenv("NOTIFICATION_SCHEDULER_ENABLED", "true").lower() in ("true", "1", "yes")
+    NOTIFICATION_MAX_RETRIES = int(os.getenv("NOTIFICATION_MAX_RETRIES", "3"))
+    NOTIFICATION_BATCH_SIZE = int(os.getenv("NOTIFICATION_BATCH_SIZE", "100"))
+    NOTIFICATION_SCHEDULER_INTERVAL_SECONDS = int(os.getenv("NOTIFICATION_SCHEDULER_INTERVAL_SECONDS", "60"))
+
+    # Push Providers (FCM / APNs)
+    PUSH_PROVIDER = os.getenv("PUSH_PROVIDER", "FCM")
+    FCM_CREDENTIALS_PATH = os.getenv("FCM_CREDENTIALS_PATH", "firebase_service_account.json")
+
+    # Web Push
+    WEB_PUSH_ENABLED = os.getenv("WEB_PUSH_ENABLED", "false").lower() in ("true", "1", "yes")
+    WEB_PUSH_VAPID_PUBLIC_KEY = os.getenv("WEB_PUSH_VAPID_PUBLIC_KEY", "")
+    WEB_PUSH_VAPID_PRIVATE_KEY = os.getenv("WEB_PUSH_VAPID_PRIVATE_KEY", "")
+    WEB_PUSH_SUBJECT = os.getenv("WEB_PUSH_SUBJECT", "mailto:noreply@eventora.com")
+
 settings = Settings()
+

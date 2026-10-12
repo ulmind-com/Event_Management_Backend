@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from bson import ObjectId
 from app.core.admin_auth import get_current_admin
 from app.core.database import (
@@ -519,7 +519,38 @@ async def publish_results_snapshot(comp_id: str, admin: dict = Depends(get_curre
         
     await result_snapshots.update_one({"_id": snapshot["_id"]}, {"$set": {"is_published": True, "published_by": admin.get("email"), "published_at": datetime.now(timezone.utc)}})
     await competition_collection.update_one({"_id": ObjectId(comp_id)}, {"$set": {"result_status": "PUBLISHED"}})
+
+    # Authoritative trigger: COMPETITION_RESULT & LEADERBOARD_UPDATE
+    try:
+        from app.services.notification_service import NotificationService
+        from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+
+        comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+        comp_title = comp.get("title", "Competition") if comp else "Competition"
+
+        # Find all registered participants and submitters
+        regs = await competition_registration_collection.find({"competition_id": comp_id}).to_list(2000)
+        subs = await competition_submission_collection.find({"competition_id": comp_id}).to_list(2000)
+        recipients = list(set([r["user_email"] for r in regs if r.get("user_email")] + [s["user_email"] for s in subs if s.get("user_email")]))
+
+        if recipients:
+            await NotificationService.create_bulk_notifications(
+                recipient_emails=recipients,
+                notification_type=NotificationType.COMPETITION_RESULT,
+                title=f"Results Published: {comp_title}",
+                message=f"The official results and leaderboard rankings for '{comp_title}' are now published!",
+                resource_type="competition",
+                resource_id=comp_id,
+                action_url=f"/competitions/{comp_id}/results",
+                priority=NotificationPriority.HIGH,
+                sound_category=SoundCategory.SUCCESS,
+                dedup_prefix=f"comp_result_{comp_id}",
+            )
+    except Exception:
+        pass
+
     return {"message": "Result published officially!"}
+
 
 @router.get("/{comp_id}/overview")
 async def competition_dashboard_overview(comp_id: str, admin: dict = Depends(get_current_admin)):

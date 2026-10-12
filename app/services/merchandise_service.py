@@ -544,6 +544,30 @@ class MerchandiseService:
             }
         )
 
+        # Authoritative trigger: ORDER_UPDATE (Confirmed)
+        try:
+            from app.services.notification_service import NotificationService
+            from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+            from app.schemas.notification import NotificationCreate
+
+            await NotificationService.create_notification(NotificationCreate(
+                recipient_user_id=order.get("user_email"),
+                notification_type=NotificationType.ORDER_UPDATE,
+                title="Order Confirmed",
+                message=f"Your merchandise order #{order_number} has been confirmed.",
+                resource_type="merchandise_order",
+                resource_id=order_number,
+                action_url=f"/merchandise/orders/{order_number}",
+                priority=NotificationPriority.NORMAL,
+                sound_category=SoundCategory.SUCCESS,
+                deduplication_key=f"order_conf_{order_number}",
+                source_module="merchandise",
+                source_event_id=order_number,
+            ))
+        except Exception:
+            pass
+
+
         # 5. Send Order Confirmation Email
         try:
             EmailService.send_merchandise_order_confirmation(
@@ -624,8 +648,34 @@ class MerchandiseService:
             except Exception as e:
                 logger.warning(f"Failed to send fulfillment email: {e}")
 
+        # Authoritative trigger: ORDER_UPDATE (Status transition)
+        try:
+            from app.services.notification_service import NotificationService
+            from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+            from app.schemas.notification import NotificationCreate
+
+            order_num = order.get("order_number")
+            tracking_info = f" (Tracking: {req.tracking_number})" if req.tracking_number else ""
+            await NotificationService.create_notification(NotificationCreate(
+                recipient_user_id=order.get("user_email"),
+                notification_type=NotificationType.ORDER_UPDATE,
+                title=f"Order Status: {req.status.value}",
+                message=f"Your order #{order_num} has been updated to {req.status.value}{tracking_info}.",
+                resource_type="merchandise_order",
+                resource_id=order_num,
+                action_url=f"/merchandise/orders/{order_num}",
+                priority=NotificationPriority.NORMAL,
+                sound_category=SoundCategory.DEFAULT,
+                deduplication_key=f"order_{order_num}_{req.status.value}",
+                source_module="merchandise",
+                source_event_id=order_num,
+            ))
+        except Exception:
+            pass
+
         updated = await merchandise_order_collection.find_one({"_id": order["_id"]})
         return serialize_mongo(updated)
+
 
     # ──────────────────────────────────────────────────────────
     # Order Cancellation & Expiry Handlers

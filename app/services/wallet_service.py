@@ -232,6 +232,30 @@ class WalletService:
             upsert=True
         )
 
+        # Authoritative trigger: REWARD_COIN_UPDATE
+        try:
+            from app.services.notification_service import NotificationService
+            from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+            from app.schemas.notification import NotificationCreate
+
+            await NotificationService.create_notification(NotificationCreate(
+                recipient_user_id=user_email,
+                notification_type=NotificationType.REWARD_COIN_UPDATE,
+                title="Reward Coins Credited!",
+                message=f"You earned {coin_amount} reward coins! ({description})",
+                resource_type="wallet",
+                resource_id=txn_id,
+                action_url="/rewards",
+                priority=NotificationPriority.NORMAL,
+                sound_category=SoundCategory.COINS,
+                deduplication_key=f"coin_credit_{txn_id}",
+                source_module="wallet",
+                source_event_id=txn_id,
+                metadata={"coin_amount": coin_amount, "source_type": source_type}
+            ))
+        except Exception:
+            pass
+
         return {
             "credited": True,
             "lot_id": lot_id,

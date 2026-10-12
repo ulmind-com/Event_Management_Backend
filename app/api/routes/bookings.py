@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from bson import ObjectId
 from app.api.deps import get_current_user
 from app.core.database import booking_collection, ticket_collection, event_collection, issued_ticket_collection
@@ -32,6 +32,45 @@ async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, tic
         })
     if docs:
         await issued_ticket_collection.insert_many(docs)
+
+        # Authoritative trigger: TICKET_CONFIRMATION
+        try:
+            from app.services.notification_service import NotificationService
+            from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+            from app.schemas.notification import NotificationCreate
+
+            await NotificationService.create_notification(NotificationCreate(
+                recipient_user_id=user_email,
+                notification_type=NotificationType.TICKET_CONFIRMATION,
+                title="Tickets Confirmed",
+                message=f"Your {quantity} ticket(s) for booking {booking_ref} have been successfully issued.",
+                resource_type="booking",
+                resource_id=booking_id,
+                action_url=f"/bookings/{booking_id}",
+                priority=NotificationPriority.HIGH,
+                sound_category=SoundCategory.TICKET,
+                deduplication_key=f"ticket_conf_{booking_id}",
+                source_module="bookings",
+                source_event_id=booking_ref,
+            ))
+        except Exception as e:
+            pass
+
+        # Schedule Event Reminders
+        try:
+            from app.services.notification_scheduler import NotificationSchedulerService
+            ev = await event_collection.find_one({"_id": ObjectId(event_id)}) if ObjectId.is_valid(event_id) else None
+            if ev and ev.get("start_date"):
+                st = ev.get("start_date")
+                if isinstance(st, str):
+                    st = datetime.fromisoformat(st)
+                await NotificationSchedulerService.schedule_event_reminders(
+                    event_id=str(event_id),
+                    event_title=ev.get("title", "Event"),
+                    start_time=st
+                )
+        except Exception as e:
+            pass
 
 @router.post("/", response_model=dict)
 async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):

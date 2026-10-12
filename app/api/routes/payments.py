@@ -106,7 +106,31 @@ async def verify_razorpay_payment(
         []
     )
 
+    # Authoritative trigger: PAYMENT_CONFIRMATION
+    try:
+        from app.services.notification_service import NotificationService
+        from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+        from app.schemas.notification import NotificationCreate
+
+        await NotificationService.create_notification(NotificationCreate(
+            recipient_user_id=booking["user_email"],
+            notification_type=NotificationType.PAYMENT_CONFIRMATION,
+            title="Payment Received",
+            message=f"Your payment of ₹{booking.get('total_amount', 0)} for booking {booking['booking_reference']} has been verified.",
+            resource_type="booking",
+            resource_id=str(b_id),
+            action_url=f"/bookings/{b_id}",
+            priority=NotificationPriority.HIGH,
+            sound_category=SoundCategory.SUCCESS,
+            deduplication_key=f"pay_conf_{req.razorpay_payment_id}",
+            source_module="payments",
+            source_event_id=booking["booking_reference"],
+        ))
+    except Exception as e:
+        logger.warning(f"Failed to create payment confirmation notification: {e}")
+
     logger.info(f"Booking {booking['booking_reference']} confirmed via Razorpay payment {req.razorpay_payment_id}")
+
 
     return {
         "status": "SUCCESS",
@@ -260,6 +284,28 @@ async def handle_razorpay_booking_webhook(
                         booking["quantity"],
                         []
                     )
+                    # Authoritative trigger: PAYMENT_CONFIRMATION via webhook
+                    try:
+                        from app.services.notification_service import NotificationService
+                        from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+                        from app.schemas.notification import NotificationCreate
+
+                        await NotificationService.create_notification(NotificationCreate(
+                            recipient_user_id=booking["user_email"],
+                            notification_type=NotificationType.PAYMENT_CONFIRMATION,
+                            title="Payment Received",
+                            message=f"Payment for booking {booking['booking_reference']} was captured successfully.",
+                            resource_type="booking",
+                            resource_id=str(b_id),
+                            action_url=f"/bookings/{b_id}",
+                            priority=NotificationPriority.HIGH,
+                            sound_category=SoundCategory.SUCCESS,
+                            deduplication_key=f"pay_conf_{payment_id}",
+                            source_module="payments_webhook",
+                            source_event_id=booking_ref,
+                        ))
+                    except Exception:
+                        pass
                     logger.info(f"Webhook confirmed ticket booking {booking_ref}")
 
     return {"status": "PROCESSED"}

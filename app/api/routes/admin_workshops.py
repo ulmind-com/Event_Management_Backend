@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from typing import Optional
 from bson import ObjectId
@@ -86,7 +86,38 @@ async def toggle_workshop_publish(cid: str, data: PublishToggle, admin=Depends(g
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Workshop not found")
     await log_admin_action(admin["email"], "publish" if data.is_published else "unpublish", "workshop", cid)
+
+    # Authoritative trigger: COURSE_WORKSHOP_UPDATE (when published)
+    if data.is_published:
+        try:
+            from app.services.notification_service import NotificationService
+            from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+            from app.core.database import user_collection
+
+            ws_doc = await course_collection.find_one({"_id": oid(cid)})
+            w_title = ws_doc.get("title", "Workshop") if ws_doc else "Workshop"
+
+            # Broadcast to eligible active users
+            users = await user_collection.find({}, {"email": 1}).to_list(1000)
+            user_emails = [u["email"] for u in users if u.get("email")]
+            if user_emails:
+                await NotificationService.create_bulk_notifications(
+                    recipient_emails=user_emails,
+                    notification_type=NotificationType.COURSE_WORKSHOP_UPDATE,
+                    title=f"New Workshop Published: {w_title}",
+                    message=f"A new workshop '{w_title}' is now open for registration on Eventora!",
+                    resource_type="workshop",
+                    resource_id=cid,
+                    action_url=f"/workshops/{cid}",
+                    priority=NotificationPriority.NORMAL,
+                    sound_category=SoundCategory.DEFAULT,
+                    dedup_prefix=f"workshop_pub_{cid}",
+                )
+        except Exception:
+            pass
+
     return {"message": f"Workshop {'published' if data.is_published else 'unpublished'}"}
+
 
 @router.delete("/{cid}")
 async def delete_workshop(cid: str, admin=Depends(get_current_admin)):

@@ -8,10 +8,13 @@ from app.core.database import user_collection, otp_collection
 from app.core.security import create_access_token, decode_token, get_password_hash, verify_password
 import random
 import string
+import logging
 from datetime import datetime, timedelta, timezone, date
 from typing import Optional
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
+
 
 def generate_otp(length: int = 6) -> str:
     return "".join(random.choices(string.digits, k=length))
@@ -150,6 +153,28 @@ async def register_step3(
         await ReferralService.qualify_and_reward_referral(email)
     except Exception:
         pass
+
+    # Authoritative trigger: REGISTRATION_CONFIRMATION
+    try:
+        from app.services.notification_service import NotificationService
+        from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+        from app.schemas.notification import NotificationCreate
+
+        await NotificationService.create_notification(NotificationCreate(
+            recipient_user_id=email,
+            notification_type=NotificationType.REGISTRATION_CONFIRMATION,
+            title="Welcome to Eventora!",
+            message=f"Hi {name}, your registration is complete. Welcome to the premier event management platform!",
+            resource_type="user",
+            resource_id=email,
+            action_url="/profile",
+            priority=NotificationPriority.HIGH,
+            sound_category=SoundCategory.SUCCESS,
+            deduplication_key=f"user_welcome_{email}",
+            source_module="auth",
+        ))
+    except Exception as e:
+        logger.warning(f"Failed to create registration confirmation notification: {e}")
 
     # Return final access token for login
     access_token = create_access_token(data={"sub": email, "type": "user"})

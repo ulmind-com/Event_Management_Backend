@@ -179,9 +179,25 @@ async def get_my_tickets(current_user: dict = Depends(get_current_user)):
     tickets = await issued_ticket_collection.find({"holder_email": current_user["email"]}).to_list(length=100)
     for t in tickets:
         t["_id"] = str(t["_id"])
-        e = await event_collection.find_one({"_id": ObjectId(t["event_id"])})
-        if e:
-            t["event_title"] = e.get("title")
+        if t.get("event_id"):
+            try:
+                e = await event_collection.find_one({"_id": ObjectId(t["event_id"])})
+                if e:
+                    t["event_title"] = e.get("title")
+                    t["event_date"] = e.get("date")
+                    t["event_time"] = e.get("time")
+                    t["event_venue"] = e.get("venue")
+                    t["event_cover"] = e.get("cover_image")
+                    t["base_price"] = e.get("base_price")
+            except Exception:
+                pass
+        if t.get("booking_id"):
+            try:
+                b = await booking_collection.find_one({"_id": ObjectId(t["booking_id"])})
+                if b:
+                    t["price"] = b.get("unit_price") or b.get("total_amount")
+            except Exception:
+                pass
     return tickets
 
 @router.get("/tickets/{ticket_ref}/qr")

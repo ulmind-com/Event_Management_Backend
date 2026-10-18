@@ -285,6 +285,6 @@ async def test_register_step3_with_digilocker_zero_file():
             assert data["message"] == "Registration complete"
             assert data["kyc_verification"]["status"] == "VERIFIED"
             assert data["kyc_verification"]["aadhaar_masked"] == "XXXX-XXXX-9999"
-            assert "digilocker" in data["user"]["govt_id_proof"].lower()
+            assert "digilocker" in data["user"]["kyc_doc_uri"].lower()
 
 

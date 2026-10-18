@@ -1,4 +1,4 @@
-﻿import requests
+import requests
 import asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
 from app.core.config import settings
@@ -50,10 +50,6 @@ async def run_tests():
     reg_token = r2.json()["registration_token"]
     
     # Step 3: Register Details
-    # Because it's multipart/form-data, we need to pass a file. Let's mock a file using requests
-    files = {
-        "govt_id_proof": ("test.txt", b"test", "text/plain"),
-    }
     data = {
         "password": "Password123",
         "confirm_password": "Password123",
@@ -63,7 +59,7 @@ async def run_tests():
         "address": "123 Test St"
     }
     headers = {"Authorization": f"Bearer {reg_token}"}
-    r3 = requests.post(f"{BASE}/auth/register/step3", data=data, files=files, headers=headers)
+    r3 = requests.post(f"{BASE}/auth/register/step3", data=data, headers=headers)
     if r3.status_code == 200:
         print("  PASS [200] Register Step 3")
     else:

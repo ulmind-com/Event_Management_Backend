@@ -1,4 +1,4 @@
-﻿import requests
+import requests
 import json
 import time
 
@@ -29,14 +29,13 @@ print_result("Verify OTP", r)
 reg_token = r.json().get("registration_token")
 
 # Register details
-files = {"govt_id_proof": ("id.png", b"dummy_content", "image/png")}
 form = {
     "name": "Test User",
     "phone_number": "1234567890",
     "date_of_birth": "1995-01-01",
     "address": "123 Test St",
 }
-r = requests.post(f"{BASE_URL}/auth/register-details", data=form, files=files, headers={"authorization": f"Bearer {reg_token}"})
+r = requests.post(f"{BASE_URL}/auth/register-details", data=form, headers={"authorization": f"Bearer {reg_token}"})
 print_result("Register Details", r)
 token = r.json().get("access_token")
 headers = {"Authorization": f"Bearer {token}"}

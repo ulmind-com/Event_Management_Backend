@@ -1,4 +1,5 @@
 import pytest
+import secrets
 from httpx import AsyncClient, ASGITransport
 from motor.motor_asyncio import AsyncIOMotorClient
 from app.core.config import settings
@@ -68,9 +69,12 @@ async def test_digilocker_mobile_portal_flow():
         assert "Sign In with Mobile" in html_text
         assert "DigiLocker Document Consent" in html_text
 
+        test_mob1 = f"9{secrets.randbelow(900000000) + 100000000}"
+        test_mob2 = f"8{secrets.randbelow(900000000) + 100000000}"
+
         # 2. Portal Step 1: Send Mobile OTP from Portal
         send_res = await ac.post("/api/kyc/digilocker/portal/send-otp", json={
-            "mobile_number": "9876543210",
+            "mobile_number": test_mob1,
             "user_email": user1_email
         })
         assert send_res.status_code == 200, f"send_res failed: {send_res.text}"
@@ -122,7 +126,7 @@ async def test_digilocker_mobile_portal_flow():
 
         # 7. Test Anti-Duplicate Detection: User2 tries with the same mobile number / Aadhaar
         dup_send_res = await ac.post("/api/kyc/digilocker/portal/send-otp", json={
-            "mobile_number": "9876543210",
+            "mobile_number": test_mob1,
             "user_email": user2_email
         })
         assert dup_send_res.status_code == 409
@@ -131,7 +135,7 @@ async def test_digilocker_mobile_portal_flow():
         # 8. Test Direct Native Mobile API for App / SPA
         # User2 with a different unique mobile number
         mob_api_send = await ac.post("/api/kyc/digilocker/mobile/send-otp", json={
-            "mobile_number": "9123456789"
+            "mobile_number": test_mob2
         }, headers=headers2)
         assert mob_api_send.status_code == 200
         mob_ref_id = mob_api_send.json()["reference_id"]
@@ -150,3 +154,4 @@ async def test_digilocker_mobile_portal_flow():
         # Clean up
         await db["users"].delete_many({"email": {"$in": [user1_email, user2_email]}})
         await db["kyc_verifications"].delete_many({"user_email": {"$in": [user1_email, user2_email]}})
+

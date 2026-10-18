@@ -27,7 +27,6 @@ async def update_my_profile(
     name: Optional[str] = Form(None),
     phone_number: Optional[str] = Form(None),
     date_of_birth: Optional[str] = Form(None),
-    date_of_birth: Optional[str] = Form(None),
     address: Optional[str] = Form(None),
     parent_phone_number: Optional[str] = Form(None),
     profile_photo: Optional[UploadFile] = File(None),
@@ -41,7 +40,6 @@ async def update_my_profile(
             update_data["phone_number"] = int(phone_number.strip())
         except Exception:
             update_data["phone_number"] = phone_number.strip()
-    if date_of_birth is not None: update_data["date_of_birth"] = date_of_birth.strip()
     if date_of_birth is not None: update_data["date_of_birth"] = date_of_birth.strip()
     if address is not None: update_data["address"] = address.strip()
     if parent_phone_number is not None:

@@ -119,6 +119,17 @@ class UserActivityService:
         active_badges = sum(1 for b in badges if b.get('status') == 'ACTIVE')
         top_part_earned = any(b.get('badge_id') == 'TOP_PARTICIPATION' and b.get('status') == 'ACTIVE' for b in badges)
 
+        # ── Coin History, Courses, and Merchandise Breakdown ──
+        coin_txns = await coin_ledger_collection.find({'email': email}).sort('created_at', -1).to_list(length=100)
+        serialized_coin_txns = []
+        for t in coin_txns:
+            t_copy = dict(t)
+            t_copy['_id'] = str(t_copy.get('_id'))
+            serialized_coin_txns.append(t_copy)
+
+        user_courses = await UserActivityService.get_user_courses(user_id)
+        user_merch = await UserActivityService.get_user_merchandise_orders(user_id)
+
         return {
             'user': {
                 'id': uid_str,
@@ -151,7 +162,10 @@ class UserActivityService:
                 'total_earned_coins': total_earned_coins,
                 'total_redeemed_coins': total_redeemed_coins,
                 'reserved_coins': reserved_coins,
+                'coin_history': serialized_coin_txns,
             },
+            'courses': user_courses,
+            'merchandise_orders': user_merch,
             'achievements': {
                 'total_certificates': total_certs,
                 'total_participation_certificates': part_certs,

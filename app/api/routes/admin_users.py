@@ -117,6 +117,8 @@ async def force_delete_user(user_id: str, admin=Depends(get_current_admin)):
 
 # ── Complete Admin User 360° Activity & Profile Endpoints ──
 
+@router.get("/{user_id}")
+@router.get("/{user_id}/profile")
 @router.get("/{user_id}/profile-summary")
 async def get_admin_user_profile_summary(user_id: str, admin=Depends(get_current_admin)):
     """Complete 360° profile summary with registration, participation, and completion metrics."""

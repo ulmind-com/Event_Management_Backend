@@ -1,4 +1,4 @@
-﻿import requests
+import requests
 import asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
 from app.core.config import settings
@@ -82,9 +82,10 @@ async def run_tests():
         "max_age": 30,
         "participation_fee": 0.0,
         "is_published": True,
+        "audience_voting_enabled": True,
         "dynamic_submission_fields": [
-            {"name": "Project Video", "label": "Video", "type": "VIDEO", "required": True},
-            {"name": "GitHub Link", "label": "Code", "type": "URL", "required": True}
+            {"name": "Audition Audio", "label": "Audio", "type": "AUDIO", "required": True},
+            {"name": "Performance Link", "label": "Code", "type": "URL", "required": True}
         ],
         "judging_criteria": [
             {"name": "Innovation", "max_score": 10.0, "weight": 2.0},
@@ -105,10 +106,10 @@ async def run_tests():
     print("\n--- SUBMISSION & JUDGING ---")
     # To mock file uploads using requests
     files = [
-        ('files', ('video.mp4', b'dummy video content', 'video/mp4')),
-        ('files', ('github.txt', b'github link', 'text/plain'))
+        ('files', ('audition.mp3', b'ID3\x03\x00\x00\x00\x00\x00\x00\x00dummy audio content', 'audio/mpeg')),
+        ('files', ('link.txt', b'https://youtu.be/sample123', 'text/plain'))
     ]
-    data = {'field_names': 'Project Video, GitHub Link'}
+    data = {'field_names': 'Audition Audio, Performance Link'}
     
     r_sub = test("Submit Entry", "POST", f"{BASE}/v1/competitions/{comp_id}/submissions", data_form=data, files=files, headers=user_headers)
     sub_id = r_sub.json()["submission_id"] if r_sub and r_sub.status_code == 200 else ""

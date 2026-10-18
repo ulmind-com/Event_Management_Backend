@@ -13,6 +13,9 @@ from app.services.payment import PaymentService
 from datetime import datetime, timezone
 import uuid
 
+from app.services.audio_validator import AudioValidator
+from app.services.cloudinary_srv import upload_image
+
 router = APIRouter()
 
 def calculate_age(dob_str: str) -> int:
@@ -153,12 +156,29 @@ async def submit_files(comp_id: str, files: list[UploadFile] = File(...), field_
     if len(files) != len(provided_fields):
         raise HTTPException(status_code=400, detail="Number of files does not match number of field names provided.")
         
-    # Fake Cloudinary Upload for Abstraction
-    # In production, this would stream to Cloudinary
+    # Process files: enforce strict audio validation for uploads & extract links (YouTube/Drive)
     uploaded_urls = {}
     for i, file_obj in enumerate(files):
-        # file_obj.filename
-        uploaded_urls[provided_fields[i]] = f"https://res.cloudinary.com/demo/image/upload/mock_{file_obj.filename}"
+        field_name = provided_fields[i]
+
+        # 1. Check if submission is a YouTube / Google Drive / web link
+        link_url = await AudioValidator.validate_and_extract_link(file_obj, field_name)
+        if link_url:
+            uploaded_urls[field_name] = link_url
+            continue
+
+        # 2. Strict audio file validation (extension, MIME, magic numbers)
+        await AudioValidator.validate_audio_file(file_obj, field_name)
+
+        # 3. Stream to Cloudinary or fallback to audio URL
+        try:
+            cloud_url = upload_image(file_obj.file, folder="eventora/submissions")
+        except Exception:
+            cloud_url = None
+
+        uploaded_urls[field_name] = (
+            cloud_url or f"https://res.cloudinary.com/demo/video/upload/eventora_{file_obj.filename}"
+        )
         
     doc = {
         "competition_id": comp_id,

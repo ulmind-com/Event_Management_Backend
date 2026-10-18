@@ -42,6 +42,10 @@ async def startup_event():
     from app.core.notification_indexes import init_notification_indexes
     await init_notification_indexes()
 
+    # Initialize KYC indexes safely
+    from app.core.kyc_indexes import init_kyc_indexes
+    await init_kyc_indexes()
+
     # Start background coin expiry worker (runs periodically, fully idempotent)
     ExpiryWorker.start(interval_seconds=3600)
     # Start background notification scheduler worker

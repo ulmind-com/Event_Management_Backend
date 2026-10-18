@@ -98,7 +98,7 @@ async def register_step3(
     govt_id_proof: UploadFile = File(...),
     authorization: str = Header(...)
 ):
-    """Step 3: Setup password, profile details, and complete registration."""
+    """Step 3: Setup password, profile details, KYC verification, and complete registration."""
     token = authorization.replace("Bearer ", "").strip()
     payload = decode_token(token)
     if not payload or payload.get("type") != "registration":
@@ -115,7 +115,33 @@ async def register_step3(
 
     final_age = calculate_age(dob)
 
+    # Read Aadhaar card image bytes BEFORE uploading to Cloudinary
     govt_id_content = await govt_id_proof.read()
+
+    # ══════════════════════════════════════════════
+    # AADHAAR KYC VERIFICATION (Automatic)
+    # ══════════════════════════════════════════════
+    kyc_result = None
+    try:
+        from app.services.aadhaar_kyc_service import AadhaarKYCService
+
+        kyc_result = await AadhaarKYCService.verify_and_register(
+            email, govt_id_content, filename=govt_id_proof.filename
+        )
+
+        # BLOCK registration if DUPLICATE Aadhaar detected
+        if kyc_result.get("kyc_status") == "DUPLICATE":
+            raise HTTPException(
+                status_code=409,
+                detail=kyc_result.get("message", "This Aadhaar card is already registered with another account. Duplicate registrations are not allowed.")
+            )
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions (e.g., 409 duplicate)
+    except Exception as e:
+        logger.warning(f"KYC verification encountered an error (non-blocking): {e}")
+        kyc_result = {"kyc_status": "EXTRACTION_FAILED", "aadhaar_masked": None, "message": str(e)}
+
+    # Upload Aadhaar card image to Cloudinary
     govt_id_url = upload_image(govt_id_content, folder="eventora/gov_ids")
     if not govt_id_url:
         raise HTTPException(status_code=500, detail="Failed to upload ID")
@@ -143,6 +169,13 @@ async def register_step3(
         "registration_complete": True,
         "updated_at": datetime.now(timezone.utc),
     }
+
+    # Attach KYC status to user profile
+    if kyc_result:
+        update_data["kyc_status"] = kyc_result.get("kyc_status", "PENDING")
+        update_data["kyc_aadhaar_masked"] = kyc_result.get("aadhaar_masked")
+        if kyc_result.get("kyc_status") == "VERIFIED":
+            update_data["kyc_verified_at"] = datetime.now(timezone.utc)
 
     await user_collection.update_one({"email": email}, {"$set": update_data})
     await otp_collection.delete_one({"email": email})
@@ -178,12 +211,23 @@ async def register_step3(
 
     # Return final access token for login
     access_token = create_access_token(data={"sub": email, "type": "user"})
-    return {
+
+    response_data = {
         "message": "Registration complete",
         "access_token": access_token,
         "token_type": "bearer",
-        "user": update_data
+        "user": update_data,
     }
+
+    # Include KYC verification result in response
+    if kyc_result:
+        response_data["kyc_verification"] = {
+            "status": kyc_result.get("kyc_status"),
+            "aadhaar_masked": kyc_result.get("aadhaar_masked"),
+            "message": kyc_result.get("message"),
+        }
+
+    return response_data
 
 # ══════════════════════════════════════════════
 # EXISTING USER LOGIN (Email + Password)

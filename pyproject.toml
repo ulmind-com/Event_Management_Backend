@@ -23,6 +23,8 @@ dependencies = [
     "reportlab>=5.0.1",
     "resend>=2.49.1",
     "slowapi>=0.1.10",
+    "pypdf>=6.21.0",
+    "pytesseract>=0.3.10",
     "uvicorn>=0.54.0",
     "websockets>=17.2",
 ]

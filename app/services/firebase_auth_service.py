@@ -91,11 +91,7 @@ class FirebaseAuthService:
             except HTTPException:
                 raise
             except Exception as e:
-                logger.warning(f"Firebase Admin SDK token verification rejected: {e}")
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid or expired Google authentication token."
-                )
+                logger.warning(f"Firebase Admin SDK token verification rejected: {e}. Falling back to tokeninfo endpoint.")
 
         # Attempt 2: Fallback to Google TokenInfo Endpoint
         expected_project_id = getattr(settings, "FIREBASE_PROJECT_ID", "event-management-4fe6f")

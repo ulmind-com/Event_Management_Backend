@@ -1,3 +1,4 @@
+
 import os
 from dotenv import load_dotenv
 
@@ -58,6 +59,14 @@ class Settings:
     WEB_PUSH_VAPID_PUBLIC_KEY = os.getenv("WEB_PUSH_VAPID_PUBLIC_KEY", "")
     WEB_PUSH_VAPID_PRIVATE_KEY = os.getenv("WEB_PUSH_VAPID_PRIVATE_KEY", "")
     WEB_PUSH_SUBJECT = os.getenv("WEB_PUSH_SUBJECT", "mailto:noreply@eventora.com")
+
+    # Aadhaar KYC & DigiLocker Verification
+    AADHAAR_HASH_SALT = os.getenv("AADHAAR_HASH_SALT", "eventora_kyc_salt_v1_production")
+    TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")  # e.g. "C:\\Program Files\\Tesseract-OCR\\tesseract.exe" on Windows
+    DIGILOCKER_CLIENT_ID = os.getenv("DIGILOCKER_CLIENT_ID", "")
+    DIGILOCKER_CLIENT_SECRET = os.getenv("DIGILOCKER_CLIENT_SECRET", "")
+    DIGILOCKER_REDIRECT_URI = os.getenv("DIGILOCKER_REDIRECT_URI", "https://api.eventora.com/api/v1/kyc/digilocker/callback")
+    DIGILOCKER_ENV = os.getenv("DIGILOCKER_ENV", "sandbox")  # "sandbox" or "production"
 
 settings = Settings()
 

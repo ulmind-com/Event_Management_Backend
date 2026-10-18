@@ -97,3 +97,7 @@ notification_delivery_collection = db["notification_deliveries"]
 notification_job_collection = db["notification_jobs"]
 notification_announcement_collection = db["notification_announcements"]
 
+# ── Aadhaar KYC Verification Collection ──
+kyc_verification_collection = db["kyc_verifications"]
+
+

@@ -72,7 +72,8 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user)):
     
     # 1. Fetch Registrations (Events & Courses)
     events = await registration_collection.find({"email": email, "activity_type": "event"}).to_list(length=100)
-    courses = await registration_collection.find({"email": email, "activity_type": "course"}).to_list(length=100)
+    # Workshops are a kind of course on the backend, so surface both under my_courses.
+    courses = await registration_collection.find({"email": email, "activity_type": {"$in": ["course", "workshop"]}}).to_list(length=100)
     
     # 2. Fetch Competitions and extract Rank
     competitions = await registration_collection.find({"email": email, "activity_type": "competition"}).to_list(length=100)

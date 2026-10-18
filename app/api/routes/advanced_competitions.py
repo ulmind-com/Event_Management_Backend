@@ -84,10 +84,51 @@ async def register_competition(comp_id: str, rules_accepted: bool = False, user:
     if not eligibility.get("eligible"):
         raise HTTPException(status_code=403, detail=eligibility.get("reason"))
         
-    # Check duplicate
+    # Check duplicate or pending registration
     existing = await competition_registration_collection.find_one({"competition_id": comp_id, "user_email": user["email"]})
     if existing:
-        raise HTTPException(status_code=409, detail="Already registered for this competition")
+        if existing.get("status") == RegistrationStatus.CONFIRMED.value or existing.get("payment_status") in (PaymentStatus.PAID.value, PaymentStatus.NOT_REQUIRED.value):
+            raise HTTPException(status_code=409, detail="Already registered and confirmed for this competition.")
+        
+        fee = float(comp.get("participation_fee", existing.get("fee", 0.0)))
+        reg_ref = existing.get("registration_reference") or f"CRG-{uuid.uuid4().hex[:10].upper()}"
+
+        if fee == 0.0:
+            await competition_registration_collection.update_one(
+                {"_id": existing["_id"]},
+                {"$set": {
+                    "status": RegistrationStatus.CONFIRMED.value,
+                    "payment_status": PaymentStatus.NOT_REQUIRED.value,
+                    "registered_at": datetime.now(timezone.utc)
+                }}
+            )
+            try:
+                await competition_collection.update_one(
+                    {"_id": ObjectId(comp_id)},
+                    {"$inc": {"registered_count": 1}}
+                )
+            except Exception:
+                pass
+            return {"message": "Registration confirmed.", "status": RegistrationStatus.CONFIRMED.value, "reference": reg_ref}
+        
+        # If registration is pending payment, re-initiate payment gateway order
+        payment_info = await PaymentService.initiate_payment(
+            booking_reference=reg_ref,
+            amount=fee,
+            currency="INR",
+            notes={
+                "type": "competition_registration",
+                "competition_id": comp_id,
+                "user_email": user["email"],
+                "registration_reference": reg_ref
+            }
+        )
+        return {
+            "message": "Registration pending payment. Please proceed to payment.",
+            "status": RegistrationStatus.PENDING.value,
+            "payment_info": payment_info,
+            "reference": reg_ref
+        }
         
     fee = float(comp.get("participation_fee", 0.0))
     reg_ref = f"CRG-{uuid.uuid4().hex[:10].upper()}"

@@ -299,12 +299,44 @@ class VIPService:
         if b_end and now_utc > b_end:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="VIP pass booking window has closed.")
 
+        # Clean up any expired pending reservations for this user and config
+        await vip_booking_collection.update_many(
+            {
+                "configuration_id": str(config["_id"]),
+                "user_email": user_email,
+                "booking_status": "PENDING_PAYMENT",
+                "expires_at": {"$lte": now_utc}
+            },
+            {"$set": {"booking_status": "EXPIRED", "expired_at": now_utc}}
+        )
+
+        # Check if user already has an active pending payment reservation
+        active_pending = await vip_booking_collection.find_one({
+            "configuration_id": str(config["_id"]),
+            "user_email": user_email,
+            "booking_status": "PENDING_PAYMENT",
+            "expires_at": {"$gt": now_utc}
+        })
+        if active_pending:
+            active_pending["booking_id"] = str(active_pending["_id"])
+            active_pending["capacity"] = await VIPService.calculate_capacity_stats(config)
+            
+            p_order = VIPPaymentGatewayAdapter.create_order(
+                booking_id=str(active_pending["_id"]),
+                booking_reference=active_pending.get("booking_reference"),
+                amount=float(active_pending.get("total_amount", 0.0)),
+                currency=active_pending.get("currency", "INR"),
+                user_email=user_email
+            )
+            active_pending["payment_details"] = p_order
+            return serialize_mongo(active_pending)
+
         # 3. Enforce Per-User Booking Limits
         max_user_limit = int(config.get("max_passes_per_user", 1))
         existing_user_count = await vip_booking_collection.count_documents({
             "configuration_id": str(config["_id"]),
             "user_email": user_email,
-            "booking_status": {"$in": ["CONFIRMED", "PENDING_PAYMENT"]}
+            "booking_status": "CONFIRMED"
         })
         if (existing_user_count + req.quantity) > max_user_limit:
             raise HTTPException(

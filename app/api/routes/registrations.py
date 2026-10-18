@@ -15,7 +15,7 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
     """Register for an event, competition, or course"""
     email = current_user["email"]
     
-    # Check if already registered
+    # Check if already registered or pending payment
     existing = await registration_collection.find_one({
         "email": email, 
         "activity_id": req.activity_id,
@@ -23,7 +23,55 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
     })
     
     if existing:
-        raise HTTPException(status_code=400, detail="Already registered for this activity")
+        if existing.get("status") == "CONFIRMED":
+            raise HTTPException(status_code=400, detail="Already registered for this activity")
+        elif existing.get("status") == "PENDING_PAYMENT":
+            order_ref = existing.get("order_reference")
+            payable_amount = float(existing.get("payable_amount", 0.0))
+            if payable_amount == 0.0:
+                await registration_collection.update_one(
+                    {"_id": existing["_id"]},
+                    {"$set": {"status": "CONFIRMED", "payment_status": "NOT_REQUIRED"}}
+                )
+                try:
+                    obj_id = ObjectId(req.activity_id)
+                    if req.activity_type == "event":
+                        await event_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
+                    elif req.activity_type == "competition":
+                        await competition_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
+                    elif req.activity_type in ("course", "workshop"):
+                        await course_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
+                except Exception:
+                    pass
+                return {
+                    "message": "Registration confirmed.",
+                    "registration_id": str(existing["_id"]),
+                    "status": "CONFIRMED",
+                    "payable_amount": 0.0,
+                    "order_reference": order_ref
+                }
+
+            # Re-initiate payment gateway order for pending registration
+            from app.services.payment import PaymentService
+            payment_info = await PaymentService.initiate_payment(
+                booking_reference=order_ref,
+                amount=payable_amount,
+                currency="INR",
+                notes={
+                    "type": f"{req.activity_type}_registration",
+                    "activity_id": req.activity_id,
+                    "user_email": email,
+                    "order_reference": order_ref
+                }
+            )
+            return {
+                "message": "Registration pending payment. Please proceed to payment.",
+                "registration_id": str(existing["_id"]),
+                "status": "PENDING_PAYMENT",
+                "payable_amount": payable_amount,
+                "order_reference": order_ref,
+                "payment_info": payment_info
+            }
 
     # Validate activity exists and eligibility
     try:
@@ -72,7 +120,11 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
             raise HTTPException(status_code=400, detail="Registration closed")
             
         capacity = activity.get("available_seats", 0)
-        registered_count = await registration_collection.count_documents({"activity_id": req.activity_id, "activity_type": req.activity_type})
+        registered_count = await registration_collection.count_documents({
+            "activity_id": req.activity_id,
+            "activity_type": req.activity_type,
+            "status": "CONFIRMED"
+        })
         if registered_count >= capacity:
             raise HTTPException(status_code=400, detail="Activity is full")
 
@@ -171,13 +223,14 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
         except Exception:
             pass
 
-    # Update count
-    if req.activity_type == "event":
-        await event_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
-    elif req.activity_type == "competition":
-        await competition_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
-    elif req.activity_type == "course":
-        await course_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
+    # Update count if free or confirmed immediately
+    if final_status == "CONFIRMED":
+        if req.activity_type == "event":
+            await event_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
+        elif req.activity_type == "competition":
+            await competition_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
+        elif req.activity_type == "course":
+            await course_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
 
 
     payment_info = None
@@ -300,6 +353,21 @@ async def verify_activity_registration_payment(
             "paid_at": datetime.now(timezone.utc)
         }}
     )
+
+    # Increment registered_count on activity upon successful payment verification
+    try:
+        act_id = reg.get("activity_id")
+        act_type = reg.get("activity_type")
+        if act_id and ObjectId.is_valid(str(act_id)):
+            act_obj_id = ObjectId(str(act_id))
+            if act_type == "event":
+                await event_collection.update_one({"_id": act_obj_id}, {"$inc": {"registered_count": 1}})
+            elif act_type == "competition":
+                await competition_collection.update_one({"_id": act_obj_id}, {"$inc": {"registered_count": 1}})
+            elif act_type in ("course", "workshop"):
+                await course_collection.update_one({"_id": act_obj_id}, {"$inc": {"registered_count": 1}})
+    except Exception:
+        pass
 
     # Authoritative triggers: PAYMENT_CONFIRMATION and REGISTRATION_CONFIRMATION
     try:

@@ -6,7 +6,7 @@ from app.core.database import (
     user_collection, registration_collection, booking_collection, order_collection,
     certificate_collection, reward_collection, user_badge_award_collection,
     competition_collection, competition_registration_collection,
-    competition_submission_collection, judge_score_collection
+    competition_submission_collection, judge_score_collection, merchandise_order_collection
 )
 from app.schemas.profile import ProfileUpdateReq, ProfileUpdateRes, DashboardRes
 from app.services.cloudinary_srv import upload_image
@@ -72,13 +72,19 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user)):
     
     # 1. Fetch Registrations (Events & Courses)
     events = await registration_collection.find({"email": email, "activity_type": "event"}).to_list(length=100)
+    for ev in events:
+        ev["is_confirmed"] = (ev.get("status") == "CONFIRMED" or ev.get("payment_status") in ("PAID", "NOT_REQUIRED"))
+
     # Workshops are a kind of course on the backend, so surface both under my_courses.
     courses = await registration_collection.find({"email": email, "activity_type": {"$in": ["course", "workshop"]}}).to_list(length=100)
+    for cr in courses:
+        cr["is_confirmed"] = (cr.get("status") == "CONFIRMED" or cr.get("payment_status") in ("PAID", "NOT_REQUIRED"))
     
     # 2. Fetch Competitions and extract Rank
     competitions = await registration_collection.find({"email": email, "activity_type": "competition"}).to_list(length=100)
     my_ranks = []
     for comp in competitions:
+        comp["is_confirmed"] = (comp.get("status") == "CONFIRMED" or comp.get("payment_status") in ("PAID", "NOT_REQUIRED"))
         if "rank" in comp:
             my_ranks.append({
                 "competition_id": str(comp.get("activity_id")),
@@ -102,6 +108,7 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user)):
             score_val = ar.get("score") or (score_doc.get("score") if score_doc else None)
             
             c_title = c_info.get("title") if c_info else "Competition"
+            is_confirmed = (ar.get("status") == "CONFIRMED" or ar.get("payment_status") in ("PAID", "NOT_REQUIRED"))
             comp_entry = {
                 "_id": str(ar["_id"]),
                 "registration_reference": ar.get("registration_reference"),
@@ -110,6 +117,7 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user)):
                 "name": c_title,
                 "status": ar.get("status"),
                 "payment_status": ar.get("payment_status"),
+                "is_confirmed": is_confirmed,
                 "fee": ar.get("fee", 0),
                 "has_submitted": bool(sub),
                 "submission_id": str(sub["_id"]) if sub else None,
@@ -130,10 +138,20 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user)):
         pass
     
     # 3. Fetch Bookings (Tickets)
-    tickets = await booking_collection.find({"email": email}).to_list(length=100)
+    tickets = await booking_collection.find({"$or": [{"user_email": email}, {"email": email}]}).to_list(length=100)
+    for t in tickets:
+        t["is_confirmed"] = (t.get("booking_status") == "CONFIRMED" or t.get("payment_status") in ("PAID", "NOT_REQUIRED"))
     
     # 4. Fetch Merchandise Orders
-    orders = await order_collection.find({"email": email}).to_list(length=100)
+    orders = await order_collection.find({"$or": [{"user_email": email}, {"email": email}]}).to_list(length=100)
+    try:
+        merch_orders = await merchandise_order_collection.find({"$or": [{"user_email": email}, {"email": email}]}).to_list(length=100)
+        existing_order_ids = {str(o.get("_id")) for o in orders}
+        for mo in merch_orders:
+            if str(mo.get("_id")) not in existing_order_ids:
+                orders.append(mo)
+    except Exception:
+        pass
     
     # 5. Fetch Certificates
     certs = await certificate_collection.find({"$or": [{"email": email}, {"user_email": email}]}).to_list(length=100)

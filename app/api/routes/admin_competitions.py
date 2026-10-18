@@ -47,23 +47,60 @@ async def list_competitions(admin: dict = Depends(get_current_admin)):
         c["_id"] = str(c["_id"])
     return comps
 
+@router.get("/{comp_id}")
+async def get_competition(comp_id: str, admin: dict = Depends(get_current_admin)):
+    """Fetch single competition details for Admin."""
+    try:
+        c_id = ObjectId(comp_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid competition ID")
+    comp = await competition_collection.find_one({"_id": c_id})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+    comp["_id"] = str(comp["_id"])
+    return comp
+
 @router.patch("/{comp_id}")
+@router.put("/{comp_id}")
 async def update_competition(comp_id: str, req: CompetitionUpdateReq, admin: dict = Depends(get_current_admin)):
     """Updates competition fields."""
-    update_data = {k: v for k, v in req.model_dump().items() if v is not None}
+    try:
+        c_id = ObjectId(comp_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid competition ID")
+
+    update_data = req.model_dump(exclude_unset=True)
     if not update_data:
         return {"message": "No fields to update"}
+
+    # Validation: min_age cannot exceed max_age if both are provided
+    if update_data.get("min_age") is not None and update_data.get("max_age") is not None:
+        if update_data["min_age"] > update_data["max_age"]:
+            raise HTTPException(status_code=400, detail="Minimum age cannot be greater than maximum age.")
+        
+    if "audience_voting_enabled" in update_data:
+        update_data["voting_status"] = "OPEN" if update_data["audience_voting_enabled"] else "CLOSED"
+    if "judge_scoring_enabled" in update_data:
+        update_data["judging_status"] = "OPEN" if update_data["judge_scoring_enabled"] else "CLOSED"
         
     update_data["updated_at"] = datetime.now(timezone.utc)
     
     res = await competition_collection.update_one(
-        {"_id": ObjectId(comp_id)},
+        {"_id": c_id},
         {"$set": update_data}
     )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Competition not found")
         
-    return {"message": "Competition updated successfully"}
+    updated_comp = await competition_collection.find_one({"_id": c_id})
+    if updated_comp:
+        updated_comp["_id"] = str(updated_comp["_id"])
+        
+    return {
+        "message": "Competition updated successfully",
+        "competition": updated_comp,
+        **(updated_comp or {})
+    }
 
 @router.post("/{comp_id}/publish")
 async def publish_competition(comp_id: str, admin: dict = Depends(get_current_admin)):

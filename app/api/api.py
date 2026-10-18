@@ -56,6 +56,7 @@ api_router.include_router(admin_kyc.router, prefix="/admin/kyc", tags=["admin-ky
 # ── Public APIs ──
 api_router.include_router(public.router, prefix="/v1", tags=["public"])
 api_router.include_router(public_competitions.router, prefix="/v1", tags=["public-competitions"])
+api_router.include_router(public_competitions.router, prefix="/public", tags=["public-competitions"])
 api_router.include_router(public_certificates.router, prefix="/public/certificates", tags=["public-certificates"])
 
 # ── WebSocket (Real-time) ──

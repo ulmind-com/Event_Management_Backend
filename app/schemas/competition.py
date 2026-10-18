@@ -1,4 +1,4 @@
-﻿from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -73,8 +73,33 @@ class CompetitionUpdateReq(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     image_url: Optional[str] = None
+    type: Optional[str] = None
+    category: Optional[str] = None
+    
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    registration_start_date: Optional[datetime] = None
+    registration_deadline: Optional[datetime] = None
+    submission_deadline: Optional[datetime] = None
+    
+    min_age: Optional[int] = None
+    max_age: Optional[int] = None
+    allowed_age_groups: Optional[List[str]] = None
+    
+    participation_fee: Optional[float] = None
+    currency: Optional[str] = None
+    max_participants: Optional[int] = None
+    
     is_published: Optional[bool] = None
-    # Add other fields as needed for partial updates
+    audience_voting_enabled: Optional[bool] = None
+    judge_scoring_enabled: Optional[bool] = None
+    audience_vote_weight: Optional[float] = None
+    judge_score_weight: Optional[float] = None
+    
+    rules: Optional[CompetitionRules] = None
+    dynamic_submission_fields: Optional[List[DynamicFieldConfig]] = None
+    judging_criteria: Optional[List[JudgingCriterion]] = None
+
 
 
 class VotingStatus(str, Enum):

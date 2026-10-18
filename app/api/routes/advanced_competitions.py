@@ -24,6 +24,19 @@ def calculate_age(dob_str: str) -> int:
     except:
         return -1
 
+@router.get("/v1/competitions/{comp_id}")
+async def get_competition_by_id(comp_id: str):
+    """Fetch single competition details."""
+    try:
+        c_id = ObjectId(comp_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid competition ID")
+    comp = await competition_collection.find_one({"_id": c_id})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+    comp["_id"] = str(comp["_id"])
+    return comp
+
 @router.get("/v1/competitions/{comp_id}/eligibility")
 async def check_eligibility(comp_id: str, user: dict = Depends(get_current_user)):
     """Checks user eligibility based on age."""

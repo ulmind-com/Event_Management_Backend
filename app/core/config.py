@@ -83,5 +83,11 @@ class Settings:
     )
     DIGILOCKER_ENV = os.getenv("DIGILOCKER_ENV", "production")  # "production" or "sandbox"
 
+    # SMS Gateway Configuration (Fast2SMS / Twilio)
+    FAST2SMS_API_KEY = os.getenv("FAST2SMS_API_KEY", "")
+    TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+    TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
+    TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "")
+
 settings = Settings()
 

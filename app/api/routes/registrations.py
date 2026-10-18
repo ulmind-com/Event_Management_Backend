@@ -52,12 +52,23 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
             
         start_at = activity.get("registration_start_at")
         end_at = activity.get("registration_end_at")
-        
-        # Make sure they are datetimes, though motor/pymongo returns datetime objects
-        if start_at and now < start_at.replace(tzinfo=timezone.utc) if start_at.tzinfo is None else start_at:
+
+        # Normalise to timezone-aware datetimes before comparing. The windows are
+        # optional — a course with no start/end simply has no such gate. (The old
+        # one-liner crashed with AttributeError when start_at/end_at were None,
+        # because the `… if start_at.tzinfo is None …` ternary dereferenced None.)
+        def _aware(dt):
+            if not dt:
+                return None
+            return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+        start_aware = _aware(start_at)
+        end_aware = _aware(end_at)
+
+        if start_aware and now < start_aware:
             raise HTTPException(status_code=400, detail="Registration has not opened yet (UPCOMING)")
-            
-        if end_at and now >= end_at.replace(tzinfo=timezone.utc) if end_at.tzinfo is None else end_at:
+
+        if end_aware and now >= end_aware:
             raise HTTPException(status_code=400, detail="Registration closed")
             
         capacity = activity.get("available_seats", 0)

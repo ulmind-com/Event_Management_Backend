@@ -10,9 +10,12 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_user_allow_incomplete
+from app.core.security import decode_token
+from app.core.database import user_collection
 from app.services.aadhaar_kyc_service import AadhaarKYCService
 from app.services.digilocker_service import DigiLockerService
 
@@ -47,6 +50,11 @@ class DigiLockerMobileSendOTPReq(BaseModel):
         description="10-digit mobile number registered with DigiLocker",
         json_schema_extra={"example": "9876543210"},
     )
+    user_email: Optional[str] = Field(
+        None,
+        description="User email (optional if Authorization Bearer token is provided)",
+        json_schema_extra={"example": "user@example.com"},
+    )
 
 
 class DigiLockerMobileVerifyOTPReq(BaseModel):
@@ -56,13 +64,18 @@ class DigiLockerMobileVerifyOTPReq(BaseModel):
     )
     otp: str = Field(
         ...,
-        description="6-digit OTP sent to mobile",
+        description="6-digit OTP sent to mobile (use 123456 in Sandbox)",
         json_schema_extra={"example": "123456"},
     )
     security_pin: Optional[str] = Field(
-        None,
-        description="6-digit DigiLocker Security PIN",
+        "123456",
+        description="6-digit DigiLocker Security PIN (default 123456 in Sandbox)",
         json_schema_extra={"example": "123456"},
+    )
+    user_email: Optional[str] = Field(
+        None,
+        description="User email (optional if Authorization Bearer token is provided)",
+        json_schema_extra={"example": "user@example.com"},
     )
 
 
@@ -103,6 +116,31 @@ async def get_kyc_user(current_user: dict = Depends(get_current_user_allow_incom
     """
     _require_user_role(current_user)
     return current_user
+
+
+optional_bearer = HTTPBearer(auto_error=False)
+
+
+async def get_optional_kyc_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_bearer),
+) -> Optional[dict]:
+    """
+    Optional user dependency: Extracts user from Bearer token if provided,
+    otherwise returns None without raising a 401 error.
+    """
+    if not credentials:
+        return None
+    token = credentials.credentials
+    payload = decode_token(token)
+    if not payload:
+        return None
+    email = payload.get("sub")
+    if not email:
+        return None
+    user = await user_collection.find_one({"email": email})
+    if user:
+        _require_user_role(user)
+    return user
 
 
 # ════════════════════════════════════════════════
@@ -219,14 +257,20 @@ async def get_my_kyc_status(current_user: dict = Depends(get_kyc_user)):
 )
 async def digilocker_mobile_send_otp(
     req: DigiLockerMobileSendOTPReq,
-    current_user: dict = Depends(get_kyc_user),
+    current_user: Optional[dict] = Depends(get_optional_kyc_user),
 ):
     """
     DigiLocker Mobile Number Verification - Step 1:
     - User provides 10-digit mobile number.
     - DigiLocker verifies format, blocks duplicates, and dispatches OTP.
+    - Supports 'Authorization: Bearer <token>' header OR 'user_email' in body.
     """
-    email = current_user["email"]
+    email = (current_user and current_user.get("email")) or req.user_email
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User email is required. Please provide 'Authorization: Bearer <token>' or 'user_email' in JSON body.",
+        )
     result = await DigiLockerService.send_mobile_otp(email, req.mobile_number)
     if not result.get("success"):
         if result.get("is_duplicate"):
@@ -241,15 +285,16 @@ async def digilocker_mobile_send_otp(
 )
 async def digilocker_mobile_verify_otp(
     req: DigiLockerMobileVerifyOTPReq,
-    current_user: dict = Depends(get_kyc_user),
+    current_user: Optional[dict] = Depends(get_optional_kyc_user),
 ):
     """
     DigiLocker Mobile Number Verification - Step 2:
     - Verifies 6-digit OTP and 6-digit Security PIN.
     - Pulls verified citizen identity directly from DigiLocker.
     - Completes Govt ID KYC verification without requiring any document upload!
+    - Supports 'Authorization: Bearer <token>' header OR 'user_email' in body.
     """
-    email = current_user["email"]
+    email = (current_user and current_user.get("email")) or req.user_email
     result = await DigiLockerService.verify_mobile_otp(
         reference_id=req.reference_id,
         otp=req.otp,

@@ -60,14 +60,16 @@ class Settings:
     WEB_PUSH_VAPID_PRIVATE_KEY = os.getenv("WEB_PUSH_VAPID_PRIVATE_KEY", "")
     WEB_PUSH_SUBJECT = os.getenv("WEB_PUSH_SUBJECT", "mailto:noreply@eventora.com")
 
-    # Aadhaar KYC & DigiLocker Verification
+    # Aadhaar KYC & DigiLocker Hashing
     AADHAAR_HASH_SALT = os.getenv("AADHAAR_HASH_SALT", "eventora_kyc_salt_v1_production")
-    TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")  # e.g. "C:\\Program Files\\Tesseract-OCR\\tesseract.exe" on Windows
-    DIGILOCKER_CLIENT_ID = os.getenv("DIGILOCKER_CLIENT_ID", "EVENTORA_DIGILOCKER_PROD")
+    TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")
+
+    # DigiLocker Official Government OAuth 2.0 Integration
+    DIGILOCKER_CLIENT_ID = os.getenv("DIGILOCKER_CLIENT_ID", "")
     DIGILOCKER_CLIENT_SECRET = os.getenv("DIGILOCKER_CLIENT_SECRET", "")
     DIGILOCKER_REDIRECT_URI = os.getenv(
         "DIGILOCKER_REDIRECT_URI",
-        "https://event-management-company-project.onrender.com/api/kyc/digilocker/callback",
+        "http://localhost:8000/api/digilocker/callback",
     )
     DIGILOCKER_AUTH_URL = os.getenv(
         "DIGILOCKER_AUTH_URL",
@@ -77,17 +79,20 @@ class Settings:
         "DIGILOCKER_TOKEN_URL",
         "https://api.digitallocker.gov.in/public/oauth2/1/token",
     )
+    DIGILOCKER_USER_INFO_URL = os.getenv(
+        "DIGILOCKER_USER_INFO_URL",
+        "https://api.digitallocker.gov.in/public/oauth2/1/user",
+    )
     DIGILOCKER_EAADHAAR_URL = os.getenv(
         "DIGILOCKER_EAADHAAR_URL",
         "https://api.digitallocker.gov.in/public/oauth2/2/xml/eaadhaar",
     )
-    DIGILOCKER_ENV = os.getenv("DIGILOCKER_ENV", "production")  # "production" or "sandbox"
-
-    # SMS Gateway Configuration (Fast2SMS / Twilio)
-    FAST2SMS_API_KEY = os.getenv("FAST2SMS_API_KEY", "")
-    TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
-    TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
-    TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "")
+    DIGILOCKER_REVOKE_URL = os.getenv(
+        "DIGILOCKER_REVOKE_URL",
+        "https://api.digitallocker.gov.in/public/oauth2/1/revoke",
+    )
+    DIGILOCKER_ENV = os.getenv("DIGILOCKER_ENV", "sandbox")  # "sandbox" or "production"
+    DIGILOCKER_SCOPE = os.getenv("DIGILOCKER_SCOPE", "openid profile eaadhaar")
 
 settings = Settings()
 

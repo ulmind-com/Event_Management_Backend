@@ -9,12 +9,13 @@ from app.api.routes import (
     admin_vip, user_vip, vip_webhooks,
     admin_merchandise, user_merchandise, merchandise_webhooks,
     notifications, admin_notifications, notification_ws,
-    admin_kyc, user_kyc
+    admin_kyc, user_kyc, digilocker
 )
 
 api_router = APIRouter()
 
 # ── User APIs ──
+api_router.include_router(digilocker.router, prefix="/digilocker", tags=["digilocker-oauth"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(profile.router, prefix="/profile", tags=["profile"])
 api_router.include_router(activities.router, prefix="/activities", tags=["activities"])

@@ -374,71 +374,13 @@ class DigiLockerService:
             return None
 
     @classmethod
-    async def _dispatch_sms_via_gateway(cls, mobile: str, otp: str) -> bool:
-        """
-        Dispatches real SMS to citizen's Indian mobile number via configured SMS Gateway:
-          1. Fast2SMS (Indian instant OTP gateway)
-          2. Twilio (Global SMS)
-        """
-        clean_mob = "".join(ch for ch in mobile if ch.isdigit())[-10:]
-        
-        # 1. Fast2SMS
-        fast2sms_key = getattr(settings, "FAST2SMS_API_KEY", "") or os.getenv("FAST2SMS_API_KEY", "")
-        if fast2sms_key:
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(
-                        "https://www.fast2sms.com/dev/bulkV2",
-                        headers={"authorization": fast2sms_key},
-                        data={
-                            "variables_values": otp,
-                            "route": "otp",
-                            "numbers": clean_mob,
-                        },
-                    )
-                    data = resp.json()
-                    if data.get("return"):
-                        logger.info(f"Fast2SMS OTP successfully dispatched to +91{clean_mob}")
-                        return True
-                    else:
-                        logger.warning(f"Fast2SMS error: {data}")
-            except Exception as e:
-                logger.error(f"Failed to dispatch SMS via Fast2SMS: {e}")
-
-        # 2. Twilio
-        twilio_sid = getattr(settings, "TWILIO_ACCOUNT_SID", "") or os.getenv("TWILIO_ACCOUNT_SID", "")
-        twilio_token = getattr(settings, "TWILIO_AUTH_TOKEN", "") or os.getenv("TWILIO_AUTH_TOKEN", "")
-        twilio_from = getattr(settings, "TWILIO_PHONE_NUMBER", "") or os.getenv("TWILIO_PHONE_NUMBER", "")
-        if twilio_sid and twilio_token and twilio_from:
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(
-                        f"https://api.twilio.com/2010-04-01/Accounts/{twilio_sid}/Messages.json",
-                        auth=(twilio_sid, twilio_token),
-                        data={
-                            "From": twilio_from,
-                            "To": f"+91{clean_mob}",
-                            "Body": f"Your Eventora DigiLocker verification code is {otp}. Valid for 10 minutes.",
-                        },
-                    )
-                    if resp.status_code in (200, 201):
-                        logger.info(f"Twilio SMS OTP successfully dispatched to +91{clean_mob}")
-                        return True
-                    else:
-                        logger.warning(f"Twilio error: {resp.text}")
-            except Exception as e:
-                logger.error(f"Failed to dispatch SMS via Twilio: {e}")
-
-        return False
-
-    @classmethod
     async def send_mobile_otp(cls, user_email: str, mobile_number: str) -> Dict[str, Any]:
         """
         Step 1 of DigiLocker Mobile Flow:
         - Validates 10-digit Indian Mobile Number.
         - Derives deterministic Verhoeff-valid Aadhaar identity for duplicate prevention.
         - Pre-checks for duplicate citizen profile across accounts.
-        - Dispatches OTP to mobile via DigiLocker SMS / Gateway.
+        - Dispatches OTP to mobile via official DigiLocker Gateway.
         """
         clean_mob = "".join(ch for ch in mobile_number if ch.isdigit())[-10:]
         if len(clean_mob) != 10:
@@ -471,9 +413,8 @@ class DigiLockerService:
         client_secret = settings.DIGILOCKER_CLIENT_SECRET
         is_production = client_id and client_secret and settings.DIGILOCKER_ENV == "production"
 
-        sms_dispatched = False
         if is_production:
-            # Live DigiLocker SMS OTP Gateway call
+            # Live DigiLocker Gateway call
             try:
                 async with httpx.AsyncClient(timeout=15.0) as http_client:
                     res = await http_client.post(
@@ -486,7 +427,6 @@ class DigiLockerService:
                     )
                     data = res.json()
                     ref_id = data.get("reference_id", ref_id)
-                    sms_dispatched = True
                     logger.info(f"DigiLocker mobile OTP dispatched for {masked_mobile}, ref={ref_id}")
             except Exception as e:
                 logger.error(f"Failed to dispatch live DigiLocker mobile OTP: {e}")
@@ -495,12 +435,10 @@ class DigiLockerService:
                     "message": "Failed to connect to DigiLocker OTP service. Please try again later.",
                     "reference_id": None,
                 }
-            otp_code = None  # Live OTP sent by DigiLocker SMS — we never see it
+            otp_code = None  # Live OTP handled by DigiLocker
         else:
-            # Sandbox / Development Mode — generate random 6-digit OTP
+            # Sandbox / Development Mode — generate random 6-digit OTP for testing
             otp_code = "".join(random.choices(string.digits, k=6))
-            # Attempt to dispatch real SMS if SMS Gateway (Fast2SMS / Twilio) is configured
-            sms_dispatched = await cls._dispatch_sms_via_gateway(clean_mob, otp_code)
 
         _otp_sessions[ref_id] = {
             "user_email": user_email,
@@ -514,35 +452,12 @@ class DigiLockerService:
             "type": "MOBILE",
         }
 
-        # Dispatch OTP to user email as backup if provided
-        email_sent = False
-        if otp_code and user_email and "@" in user_email and not user_email.endswith("@example.com"):
-            try:
-                from app.services.email import send_otp_email
-                send_otp_email(user_email, otp_code)
-                email_sent = True
-            except Exception as e:
-                logger.warning(f"Failed to dispatch backup email OTP: {e}")
-
-        if sms_dispatched:
-            message_text = f"DigiLocker verification OTP sent via SMS to {masked_mobile}."
-        elif not is_production:
-            message_text = (
-                f"DigiLocker verification OTP generated for {masked_mobile}. "
-                f"(Use 'sandbox_otp' field below or check email to verify). "
-                f"To send real SMS to phones, set FAST2SMS_API_KEY or TWILIO in .env."
-            )
-        else:
-            message_text = f"DigiLocker OTP sent successfully to {masked_mobile}."
-
         response = {
             "success": True,
             "reference_id": ref_id,
             "masked_mobile": masked_mobile,
-            "message": message_text,
+            "message": f"DigiLocker OTP request initiated for {masked_mobile}.",
             "mode": settings.DIGILOCKER_ENV,
-            "sms_dispatched": sms_dispatched,
-            "email_dispatched": email_sent,
         }
 
         # Only include OTP in response for sandbox/development — NEVER in production

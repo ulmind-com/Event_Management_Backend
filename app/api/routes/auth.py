@@ -141,12 +141,6 @@ async def register_step3(
         }
         kyc_doc_uri = existing_kyc.get("digilocker_doc_uri") or f"digilocker://org.uidai/aadhaar/{aadhaar_masked}"
 
-    if not kyc_doc_uri:
-        raise HTTPException(
-            status_code=400,
-            detail="DigiLocker KYC verification required before registration. Please verify your Aadhaar via DigiLocker first (/api/kyc/digilocker/mobile/send-otp)."
-        )
-
     profile_url = None
     if profile_photo:
         profile_content = await profile_photo.read()
@@ -177,6 +171,9 @@ async def register_step3(
         update_data["kyc_aadhaar_masked"] = kyc_result.get("aadhaar_masked")
         if kyc_result.get("kyc_status") == "VERIFIED":
             update_data["kyc_verified_at"] = datetime.now(timezone.utc)
+    else:
+        update_data["kyc_status"] = "NOT_VERIFIED"
+        update_data["kyc_aadhaar_masked"] = None
 
     await user_collection.update_one({"email": email}, {"$set": update_data})
     await otp_collection.delete_one({"email": email})

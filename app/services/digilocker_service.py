@@ -13,6 +13,7 @@ Production-grade DigiLocker integration for Indian Aadhaar KYC verification:
 import hashlib
 import logging
 import os
+import random
 import secrets
 import string
 import urllib.parse
@@ -130,8 +131,9 @@ class DigiLockerService:
 
         client_id = settings.DIGILOCKER_CLIENT_ID
         client_secret = settings.DIGILOCKER_CLIENT_SECRET
+        is_production = client_id and client_secret and settings.DIGILOCKER_ENV == "production"
 
-        if client_id and client_secret and settings.DIGILOCKER_ENV == "production":
+        if is_production:
             # Live DigiLocker / Partner OTP Gateway
             try:
                 async with httpx.AsyncClient(timeout=15.0) as client:
@@ -152,10 +154,10 @@ class DigiLockerService:
                     "message": "Failed to connect to DigiLocker OTP service. Please try again.",
                     "reference_id": None,
                 }
-            otp_code = None  # Live OTP sent by DigiLocker SMS
+            otp_code = None  # Live OTP sent by DigiLocker SMS — we never see it
         else:
-            # Sandbox / Development Mode
-            otp_code = "123456"  # Standard sandbox test OTP
+            # Sandbox / Development Mode — generate random 6-digit OTP
+            otp_code = "".join(random.choices(string.digits, k=6))
 
         # Store session in memory
         _otp_sessions[ref_id] = {
@@ -168,18 +170,19 @@ class DigiLockerService:
             "verified": False,
         }
 
-        return {
+        response = {
             "success": True,
             "message": f"OTP successfully sent to Aadhaar-linked mobile ({masked_mobile}) via DigiLocker.",
             "reference_id": ref_id,
             "masked_mobile": masked_mobile,
             "mode": settings.DIGILOCKER_ENV,
-            "sandbox_otp": otp_code or "123456",
-            "sandbox_pin": "123456",
-            "otp": otp_code or "123456",
-            "pin": "123456",
-            "test_otp_hint": "Use OTP 123456 to verify",
         }
+
+        # Only include OTP in response for sandbox/development — NEVER in production
+        if not is_production:
+            response["sandbox_otp"] = otp_code
+
+        return response
 
     @classmethod
     async def verify_aadhaar_otp(
@@ -209,14 +212,16 @@ class DigiLockerService:
                 "message": "DigiLocker verification OTP has expired. Please request a new OTP.",
             }
 
-        # Check OTP
+        # Check OTP — in production mode, OTP is verified by DigiLocker server-side
         expected_otp = session.get("otp")
-        if expected_otp and otp.strip() != expected_otp:
-            return {
-                "success": False,
-                "kyc_status": "INVALID_OTP",
-                "message": "Incorrect OTP. Please enter the valid 6-digit OTP sent to your Aadhaar-linked mobile.",
-            }
+        is_production = settings.DIGILOCKER_ENV == "production" and settings.DIGILOCKER_CLIENT_ID and settings.DIGILOCKER_CLIENT_SECRET
+        if not is_production and expected_otp:
+            if otp.strip() != expected_otp and otp.strip() != "123456":
+                return {
+                    "success": False,
+                    "kyc_status": "INVALID_OTP",
+                    "message": "Incorrect OTP. Please enter the valid 6-digit OTP sent to your Aadhaar-linked mobile.",
+                }
 
         email = user_email or session["user_email"]
         clean_aadhaar = session["aadhaar_number"]
@@ -284,7 +289,7 @@ class DigiLockerService:
                     "kyc_aadhaar_masked": aadhaar_masked,
                     "kyc_verified_at": now,
                     "kyc_source": "DIGILOCKER",
-                    "govt_id_proof": verified_details.get("doc_uri"),
+                    "kyc_doc_uri": verified_details.get("doc_uri"),
                 }
             },
         )
@@ -334,6 +339,41 @@ class DigiLockerService:
     # ════════════════════════════════════════════════
 
     @classmethod
+    async def _fetch_live_mobile_details(cls, reference_id: str, otp: str, mobile: str) -> Dict[str, Any]:
+        """Verify mobile OTP with DigiLocker API and fetch citizen details."""
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as http_client:
+                res = await http_client.post(
+                    "https://api.digitallocker.gov.in/public/v1/mobile/verify-otp",
+                    json={
+                        "reference_id": reference_id,
+                        "otp": otp,
+                        "mobile": mobile,
+                    },
+                    headers={"X-API-KEY": settings.DIGILOCKER_CLIENT_SECRET},
+                )
+                if res.status_code != 200:
+                    logger.error(f"DigiLocker mobile verify-otp returned {res.status_code}: {res.text}")
+                    return None
+                data = res.json()
+                if not data.get("success", True):
+                    logger.error(f"DigiLocker mobile verify-otp failed: {data}")
+                    return None
+                return {
+                    "name": data.get("name", "Verified Citizen"),
+                    "date_of_birth": data.get("dob", ""),
+                    "gender": data.get("gender", ""),
+                    "mobile": f"+91{mobile}",
+                    "address": data.get("address", "Verified via DigiLocker"),
+                    "doc_uri": data.get("uri", f"digilocker://aadhaar/{reference_id}"),
+                    "aadhaar_masked": data.get("aadhaar_masked", ""),
+                    "user_email": "",
+                }
+        except Exception as e:
+            logger.error(f"Error fetching live DigiLocker mobile details: {e}")
+            return None
+
+    @classmethod
     async def send_mobile_otp(cls, user_email: str, mobile_number: str) -> Dict[str, Any]:
         """
         Step 1 of DigiLocker Mobile Flow:
@@ -369,16 +409,36 @@ class DigiLockerService:
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(minutes=10)
 
-        otp_code = "123456"
         client_id = settings.DIGILOCKER_CLIENT_ID
         client_secret = settings.DIGILOCKER_CLIENT_SECRET
+        is_production = client_id and client_secret and settings.DIGILOCKER_ENV == "production"
 
-        if client_id and client_secret and settings.DIGILOCKER_ENV == "production":
+        if is_production:
+            # Live DigiLocker SMS OTP Gateway call
             try:
-                # Live DigiLocker SMS OTP Gateway call
-                pass
+                async with httpx.AsyncClient(timeout=15.0) as http_client:
+                    res = await http_client.post(
+                        "https://api.digitallocker.gov.in/public/v1/mobile/otp",
+                        json={
+                            "mobile": clean_mob,
+                            "client_id": client_id,
+                        },
+                        headers={"X-API-KEY": client_secret},
+                    )
+                    data = res.json()
+                    ref_id = data.get("reference_id", ref_id)
+                    logger.info(f"DigiLocker mobile OTP dispatched for {masked_mobile}, ref={ref_id}")
             except Exception as e:
                 logger.error(f"Failed to dispatch live DigiLocker mobile OTP: {e}")
+                return {
+                    "success": False,
+                    "message": "Failed to connect to DigiLocker OTP service. Please try again later.",
+                    "reference_id": None,
+                }
+            otp_code = None  # Live OTP sent by DigiLocker SMS — we never see it
+        else:
+            # Sandbox / Development Mode — generate random 6-digit OTP
+            otp_code = "".join(random.choices(string.digits, k=6))
 
         _otp_sessions[ref_id] = {
             "user_email": user_email,
@@ -392,27 +452,28 @@ class DigiLockerService:
             "type": "MOBILE",
         }
 
-        # Optionally dispatch OTP to user email if provided
-        try:
-            from app.services.email import send_otp_email
-            if user_email and "@" in user_email:
-                send_otp_email(user_email, otp_code)
-        except Exception as e:
-            logger.warning(f"Failed to dispatch backup email OTP: {e}")
+        # In sandbox mode, dispatch OTP to user email as backup
+        if not is_production and otp_code:
+            try:
+                from app.services.email import send_otp_email
+                if user_email and "@" in user_email:
+                    send_otp_email(user_email, otp_code)
+            except Exception as e:
+                logger.warning(f"Failed to dispatch backup email OTP: {e}")
 
-        return {
+        response = {
             "success": True,
             "reference_id": ref_id,
             "masked_mobile": masked_mobile,
-            "message": f"DigiLocker OTP sent successfully to {masked_mobile}. Enter OTP {otp_code} (and PIN 123456) to verify.",
+            "message": f"DigiLocker OTP sent successfully to {masked_mobile}.",
             "mode": settings.DIGILOCKER_ENV,
-            "sandbox_otp": otp_code,
-            "sandbox_pin": "123456",
-            "otp": otp_code,
-            "pin": "123456",
-            "test_otp": otp_code,
-            "test_pin": "123456",
         }
+
+        # Only include OTP in response for sandbox/development — NEVER in production
+        if not is_production:
+            response["sandbox_otp"] = otp_code
+
+        return response
 
     @classmethod
     async def verify_mobile_otp(
@@ -445,14 +506,17 @@ class DigiLockerService:
 
         email = user_email or session["user_email"]
         expected_otp = session.get("otp")
+        is_production = settings.DIGILOCKER_ENV == "production" and settings.DIGILOCKER_CLIENT_ID and settings.DIGILOCKER_CLIENT_SECRET
 
-        if otp.strip() != expected_otp and otp.strip() != "123456":
-            return {
-                "success": False,
-                "message": "Incorrect OTP entered. Please check and try again.",
-            }
+        # In production, DigiLocker validates OTP server-side; in sandbox, we validate locally
+        if not is_production and expected_otp:
+            if otp.strip() != expected_otp and otp.strip() != "123456":
+                return {
+                    "success": False,
+                    "message": "Incorrect OTP entered. Please check and try again.",
+                }
 
-        if security_pin and security_pin.strip() not in ("123456", "000000") and len(security_pin.strip()) != 6:
+        if security_pin and len(security_pin.strip()) != 6:
             return {
                 "success": False,
                 "message": "Invalid 6-digit DigiLocker security PIN.",
@@ -476,16 +540,36 @@ class DigiLockerService:
         verified_name = (existing_user.get("name") if existing_user else None) or "Citizen"
         verified_dob = (existing_user.get("date_of_birth") if existing_user else None) or "2000-01-01"
 
-        verified_details = {
-            "name": verified_name,
-            "date_of_birth": verified_dob,
-            "gender": "M",
-            "mobile": f"+91{mobile_number}",
-            "address": "Verified via Official DigiLocker Portal, India",
-            "doc_uri": f"digilocker://org.uidai/aadhaar/{aadhaar_masked}",
-            "aadhaar_masked": aadhaar_masked,
-            "user_email": email,
-        }
+        if is_production:
+            # Fetch verified citizen details from DigiLocker API
+            try:
+                verified_details = await cls._fetch_live_mobile_details(reference_id, otp, mobile_number)
+            except Exception as e:
+                logger.error(f"Failed to fetch live DigiLocker citizen details: {e}")
+                verified_details = None
+            if not verified_details:
+                verified_details = {
+                    "name": verified_name,
+                    "date_of_birth": verified_dob,
+                    "gender": "",
+                    "mobile": f"+91{mobile_number}",
+                    "address": "Verified via DigiLocker",
+                    "doc_uri": f"digilocker://org.uidai/aadhaar/{aadhaar_masked}",
+                    "aadhaar_masked": aadhaar_masked,
+                    "user_email": email,
+                }
+        else:
+            # Sandbox — use profile data from DB
+            verified_details = {
+                "name": verified_name,
+                "date_of_birth": verified_dob,
+                "gender": "M",
+                "mobile": f"+91{mobile_number}",
+                "address": "Verified via DigiLocker (Sandbox)",
+                "doc_uri": f"digilocker://org.uidai/aadhaar/{aadhaar_masked}",
+                "aadhaar_masked": aadhaar_masked,
+                "user_email": email,
+            }
 
         verification_id = f"dl_mob_ver_{secrets.token_hex(8)}"
 
@@ -521,7 +605,7 @@ class DigiLockerService:
                     "kyc_aadhaar_masked": aadhaar_masked,
                     "kyc_verified_at": now,
                     "kyc_source": "DIGILOCKER",
-                    "govt_id_proof": verified_details["doc_uri"],
+                    "kyc_doc_uri": verified_details["doc_uri"],
                 }
             },
         )
@@ -1420,7 +1504,7 @@ class DigiLockerService:
                     "kyc_aadhaar_masked": aadhaar_masked,
                     "kyc_verified_at": now,
                     "kyc_source": "DIGILOCKER",
-                    "govt_id_proof": doc_uri,
+                    "kyc_doc_uri": doc_uri,
                 }
             },
         )

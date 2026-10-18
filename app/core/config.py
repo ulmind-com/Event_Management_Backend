@@ -63,10 +63,25 @@ class Settings:
     # Aadhaar KYC & DigiLocker Verification
     AADHAAR_HASH_SALT = os.getenv("AADHAAR_HASH_SALT", "eventora_kyc_salt_v1_production")
     TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")  # e.g. "C:\\Program Files\\Tesseract-OCR\\tesseract.exe" on Windows
-    DIGILOCKER_CLIENT_ID = os.getenv("DIGILOCKER_CLIENT_ID", "")
+    DIGILOCKER_CLIENT_ID = os.getenv("DIGILOCKER_CLIENT_ID", "EVENTORA_DIGILOCKER_PROD")
     DIGILOCKER_CLIENT_SECRET = os.getenv("DIGILOCKER_CLIENT_SECRET", "")
-    DIGILOCKER_REDIRECT_URI = os.getenv("DIGILOCKER_REDIRECT_URI", "https://api.eventora.com/api/v1/kyc/digilocker/callback")
-    DIGILOCKER_ENV = os.getenv("DIGILOCKER_ENV", "sandbox")  # "sandbox" or "production"
+    DIGILOCKER_REDIRECT_URI = os.getenv(
+        "DIGILOCKER_REDIRECT_URI",
+        "https://event-management-company-project.onrender.com/api/kyc/digilocker/callback",
+    )
+    DIGILOCKER_AUTH_URL = os.getenv(
+        "DIGILOCKER_AUTH_URL",
+        "https://api.digitallocker.gov.in/public/oauth2/1/authorize",
+    )
+    DIGILOCKER_TOKEN_URL = os.getenv(
+        "DIGILOCKER_TOKEN_URL",
+        "https://api.digitallocker.gov.in/public/oauth2/1/token",
+    )
+    DIGILOCKER_EAADHAAR_URL = os.getenv(
+        "DIGILOCKER_EAADHAAR_URL",
+        "https://api.digitallocker.gov.in/public/oauth2/2/xml/eaadhaar",
+    )
+    DIGILOCKER_ENV = os.getenv("DIGILOCKER_ENV", "production")  # "production" or "sandbox"
 
 settings = Settings()
 

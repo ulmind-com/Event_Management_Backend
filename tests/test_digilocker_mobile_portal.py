@@ -43,6 +43,21 @@ async def test_digilocker_mobile_portal_flow():
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # 0. Test GET /api/kyc/digilocker/authorize redirects directly (302) to official DigiLocker portal
+        auth_redirect_res = await ac.get(f"/api/kyc/digilocker/authorize?email={user1_email}", follow_redirects=False)
+        assert auth_redirect_res.status_code == 302
+        assert "location" in auth_redirect_res.headers
+        auth_target = auth_redirect_res.headers["location"]
+        assert auth_target.startswith("https://api.digitallocker.gov.in/public/oauth2/1/authorize")
+        assert "response_type=code" in auth_target
+        assert "scope=eaadhaar" in auth_target
+
+        # Test GET /api/kyc/digilocker/authorize with redirect=false returns JSON auth_url
+        auth_json_res = await ac.get(f"/api/kyc/digilocker/authorize?email={user1_email}&redirect=false")
+        assert auth_json_res.status_code == 200
+        auth_json_data = auth_json_res.json()
+        assert auth_json_data["auth_url"].startswith("https://api.digitallocker.gov.in/public/oauth2/1/authorize")
+
         # 1. Test GET /api/kyc/digilocker/portal renders the official HTML page
         portal_res = await ac.get("/api/kyc/digilocker/portal?email=" + user1_email + "&state=test_state_123")
         assert portal_res.status_code == 200

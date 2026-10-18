@@ -263,24 +263,29 @@ async def digilocker_mobile_verify_otp(
     return result
 
 
-@router.get("/digilocker/authorize", summary="DigiLocker Portal Authorization Redirect")
+@router.get("/digilocker/authorize", summary="DigiLocker Official Portal Direct Redirect")
 async def digilocker_authorize(
     request: Request,
     email: Optional[str] = Query(None, description="User email (optional if Authorization header sent)"),
+    redirect: bool = Query(True, description="Whether to redirect directly (HTTP 302) to official DigiLocker portal (default True)"),
 ):
     """
-    Redirects browser directly to the official-styled DigiLocker verification portal.
-    If called via API client expecting JSON, returns the authorization URL.
+    Directly redirects the user (HTTP 302) to the official Government of India DigiLocker Portal:
+    https://api.digitallocker.gov.in/public/oauth2/1/authorize?...
+    
+    If redirect=false or if an API client explicitly requests JSON only, returns auth_url JSON.
     """
     user_email = email or "user@eventora.com"
     auth_data = DigiLockerService.get_authorization_url(user_email)
     auth_url = auth_data["auth_url"]
 
     accept_header = request.headers.get("accept", "")
-    if "text/html" in accept_header:
-        return RedirectResponse(url=auth_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    # If explicitly asked not to redirect (API caller), return JSON
+    if not redirect or (accept_header == "application/json"):
+        return auth_data
 
-    return auth_data
+    # Otherwise ALWAYS redirect directly to official DigiLocker portal
+    return RedirectResponse(url=auth_url, status_code=status.HTTP_302_FOUND)
 
 
 @router.get("/digilocker/portal", response_class=HTMLResponse, summary="DigiLocker Official Portal UI")

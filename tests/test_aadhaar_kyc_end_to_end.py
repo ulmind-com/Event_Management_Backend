@@ -189,3 +189,102 @@ def test_role_restriction():
             _require_user_role({"email": f"{invalid_role.lower()}@example.com", "role": invalid_role})
         assert exc_info.value.status_code == 403
         assert "only applicable to User accounts" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_direct_digilocker_otp_flow():
+    """Test direct DigiLocker OTP sending and verification without any file upload."""
+    valid_aadhaar = generate_valid_aadhaar("78901234567")
+
+    with patch(
+        "app.services.aadhaar_kyc_service.kyc_verification_collection.find_one",
+        new_callable=AsyncMock,
+        return_value=None,
+    ), patch(
+        "app.services.aadhaar_kyc_service.kyc_verification_collection.update_one",
+        new_callable=AsyncMock,
+    ), patch(
+        "app.services.aadhaar_kyc_service.user_collection.update_one",
+        new_callable=AsyncMock,
+    ):
+        # 1. Send OTP
+        send_res = await DigiLockerService.send_aadhaar_otp(
+            "direct_dl_user@example.com", valid_aadhaar
+        )
+        assert send_res["success"] is True
+        assert send_res["reference_id"] is not None
+
+        # 2. Verify OTP directly from DigiLocker (No files!)
+        verify_res = await DigiLockerService.verify_aadhaar_otp(
+            send_res["reference_id"], "123456", "direct_dl_user@example.com"
+        )
+        assert verify_res["success"] is True
+        assert verify_res["kyc_status"] == "VERIFIED"
+        assert verify_res["aadhaar_masked"].startswith("XXXX-XXXX-")
+        assert "digilocker" in verify_res["verified_details"]["doc_uri"].lower()
+
+
+@pytest.mark.asyncio
+async def test_register_step3_with_digilocker_zero_file():
+    """Verify that register_step3 succeeds without uploading ANY file when DigiLocker is verified."""
+    from app.core.security import create_access_token
+    from httpx import AsyncClient, ASGITransport
+    from app.main import app
+
+    test_email = "digilocker_zerofile@example.com"
+    reg_token = create_access_token(data={"sub": test_email, "type": "registration"})
+
+    # Mock DigiLocker verified record in database
+    mock_kyc_record = {
+        "user_email": test_email,
+        "status": "VERIFIED",
+        "aadhaar_masked": "XXXX-XXXX-9999",
+        "verification_source": "DIGILOCKER",
+        "digilocker_doc_uri": "digilocker://org.uidai/aadhaar/XXXX-XXXX-9999",
+    }
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        with patch(
+            "app.core.database.kyc_verification_collection.find_one",
+            new_callable=AsyncMock,
+            return_value=mock_kyc_record,
+        ), patch(
+            "app.core.database.user_collection.update_one",
+            new_callable=AsyncMock,
+        ), patch(
+            "app.core.database.otp_collection.delete_one",
+            new_callable=AsyncMock,
+        ), patch(
+            "app.services.referral_service.ReferralService.get_or_create_user_referral_code",
+            new_callable=AsyncMock,
+            return_value="REF123",
+        ), patch(
+            "app.services.referral_service.ReferralService.qualify_and_reward_referral",
+            new_callable=AsyncMock,
+        ), patch(
+            "app.services.notification_service.NotificationService.create_notification",
+            new_callable=AsyncMock,
+        ):
+            # Notice: govt_id_proof is NOT sent at all! ZERO files!
+            form_data = {
+                "password": "Password@123",
+                "confirm_password": "Password@123",
+                "name": "DigiLocker User",
+                "phone_number": "9876543210",
+                "date_of_birth": "2000-01-01",
+                "address": "Kolkata, India",
+            }
+            res = await ac.post(
+                "/api/auth/register/step3",
+                data=form_data,
+                headers={"Authorization": f"Bearer {reg_token}"},
+            )
+            assert res.status_code == 200
+            data = res.json()
+            assert data["message"] == "Registration complete"
+            assert data["kyc_verification"]["status"] == "VERIFIED"
+            assert data["kyc_verification"]["aadhaar_masked"] == "XXXX-XXXX-9999"
+            assert "digilocker" in data["user"]["govt_id_proof"].lower()
+
+

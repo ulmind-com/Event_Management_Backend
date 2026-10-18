@@ -95,10 +95,11 @@ async def register_step3(
     address: str = Form(...),
     parent_phone_number: Optional[int] = Form(None),
     profile_photo: Optional[UploadFile] = File(None),
-    govt_id_proof: UploadFile = File(...),
+    govt_id_proof: Optional[UploadFile] = File(None, description="Optional manual Govt ID file; direct DigiLocker verification is preferred"),
+    digilocker_verification_id: Optional[str] = Form(None, description="DigiLocker verification ID if verified via DigiLocker"),
     authorization: str = Header(...)
 ):
-    """Step 3: Setup password, profile details, KYC verification, and complete registration."""
+    """Step 3: Setup password, profile details, direct DigiLocker KYC verification, and complete registration."""
     token = authorization.replace("Bearer ", "").strip()
     payload = decode_token(token)
     if not payload or payload.get("type") != "registration":
@@ -115,36 +116,52 @@ async def register_step3(
 
     final_age = calculate_age(dob)
 
-    # Read Aadhaar card image bytes BEFORE uploading to Cloudinary
-    govt_id_content = await govt_id_proof.read()
+    # ══════════════════════════════════════════════
+    # DIRECT DIGILOCKER / GOVT ID KYC VERIFICATION
+    # ══════════════════════════════════════════════
+    from app.core.database import kyc_verification_collection
 
-    # ══════════════════════════════════════════════
-    # AADHAAR KYC VERIFICATION (Automatic)
-    # ══════════════════════════════════════════════
     kyc_result = None
-    try:
-        from app.services.aadhaar_kyc_service import AadhaarKYCService
+    govt_id_url = None
 
-        kyc_result = await AadhaarKYCService.verify_and_register(
-            email, govt_id_content, filename=govt_id_proof.filename
-        )
+    # 1. Check if user already verified directly via DigiLocker
+    kyc_query = {"user_email": email}
+    if digilocker_verification_id:
+        kyc_query = {"$or": [{"user_email": email}, {"verification_id": digilocker_verification_id}]}
 
-        # BLOCK registration if DUPLICATE Aadhaar detected
-        if kyc_result.get("kyc_status") == "DUPLICATE":
-            raise HTTPException(
-                status_code=409,
-                detail=kyc_result.get("message", "This Aadhaar card is already registered with another account. Duplicate registrations are not allowed.")
+    existing_kyc = await kyc_verification_collection.find_one(kyc_query)
+
+    if existing_kyc and existing_kyc.get("status") == "VERIFIED":
+        # Successfully verified directly via DigiLocker! No file or PDF upload required!
+        aadhaar_masked = existing_kyc.get("aadhaar_masked")
+        kyc_result = {
+            "kyc_status": "VERIFIED",
+            "aadhaar_masked": aadhaar_masked,
+            "message": f"Govt ID ({aadhaar_masked}) verified directly via DigiLocker. KYC complete.",
+            "source": existing_kyc.get("verification_source", "DIGILOCKER"),
+        }
+        govt_id_url = existing_kyc.get("digilocker_doc_uri") or f"digilocker://org.uidai/aadhaar/{aadhaar_masked}"
+
+    elif govt_id_proof and getattr(govt_id_proof, "filename", None):
+        # 2. Fallback manual upload if user chose to provide a file
+        govt_id_content = await govt_id_proof.read()
+        if len(govt_id_content) > 0:
+            from app.services.aadhaar_kyc_service import AadhaarKYCService
+            kyc_result = await AadhaarKYCService.verify_and_register(
+                email, govt_id_content, filename=govt_id_proof.filename
             )
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions (e.g., 409 duplicate)
-    except Exception as e:
-        logger.warning(f"KYC verification encountered an error (non-blocking): {e}")
-        kyc_result = {"kyc_status": "EXTRACTION_FAILED", "aadhaar_masked": None, "message": str(e)}
+            if kyc_result.get("kyc_status") == "DUPLICATE":
+                raise HTTPException(
+                    status_code=409,
+                    detail=kyc_result.get("message", "This Aadhaar card is already registered with another account. Duplicate registrations are not allowed.")
+                )
+            govt_id_url = upload_image(govt_id_content, folder="eventora/gov_ids")
 
-    # Upload Aadhaar card image to Cloudinary
-    govt_id_url = upload_image(govt_id_content, folder="eventora/gov_ids")
     if not govt_id_url:
-        raise HTTPException(status_code=500, detail="Failed to upload ID")
+        raise HTTPException(
+            status_code=400,
+            detail="Govt ID verification required. Please complete verification directly via DigiLocker (/api/kyc/digilocker/send-otp)."
+        )
 
     profile_url = None
     if profile_photo:

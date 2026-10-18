@@ -145,7 +145,11 @@ async def register_step3(
     if profile_photo:
         profile_content = await profile_photo.read()
         if len(profile_content) > 0:
-            profile_url = upload_image(profile_content, folder="eventora/profiles")
+            profile_url = upload_image(
+                profile_content,
+                folder="eventora/profiles",
+                filename=profile_photo.filename,
+            )
 
     # Hash the password!
     hashed_pwd = get_password_hash(password)

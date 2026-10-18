@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List
 from datetime import datetime, timezone
 from bson import ObjectId
@@ -222,3 +222,20 @@ async def get_admin_user_vip_bookings(user_id: str, admin=Depends(get_current_ad
         "bookings": bookings,
         "passes": passes
     })
+
+@router.get("/{user_id}/merchandise-orders")
+@router.get("/{user_id}/merchandise")
+async def get_admin_user_merchandise_orders(user_id: str, admin=Depends(get_current_admin)):
+    """Complete merchandise purchase history for the user."""
+    orders = await UserActivityService.get_user_merchandise_orders(user_id)
+    return {"user_id": user_id, "orders": orders, "total": len(orders)}
+
+@router.get("/{user_id}/wallet")
+@router.get("/{user_id}/coins")
+async def get_admin_user_wallet_and_coins(user_id: str, admin=Depends(get_current_admin)):
+    """Complete wallet balance and coin ledger transaction history (where earned/spent)."""
+    wallet_info = await UserActivityService.get_user_wallet_and_coins(user_id)
+    if not wallet_info:
+        raise HTTPException(status_code=404, detail="User not found")
+    return wallet_info
+

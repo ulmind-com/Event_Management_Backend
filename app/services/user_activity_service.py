@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timezone
+from datetime import datetime, timezone
 from bson import ObjectId
 from typing import Dict, Any, List, Optional
 import logging
@@ -16,6 +16,9 @@ from app.core.database import (
     course_collection,
     certificate_collection,
     user_badge_award_collection,
+    merchandise_order_collection,
+    user_wallet_collection,
+    coin_ledger_collection,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,8 +72,36 @@ class UserActivityService:
                 comp_completed += 1
 
         # ── Course & Workshop Metrics ──
-        courses_reg = await registration_collection.count_documents({'user_email': email, 'type': 'COURSE'})
-        workshops_reg = await registration_collection.count_documents({'user_email': email, 'type': 'WORKSHOP'})
+        courses_reg = await registration_collection.count_documents({
+            '$or': [{'email': email}, {'user_email': email}, {'participant_email': email}],
+            'activity_type': {'$in': ['course', 'COURSE']}
+        })
+        workshops_reg = await registration_collection.count_documents({
+            '$or': [{'email': email}, {'user_email': email}, {'participant_email': email}],
+            'activity_type': {'$in': ['workshop', 'WORKSHOP']}
+        })
+
+        # ── Merchandise Metrics ──
+        merch_orders = await merchandise_order_collection.find({
+            '$or': [{'email': email}, {'user_email': email}]
+        }).to_list(length=500)
+        total_merch_orders = len(merch_orders)
+        confirmed_merch_orders = sum(
+            1 for m in merch_orders
+            if m.get('status') in ['CONFIRMED', 'DELIVERED', 'SHIPPED', 'PAID'] or m.get('payment_status') == 'PAID'
+        )
+        total_merch_spent = sum(
+            float(m.get('total_amount', 0.0))
+            for m in merch_orders
+            if m.get('status') in ['CONFIRMED', 'DELIVERED', 'SHIPPED', 'PAID'] or m.get('payment_status') == 'PAID'
+        )
+
+        # ── Coin & Wallet Metrics ──
+        wallet = await user_wallet_collection.find_one({'email': email}) or {}
+        available_coins = wallet.get('available_coins', 0)
+        total_earned_coins = wallet.get('total_earned_coins', 0)
+        total_redeemed_coins = wallet.get('total_redeemed_coins', 0)
+        reserved_coins = wallet.get('reserved_coins', 0)
 
         # ── Certificates Metrics ──
         certs = await certificate_collection.find({'user_email': email}).to_list(length=1000)
@@ -111,6 +142,15 @@ class UserActivityService:
                 'total_courses_completed': courses_reg, # confirmed enrollments
                 'total_workshops_registered': workshops_reg,
                 'total_workshops_completed': workshops_reg,
+                'total_merchandise_orders': total_merch_orders,
+                'total_merchandise_confirmed': confirmed_merch_orders,
+                'total_merchandise_spent': round(total_merch_spent, 2),
+            },
+            'wallet': {
+                'available_coins': available_coins,
+                'total_earned_coins': total_earned_coins,
+                'total_redeemed_coins': total_redeemed_coins,
+                'reserved_coins': reserved_coins,
             },
             'achievements': {
                 'total_certificates': total_certs,
@@ -204,6 +244,42 @@ class UserActivityService:
                 'timestamp': bg.get('awarded_at') or datetime.now(timezone.utc),
                 'status': bg.get('status', 'ACTIVE'),
                 'metadata': {'qualification_count': bg.get('qualification_count')}
+            })
+
+        # 6. Merchandise Orders
+        m_orders = await merchandise_order_collection.find({
+            '$or': [{'email': email}, {'user_email': email}]
+        }).to_list(length=100)
+        for mo in m_orders:
+            items_summary = ", ".join([f"{it.get('title', 'Item')} (x{it.get('quantity', 1)})" for it in mo.get('items', [])]) or "Merchandise Order"
+            timeline.append({
+                'activity_type': 'MERCHANDISE_ORDER',
+                'entity_id': mo.get('order_number') or str(mo.get('_id')),
+                'entity_title': f"Order #{mo.get('order_number', '')}: {items_summary}",
+                'timestamp': mo.get('created_at') or datetime.now(timezone.utc),
+                'status': mo.get('status', 'PENDING_PAYMENT'),
+                'metadata': {
+                    'total_amount': mo.get('total_amount', 0.0),
+                    'payment_status': mo.get('payment_status'),
+                    'items_count': len(mo.get('items', []))
+                }
+            })
+
+        # 7. Coin Transactions (Earned / Spent)
+        c_txns = await coin_ledger_collection.find({'email': email}).to_list(length=100)
+        for ct in c_txns:
+            timeline.append({
+                'activity_type': f"COIN_{ct.get('direction', 'CREDIT')}",
+                'entity_id': ct.get('transaction_id') or str(ct.get('_id')),
+                'entity_title': f"{ct.get('direction', 'CREDIT')}: {ct.get('coin_amount', 0)} coins - {ct.get('description', '')}",
+                'timestamp': ct.get('created_at') or datetime.now(timezone.utc),
+                'status': ct.get('status', 'COMPLETED'),
+                'metadata': {
+                    'coins': ct.get('coin_amount', 0),
+                    'direction': ct.get('direction'),
+                    'transaction_type': ct.get('transaction_type'),
+                    'reference_id': ct.get('reference_id')
+                }
             })
 
         # Sort timeline descending by timestamp
@@ -305,13 +381,40 @@ class UserActivityService:
         if not user: return []
         email = user.get('email')
 
-        regs = await registration_collection.find({'user_email': email, 'type': 'COURSE'}).to_list(length=200)
+        regs = await registration_collection.find({
+            '$or': [{'email': email}, {'user_email': email}, {'participant_email': email}],
+            'activity_type': {'$in': ['course', 'COURSE']}
+        }).sort('created_at', -1).to_list(length=200)
+
         res = []
         for r in regs:
+            cid = r.get('activity_id') or r.get('item_id')
+            course_title = r.get('item_title') or r.get('activity_title')
+            course_category = None
+            course_price = r.get('original_price') or r.get('price_snapshot')
+            
+            # Lookup course if title not in registration
+            if cid:
+                try:
+                    c_doc = await course_collection.find_one({'_id': ObjectId(cid)})
+                except Exception:
+                    c_doc = await course_collection.find_one({'_id': cid})
+                if c_doc:
+                    course_title = course_title or c_doc.get('title')
+                    course_category = c_doc.get('category')
+                    if course_price is None:
+                        course_price = c_doc.get('price')
+
             res.append({
                 'registration_id': str(r.get('_id')),
-                'course_id': r.get('item_id'),
-                'title': r.get('item_title', 'Course'),
+                'course_id': str(cid) if cid else None,
+                'title': course_title or 'Course',
+                'category': course_category,
+                'price': course_price,
+                'payable_amount': r.get('payable_amount'),
+                'coins_applied': r.get('coins_applied', 0),
+                'discount_amount': r.get('discount_amount', 0.0),
+                'order_reference': r.get('order_reference'),
                 'registration_date': r.get('created_at'),
                 'status': r.get('status', 'CONFIRMED'),
                 'completion_status': 'COMPLETED' if r.get('status') == 'CONFIRMED' else 'PENDING'
@@ -324,13 +427,39 @@ class UserActivityService:
         if not user: return []
         email = user.get('email')
 
-        regs = await registration_collection.find({'user_email': email, 'type': 'WORKSHOP'}).to_list(length=200)
+        regs = await registration_collection.find({
+            '$or': [{'email': email}, {'user_email': email}, {'participant_email': email}],
+            'activity_type': {'$in': ['workshop', 'WORKSHOP']}
+        }).sort('created_at', -1).to_list(length=200)
+
         res = []
         for r in regs:
+            wid = r.get('activity_id') or r.get('item_id')
+            w_title = r.get('item_title') or r.get('activity_title')
+            w_category = None
+            w_price = r.get('original_price') or r.get('price_snapshot')
+
+            if wid:
+                try:
+                    w_doc = await course_collection.find_one({'_id': ObjectId(wid)})
+                except Exception:
+                    w_doc = await course_collection.find_one({'_id': wid})
+                if w_doc:
+                    w_title = w_title or w_doc.get('title')
+                    w_category = w_doc.get('category')
+                    if w_price is None:
+                        w_price = w_doc.get('price')
+
             res.append({
                 'registration_id': str(r.get('_id')),
-                'workshop_id': r.get('item_id'),
-                'title': r.get('item_title', 'Workshop'),
+                'workshop_id': str(wid) if wid else None,
+                'title': w_title or 'Workshop',
+                'category': w_category,
+                'price': w_price,
+                'payable_amount': r.get('payable_amount'),
+                'coins_applied': r.get('coins_applied', 0),
+                'discount_amount': r.get('discount_amount', 0.0),
+                'order_reference': r.get('order_reference'),
                 'registration_date': r.get('created_at'),
                 'status': r.get('status', 'CONFIRMED'),
                 'completion_status': 'COMPLETED' if r.get('status') == 'CONFIRMED' else 'PENDING'
@@ -398,4 +527,58 @@ class UserActivityService:
             'awards': awards_list,
             'total_badges': len(badge_list),
             'badges': badge_list
+        }
+
+    @staticmethod
+    async def get_user_merchandise_orders(user_id: str) -> List[Dict[str, Any]]:
+        user = await UserActivityService.get_user_doc(user_id)
+        if not user: return []
+        email = user.get('email')
+
+        orders = await merchandise_order_collection.find({
+            '$or': [{'user_email': email}, {'email': email}]
+        }).sort('created_at', -1).to_list(length=200)
+
+        res = []
+        for o in orders:
+            o_copy = dict(o)
+            o_copy['order_id'] = str(o_copy.get('_id'))
+            o_copy['_id'] = str(o_copy.get('_id'))
+            res.append(o_copy)
+        return res
+
+    @staticmethod
+    async def get_user_wallet_and_coins(user_id: str) -> Dict[str, Any]:
+        user = await UserActivityService.get_user_doc(user_id)
+        if not user: return {}
+        email = user.get('email')
+
+        wallet = await user_wallet_collection.find_one({'email': email}) or {}
+        txns = await coin_ledger_collection.find({'email': email}).sort('created_at', -1).to_list(length=300)
+
+        serialized_txns = []
+        for t in txns:
+            t_copy = dict(t)
+            t_copy['_id'] = str(t_copy.get('_id'))
+            serialized_txns.append(t_copy)
+
+        return {
+            'user_id': user_id,
+            'email': email,
+            'wallet': {
+                'available_coins': wallet.get('available_coins', 0),
+                'pending_coins': wallet.get('pending_coins', 0),
+                'reserved_coins': wallet.get('reserved_coins', 0),
+                'total_earned_coins': wallet.get('total_earned_coins', 0),
+                'total_redeemed_coins': wallet.get('total_redeemed_coins', 0),
+                'total_expired_coins': wallet.get('total_expired_coins', 0),
+                'total_reversed_coins': wallet.get('total_reversed_coins', 0),
+                'updated_at': wallet.get('updated_at'),
+            },
+            'summary': {
+                'total_transactions': len(serialized_txns),
+                'total_credited': sum(t.get('coin_amount', 0) for t in serialized_txns if t.get('direction') == 'CREDIT'),
+                'total_debited': sum(t.get('coin_amount', 0) for t in serialized_txns if t.get('direction') == 'DEBIT'),
+            },
+            'transactions': serialized_txns
         }

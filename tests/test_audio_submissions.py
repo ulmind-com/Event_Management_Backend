@@ -152,6 +152,8 @@ async def test_audio_only_submission_validation():
         assert "submission_id" in data_yt
         assert data_yt["files"]["Video Performance"] == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
         assert data_yt["files"]["Audition Audio"].startswith("https://") or data_yt["files"]["Audition Audio"].startswith("http://")
+        assert "/demo/" not in data_yt["files"]["Audition Audio"], "Should never generate fake demo Cloudinary URL"
+        assert settings.CLOUDINARY_CLOUD_NAME in data_yt["files"]["Audition Audio"], "Must be stored in configured Cloudinary cloud"
 
         # Clean submission for next test
         await db["competition_submissions"].delete_many({"user_email": "audio_test_user@example.com"})
@@ -169,6 +171,8 @@ async def test_audio_only_submission_validation():
         assert r_ok_drive.status_code == 200, f"Drive submission failed: {r_ok_drive.text}"
         data_drive = r_ok_drive.json()
         assert data_drive["files"]["Video Performance"] == "https://drive.google.com/file/d/1A2B3C4D/view?usp=sharing"
+        assert "/demo/" not in data_drive["files"]["Audition Audio"], "Should never generate fake demo Cloudinary URL"
+        assert settings.CLOUDINARY_CLOUD_NAME in data_drive["files"]["Audition Audio"], "Must be stored in configured Cloudinary cloud"
 
         # 10. Clean up
         await ac.delete(f"/api/admin/advanced-competitions/{comp_id}", headers=admin_headers)

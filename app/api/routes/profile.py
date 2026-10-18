@@ -6,7 +6,8 @@ from app.core.database import (
     user_collection, registration_collection, booking_collection, order_collection,
     certificate_collection, reward_collection, user_badge_award_collection,
     competition_collection, competition_registration_collection,
-    competition_submission_collection, judge_score_collection, merchandise_order_collection
+    competition_submission_collection, judge_score_collection, merchandise_order_collection,
+    coin_ledger_collection, course_collection
 )
 from app.schemas.profile import ProfileUpdateReq, ProfileUpdateRes, DashboardRes
 from app.services.cloudinary_srv import upload_image
@@ -51,7 +52,11 @@ async def update_my_profile(
     if profile_photo:
         profile_content = await profile_photo.read()
         if len(profile_content) > 0:
-            profile_url = upload_image(profile_content, folder="eventora/profiles")
+            profile_url = upload_image(
+                profile_content,
+                folder="eventora/profiles",
+                filename=profile_photo.filename,
+            )
             if profile_url:
                 update_data["profile_photo"] = profile_url
                 
@@ -79,6 +84,18 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user)):
     courses = await registration_collection.find({"email": email, "activity_type": {"$in": ["course", "workshop"]}}).to_list(length=100)
     for cr in courses:
         cr["is_confirmed"] = (cr.get("status") == "CONFIRMED" or cr.get("payment_status") in ("PAID", "NOT_REQUIRED"))
+        act_id = cr.get("activity_id")
+        if act_id:
+            try:
+                c_doc = await course_collection.find_one({"_id": ObjectId(str(act_id))})
+            except Exception:
+                c_doc = await course_collection.find_one({"_id": act_id})
+            if c_doc:
+                cr["title"] = c_doc.get("title")
+                cr["activity_title"] = c_doc.get("title")
+                cr["category"] = c_doc.get("category")
+                if "price" not in cr:
+                    cr["price"] = c_doc.get("price")
     
     # 2. Fetch Competitions and extract Rank
     competitions = await registration_collection.find({"email": email, "activity_type": "competition"}).to_list(length=100)
@@ -159,12 +176,24 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user)):
     # 6. Fetch Rewards and Calculate Total Coins (integrated with WalletService)
     rewards_docs = await reward_collection.find({"email": email}).to_list(length=100)
     total_coins = sum([r.get("coins", 0) for r in rewards_docs])
+    available_coins = 0
+    total_earned_coins = 0
+    total_redeemed_coins = 0
     try:
         wallet = await WalletService.get_or_create_wallet(email)
         if wallet and "available_coins" in wallet:
-            total_coins = max(total_coins, int(wallet.get("available_coins", 0)))
+            available_coins = int(wallet.get("available_coins", 0))
+            total_earned_coins = int(wallet.get("total_earned_coins", 0))
+            total_redeemed_coins = int(wallet.get("total_redeemed_coins", 0))
+            total_coins = max(total_coins, available_coins)
     except Exception:
         pass
+
+    # Fetch immutable coin ledger transactions (both CREDITS and DEBITS / Redemptions)
+    ledger_txns = await coin_ledger_collection.find({"email": email}).sort("created_at", -1).to_list(length=100)
+    for lt in ledger_txns:
+        if "_id" in lt:
+            lt["_id"] = str(lt["_id"])
     
     # 7. Fetch Badges
     badges = await user_badge_award_collection.find({"$or": [{"user_email": email}, {"email": email}], "status": "ACTIVE"}).to_list(length=100)
@@ -191,7 +220,11 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user)):
         "my_badges": badges,
         "my_rewards_and_coins": {
             "total_coins": total_coins,
-            "reward_history": rewards_docs
+            "available_coins": available_coins or total_coins,
+            "total_earned_coins": total_earned_coins,
+            "total_redeemed_coins": total_redeemed_coins,
+            "reward_history": rewards_docs,
+            "coin_history": ledger_txns
         },
         "my_merchandise_orders": orders
     }

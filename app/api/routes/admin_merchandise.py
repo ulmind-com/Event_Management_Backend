@@ -88,7 +88,7 @@ async def upload_merchandise_image(
 ):
     """Super Admin uploads a merchandise product image to Cloudinary."""
     contents = await file.read()
-    url = upload_image(contents, folder="eventora/merchandise")
+    url = upload_image(contents, folder="eventora/merchandise", filename=file.filename)
     if not url:
         raise HTTPException(status_code=500, detail="Failed to upload image to cloud storage.")
     return {"url": url}

@@ -23,14 +23,41 @@ async def get_my_certificates(current_user: dict = Depends(get_current_user)):
 
 @router.get("/coins")
 async def get_my_coins(current_user: dict = Depends(get_current_user)):
-    """Legacy coins query preserved; also integrates with wallet service."""
-    wallet = await WalletService.get_or_create_wallet(current_user["email"])
-    rewards = await reward_collection.find({"email": current_user["email"]}).to_list(length=100)
+    """Coins query integrated with wallet service and immutable coin ledger."""
+    email = current_user["email"]
+    wallet = await WalletService.get_or_create_wallet(email)
+    ledger_items = await coin_ledger_collection.find({"email": email}).sort("created_at", -1).to_list(length=100)
+    rewards = await reward_collection.find({"email": email}).to_list(length=100)
+
+    combined_history = []
+    seen_ids = set()
+    for l in ledger_items:
+        l["_id"] = str(l["_id"])
+        combined_history.append(l)
+        seen_ids.add(l.get("transaction_id") or l["_id"])
+
     for r in rewards:
         r["_id"] = str(r["_id"])
+        if r["_id"] not in seen_ids:
+            if "direction" not in r:
+                r["direction"] = "CREDIT"
+            if "coin_amount" not in r:
+                r["coin_amount"] = r.get("coins", 0)
+            combined_history.append(r)
+
+    # Sort descending by timestamp
+    from datetime import datetime, timezone
+    combined_history.sort(
+        key=lambda x: x.get("created_at") or x.get("date") or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True
+    )
+
     return {
         "total_coins": wallet.get("available_coins", 0),
-        "history": rewards
+        "available_coins": wallet.get("available_coins", 0),
+        "total_earned_coins": wallet.get("total_earned_coins", 0),
+        "total_redeemed_coins": wallet.get("total_redeemed_coins", 0),
+        "history": combined_history
     }
 
 # --- New Referral & Coin Wallet Endpoints ---

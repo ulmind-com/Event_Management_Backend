@@ -211,15 +211,27 @@ async def submit_files(comp_id: str, files: list[UploadFile] = File(...), field_
         # 2. Strict audio file validation (extension, MIME, magic numbers)
         await AudioValidator.validate_audio_file(file_obj, field_name)
 
-        # 3. Stream to Cloudinary or fallback to audio URL
-        try:
-            cloud_url = upload_image(file_obj.file, folder="eventora/submissions")
-        except Exception:
-            cloud_url = None
+        # 3. Stream to Cloudinary
+        await file_obj.seek(0)
+        file_bytes = await file_obj.read()
+        if not file_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Uploaded file for '{field_name}' is empty."
+            )
 
-        uploaded_urls[field_name] = (
-            cloud_url or f"https://res.cloudinary.com/demo/video/upload/eventora_{file_obj.filename}"
+        cloud_url = upload_image(
+            file_bytes,
+            folder="eventora/submissions",
+            filename=file_obj.filename,
         )
+        if not cloud_url:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload submission file for '{field_name}' to cloud storage. Please try again."
+            )
+
+        uploaded_urls[field_name] = cloud_url
         
     doc = {
         "competition_id": comp_id,

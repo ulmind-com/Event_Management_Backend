@@ -29,6 +29,7 @@ api_router.include_router(user_certificates.router, prefix="/users/me", tags=["u
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(notification_ws.router, prefix="/notifications", tags=["notification-ws"])
 api_router.include_router(user_kyc.router, prefix="/kyc", tags=["user-kyc"])
+api_router.include_router(user_kyc.router, prefix="/v1/kyc", tags=["user-kyc"])
 api_router.include_router(advanced_competitions.router, tags=["advanced-competitions"])
 
 # ── Judge & Volunteer APIs ──

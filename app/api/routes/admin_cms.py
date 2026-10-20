@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Optional
 from bson import ObjectId
 from app.core.admin_auth import get_current_admin
@@ -76,8 +76,28 @@ async def create_event(data: EventCreate, admin=Depends(get_current_admin)):
     doc["created_at"] = datetime.now(timezone.utc)
     doc["created_by"] = admin["email"]
     result = await event_collection.insert_one(doc)
-    await log_admin_action(admin["email"], "create", "event", str(result.inserted_id))
-    doc["_id"] = str(result.inserted_id)
+    event_id = str(result.inserted_id)
+    await log_admin_action(admin["email"], "create", "event", event_id)
+    doc["_id"] = event_id
+
+    # Auto-create initial ticket tier if ticketing is enabled
+    if doc.get("ticket_enabled", True):
+        cap = int(doc.get("capacity") or 100)
+        price = float(doc.get("price") or 0.0)
+        default_ticket = {
+            "event_id": event_id,
+            "type": "General Admission",
+            "price": price,
+            "total_quantity": cap,
+            "available": cap,
+            "sale_start": None,
+            "sale_end": None,
+            "is_visible": True,
+            "display_order": 0,
+            "created_at": datetime.now(timezone.utc)
+        }
+        await ticket_collection.insert_one(default_ticket)
+
     return doc
 
 @router.put("/events/{event_id}", tags=["admin-events"])
@@ -89,6 +109,22 @@ async def update_event(event_id: str, data: EventUpdate, admin=Depends(get_curre
         raise HTTPException(status_code=404, detail="Event not found")
     await log_admin_action(admin["email"], "update", "event", event_id)
     doc = await event_collection.find_one({"_id": oid(event_id)})
+
+    # Keep default single tier synced with event price/capacity
+    if "price" in update or "capacity" in update:
+        tiers = await ticket_collection.find({"event_id": event_id}).to_list(length=10)
+        if len(tiers) == 1 and tiers[0].get("type", "").lower() in ["general", "general admission"]:
+            tier_update = {}
+            if "price" in update:
+                tier_update["price"] = float(update["price"])
+            if "capacity" in update:
+                new_cap = int(update["capacity"])
+                tier_update["total_quantity"] = new_cap
+                tier_update["available"] = max(0, new_cap - int(doc.get("registered_count") or 0))
+            if tier_update:
+                tier_update["updated_at"] = datetime.now(timezone.utc)
+                await ticket_collection.update_one({"_id": tiers[0]["_id"]}, {"$set": tier_update})
+
     return clean(doc)
 
 @router.delete("/events/{event_id}", tags=["admin-events"])
@@ -257,6 +293,34 @@ async def list_tickets(event_id: Optional[str] = None, admin=Depends(get_current
     if event_id:
         q["event_id"] = event_id
     docs = await ticket_collection.find(q).sort("display_order", 1).to_list(length=100)
+
+    # If an event is selected and has no tiers yet, auto-provision default tier
+    if event_id and not docs:
+        ev = None
+        if ObjectId.is_valid(event_id):
+            ev = await event_collection.find_one({"_id": ObjectId(event_id), "is_deleted": {"$ne": True}})
+        if not ev:
+            ev = await event_collection.find_one({"_id": event_id, "is_deleted": {"$ne": True}})
+        if ev and ev.get("ticket_enabled", True) and not ev.get("is_deleted", False):
+            cap = int(ev.get("capacity") or 100)
+            price = float(ev.get("price") or 0.0)
+            registered = int(ev.get("registered_count") or 0)
+            default_ticket = {
+                "event_id": str(event_id),
+                "type": "General Admission",
+                "price": price,
+                "total_quantity": cap,
+                "available": max(0, cap - registered),
+                "sale_start": None,
+                "sale_end": None,
+                "is_visible": True,
+                "display_order": 0,
+                "created_at": datetime.now(timezone.utc)
+            }
+            res = await ticket_collection.insert_one(default_ticket)
+            default_ticket["_id"] = str(res.inserted_id)
+            docs = [default_ticket]
+
     return clean_list(docs)
 
 @router.post("/tickets", tags=["admin-tickets"])

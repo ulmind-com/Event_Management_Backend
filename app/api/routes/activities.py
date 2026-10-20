@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query, HTTPException
+from datetime import datetime, timezone
 from typing import List, Optional
 from bson import ObjectId
 from app.core.database import event_collection, ticket_collection, competition_collection, course_collection, merchandise_collection
@@ -19,11 +20,40 @@ async def get_events(skip: int = 0, limit: int = 10, search: Optional[str] = Non
     return clean_ids(events)
 
 @router.get("/tickets")
-async def get_tickets(event_id: Optional[str] = None, skip: int = 0, limit: int = 10):
+async def get_tickets(event_id: Optional[str] = None, skip: int = 0, limit: int = 20):
     query = {}
     if event_id:
         query["event_id"] = event_id
     tickets = await ticket_collection.find(query).skip(skip).limit(limit).to_list(length=limit)
+
+    # Auto-provision a default ticket tier if event exists with ticketing enabled
+    if event_id and not tickets and skip == 0:
+        ev = None
+        if ObjectId.is_valid(event_id):
+            ev = await event_collection.find_one({"_id": ObjectId(event_id), "is_deleted": {"$ne": True}})
+        if not ev:
+            ev = await event_collection.find_one({"_id": event_id, "is_deleted": {"$ne": True}})
+
+        if ev and ev.get("ticket_enabled", True) and not ev.get("is_deleted", False):
+            cap = int(ev.get("capacity") or 100)
+            price = float(ev.get("price") or 0.0)
+            registered = int(ev.get("registered_count") or 0)
+            default_ticket = {
+                "event_id": str(event_id),
+                "type": "General Admission",
+                "price": price,
+                "total_quantity": cap,
+                "available": max(0, cap - registered),
+                "sale_start": None,
+                "sale_end": None,
+                "is_visible": True,
+                "display_order": 0,
+                "created_at": datetime.now(timezone.utc)
+            }
+            res = await ticket_collection.insert_one(default_ticket)
+            default_ticket["_id"] = str(res.inserted_id)
+            tickets = [default_ticket]
+
     return clean_ids(tickets)
 
 @router.get("/competitions")

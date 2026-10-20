@@ -5,7 +5,8 @@ from app.core.database import booking_collection, ticket_collection, event_colle
 from app.schemas.booking import BookingCreateReq, BookingResponse, BookingStatus, PaymentStatus
 from app.services.payment import PaymentService
 from app.services.ticket import TicketService
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import re
 import uuid
 
 router = APIRouter()
@@ -72,6 +73,81 @@ async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, tic
         except Exception as e:
             pass
 
+def check_event_deadline(event: dict) -> None:
+    """Enforces registration deadline and event conclusion for bookings."""
+    ist = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(ist)
+
+    # 1. Check explicit registration deadline
+    deadline = event.get("registration_deadline")
+    if deadline:
+        try:
+            if isinstance(deadline, str):
+                dl_str = deadline.strip()
+                if len(dl_str) == 10 and dl_str.count("-") == 2:
+                    y, m, d = [int(x) for x in dl_str.split("-")]
+                    dl_dt = datetime(y, m, d, 23, 59, 59, 999999, tzinfo=ist)
+                else:
+                    dl_dt = datetime.fromisoformat(dl_str)
+                    if dl_dt.tzinfo is None:
+                        dl_dt = dl_dt.replace(tzinfo=ist)
+            elif isinstance(deadline, datetime):
+                dl_dt = deadline if deadline.tzinfo else deadline.replace(tzinfo=ist)
+            else:
+                dl_dt = None
+
+            if dl_dt and now_ist > dl_dt:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Registration deadline ({deadline}) has passed for this event. Ticket booking is closed."
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+    # 2. Check event date & time
+    ev_date = event.get("date")
+    if ev_date:
+        try:
+            if isinstance(ev_date, str):
+                date_str = ev_date.strip()
+                if len(date_str) == 10 and date_str.count("-") == 2:
+                    y, m, d = [int(x) for x in date_str.split("-")]
+                    ev_time = event.get("time")
+                    h, minute = 23, 59
+                    if ev_time and isinstance(ev_time, str):
+                        m_time = re.search(r'(\d{1,2}):(\d{2})(?:\s*([aApP][mM]))?', ev_time)
+                        if m_time:
+                            th = int(m_time.group(1))
+                            tm = int(m_time.group(2))
+                            mer = m_time.group(3)
+                            if mer:
+                                if mer.upper() == "PM" and th < 12:
+                                    th += 12
+                                elif mer.upper() == "AM" and th == 12:
+                                    th = 0
+                            h, minute = th, tm
+                    ev_dt = datetime(y, m, d, h, minute, 0, tzinfo=ist)
+                else:
+                    ev_dt = datetime.fromisoformat(date_str)
+                    if ev_dt.tzinfo is None:
+                        ev_dt = ev_dt.replace(tzinfo=ist)
+            elif isinstance(ev_date, datetime):
+                ev_dt = ev_date if ev_date.tzinfo else ev_date.replace(tzinfo=ist)
+            else:
+                ev_dt = None
+
+            if ev_dt and now_ist > ev_dt:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"This event concluded on {ev_date}. Ticket booking is closed."
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
 @router.post("/", response_model=dict)
 async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
     try:
@@ -85,6 +161,10 @@ async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, curre
         raise HTTPException(status_code=404, detail="Event not found or not published")
     if not event.get("registration_enabled", True) or not event.get("ticket_enabled", True):
         raise HTTPException(status_code=400, detail="Ticketing is closed for this event")
+    if event.get("event_status") in ["completed", "cancelled"]:
+        raise HTTPException(status_code=400, detail=f"This event is {event.get('event_status')}. Ticket booking is closed.")
+
+    check_event_deadline(event)
 
     update_result = await ticket_collection.update_one(
         {"_id": t_id, "event_id": str(e_id), "available": {"$gte": req.quantity}},

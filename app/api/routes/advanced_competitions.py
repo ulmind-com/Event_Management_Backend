@@ -5,7 +5,8 @@ from app.api.deps import get_current_user, get_current_user_allow_incomplete
 from app.core.database import (
     competition_collection, 
     competition_registration_collection,
-    competition_submission_collection
+    competition_submission_collection,
+    registration_collection
 )
 from app.schemas.booking import PaymentStatus
 from app.schemas.competition import RegistrationStatus, SubmissionStatus
@@ -64,6 +65,62 @@ async def check_eligibility(comp_id: str, user: dict = Depends(get_current_user)
         return {"eligible": False, "status": "NOT_ELIGIBLE", "reason": f"Maximum age requirement is {max_age}."}
         
     return {"eligible": True, "status": "ELIGIBLE", "reason": "User is eligible."}
+
+@router.get("/v1/competitions/{comp_id}/my-registration")
+async def get_my_competition_registration_status(
+    comp_id: str,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Authoritative check for the current user's registration status in a competition.
+    Returns whether the user has actually registered, payment status, and submission state.
+    """
+    user_email = user.get("email")
+    if not user_email:
+        return {"is_registered": False, "is_confirmed": False, "status": "NOT_REGISTERED"}
+
+    # 1. Check advanced competition registration
+    existing = await competition_registration_collection.find_one({
+        "competition_id": comp_id,
+        "user_email": user_email
+    })
+    
+    # 2. Check legacy registration collection fallback
+    if not existing:
+        existing = await registration_collection.find_one({
+            "activity_id": comp_id,
+            "email": user_email,
+            "activity_type": "competition"
+        })
+        
+    if not existing:
+        return {
+            "is_registered": False,
+            "is_confirmed": False,
+            "status": "NOT_REGISTERED"
+        }
+
+    is_confirmed = (
+        existing.get("status") == RegistrationStatus.CONFIRMED.value
+        or existing.get("payment_status") in (PaymentStatus.PAID.value, PaymentStatus.NOT_REQUIRED.value)
+        or existing.get("is_confirmed") is True
+    )
+    
+    sub = await competition_submission_collection.find_one({
+        "competition_id": comp_id,
+        "user_email": user_email
+    })
+    
+    return {
+        "is_registered": True,
+        "is_confirmed": is_confirmed,
+        "status": existing.get("status", "PENDING"),
+        "payment_status": existing.get("payment_status", "PENDING"),
+        "registration_reference": existing.get("registration_reference") or existing.get("order_reference"),
+        "has_submitted": bool(sub),
+        "submission_id": str(sub["_id"]) if sub else None,
+        "registered_at": existing.get("registered_at") or existing.get("created_at")
+    }
 
 @router.post("/v1/competitions/{comp_id}/register")
 async def register_competition(comp_id: str, rules_accepted: bool = False, user: dict = Depends(get_current_user)):
@@ -147,6 +204,13 @@ async def register_competition(comp_id: str, rules_accepted: bool = False, user:
         doc["status"] = RegistrationStatus.CONFIRMED.value
         doc["payment_status"] = PaymentStatus.NOT_REQUIRED.value
         await competition_registration_collection.insert_one(doc)
+        try:
+            await competition_collection.update_one(
+                {"_id": ObjectId(comp_id)},
+                {"$inc": {"registered_count": 1}}
+            )
+        except Exception:
+            pass
         return {"message": "Registration confirmed.", "status": RegistrationStatus.CONFIRMED.value, "reference": reg_ref}
     else:
         doc["status"] = RegistrationStatus.PENDING.value

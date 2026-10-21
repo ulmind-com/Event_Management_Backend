@@ -101,6 +101,7 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user)):
     competitions = await registration_collection.find({"email": email, "activity_type": "competition"}).to_list(length=100)
     my_ranks = []
     for comp in competitions:
+        comp["competition_id"] = str(comp.get("activity_id") or comp.get("competition_id") or "")
         comp["is_confirmed"] = (comp.get("status") == "CONFIRMED" or comp.get("payment_status") in ("PAID", "NOT_REQUIRED"))
         if "rank" in comp:
             my_ranks.append({

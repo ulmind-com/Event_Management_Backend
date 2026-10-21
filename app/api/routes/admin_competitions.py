@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+from typing import Optional, List, Dict, Any
+import re
 from bson import ObjectId
 from app.core.admin_auth import get_current_admin
 from app.core.database import (
@@ -7,7 +9,8 @@ from app.core.database import (
     competition_submission_collection,
     judge_score_collection,
     audience_vote_collection,
-    leaderboard_result_collection
+    leaderboard_result_collection,
+    user_collection,
 )
 from app.schemas.competition import CompetitionCreateReq, CompetitionUpdateReq
 from datetime import datetime, timezone
@@ -617,3 +620,109 @@ async def competition_dashboard_overview(comp_id: str, admin: dict = Depends(get
             "total_judge_scores": total_scores
         }
     }
+
+
+@router.get("/{comp_id}/participants")
+async def list_competition_participants(
+    comp_id: str,
+    status: Optional[str] = None,
+    payment_status: Optional[str] = None,
+    search: Optional[str] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Super Admin inspects all registered participants for a competition,
+    including registration details, payment verification, and file/link submissions.
+    """
+    try:
+        c_oid = ObjectId(comp_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid competition ID format")
+
+    comp = await competition_collection.find_one({"_id": c_oid})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    query: Dict[str, Any] = {"competition_id": str(comp_id)}
+    if status:
+        query["status"] = status
+    if payment_status:
+        query["payment_status"] = payment_status
+    if search:
+        s_reg = {"$regex": re.escape(search), "$options": "i"}
+        query["$or"] = [
+            {"user_email": s_reg},
+            {"registration_reference": s_reg},
+            {"user_name": s_reg},
+        ]
+
+    total = await competition_registration_collection.count_documents(query)
+    raw_regs = await competition_registration_collection.find(query).sort("registered_at", -1).skip(skip).limit(limit).to_list(length=limit)
+
+    emails = list({r.get("user_email") for r in raw_regs if r.get("user_email")})
+
+    users_map = {}
+    if emails:
+        usrs = await user_collection.find({"email": {"$in": emails}}).to_list(length=len(emails))
+        users_map = {u.get("email"): u for u in usrs}
+
+    submissions_map = {}
+    if emails:
+        subs = await competition_submission_collection.find({
+            "competition_id": str(comp_id),
+            "user_email": {"$in": emails}
+        }).to_list(length=len(emails) * 2)
+        for s in subs:
+            s["_id"] = str(s["_id"])
+            submissions_map[s.get("user_email")] = {
+                "submission_id": str(s.get("_id")),
+                "status": s.get("status", "SUBMITTED"),
+                "submitted_at": s.get("submitted_at"),
+                "files": s.get("files", {})
+            }
+
+    all_regs = await competition_registration_collection.find({"competition_id": str(comp_id)}).to_list(length=5000)
+    confirmed_count = sum(1 for r in all_regs if r.get("status") == "CONFIRMED" or r.get("payment_status") in ("PAID", "NOT_REQUIRED"))
+    pending_count = sum(1 for r in all_regs if r.get("status") == "PENDING" and r.get("payment_status") != "PAID")
+    total_fees = sum(float(r.get("fee", 0.0)) for r in all_regs if r.get("status") == "CONFIRMED" or r.get("payment_status") == "PAID")
+    total_submissions = await competition_submission_collection.count_documents({"competition_id": str(comp_id)})
+
+    participants_res = []
+    for r in raw_regs:
+        r_id = str(r["_id"])
+        email = r.get("user_email", "")
+        usr = users_map.get(email, {})
+        sub = submissions_map.get(email)
+
+        participants_res.append({
+            "_id": r_id,
+            "registration_id": r_id,
+            "registration_reference": r.get("registration_reference", f"CRG-{r_id[:8]}"),
+            "competition_id": str(comp_id),
+            "user_email": email,
+            "user_name": usr.get("name") or r.get("user_name") or "Participant",
+            "user_phone": usr.get("phone_number") or usr.get("phone") or r.get("user_phone") or "",
+            "status": r.get("status", "CONFIRMED"),
+            "payment_status": r.get("payment_status", "PAID"),
+            "fee": float(r.get("fee", 0.0)),
+            "registered_at": r.get("registered_at"),
+            "rules_accepted": bool(r.get("rules_accepted", True)),
+            "submission": sub
+        })
+
+    return {
+        "competition_id": str(comp_id),
+        "competition_title": comp.get("title", "Competition"),
+        "total": total,
+        "total_registered": len(all_regs),
+        "confirmed_count": confirmed_count,
+        "pending_payment_count": pending_count,
+        "submissions_count": total_submissions,
+        "total_fees_collected": total_fees,
+        "skip": skip,
+        "limit": limit,
+        "participants": participants_res
+    }
+

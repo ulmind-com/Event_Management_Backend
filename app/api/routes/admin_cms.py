@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from typing import Optional
+import re
+from typing import Optional, List, Dict, Any
 from bson import ObjectId
 from app.core.admin_auth import get_current_admin
 from app.core.database import (
@@ -7,6 +8,7 @@ from app.core.database import (
     ticket_collection, banner_collection, testimonial_collection,
     course_collection, competition_collection, contest_promotion_collection,
     app_promotion_collection, important_link_collection, audit_log_collection,
+    booking_collection, issued_ticket_collection, user_collection,
 )
 from app.schemas.cms import (
     WebsiteSettingsUpdate, VotingPowerSettings, EventCreate, EventUpdate,
@@ -508,3 +510,223 @@ async def update_voting_settings(req: VotingPowerSettings, admin: dict = Depends
         upsert=True
     )
     return {"message": "Voting settings updated successfully"}
+
+# ════════════════════════════════════════
+# EVENT TICKET BOOKINGS & ATTENDEES (Admin Control)
+# ════════════════════════════════════════
+
+async def _fetch_admin_bookings(
+    event_id: Optional[str] = None,
+    status: Optional[str] = None,
+    payment_status: Optional[str] = None,
+    search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100
+):
+    query: Dict[str, Any] = {}
+    if event_id:
+        query["event_id"] = str(event_id)
+    if status:
+        query["booking_status"] = status
+    if payment_status:
+        query["payment_status"] = payment_status
+    if search:
+        s_reg = {"$regex": re.escape(search), "$options": "i"}
+        query["$or"] = [
+            {"booking_reference": s_reg},
+            {"user_email": s_reg},
+            {"holder_names": s_reg},
+        ]
+
+    total = await booking_collection.count_documents(query)
+    raw_bookings = await booking_collection.find(query).sort("booked_at", -1).skip(skip).limit(limit).to_list(length=limit)
+
+    event_ids = {b.get("event_id") for b in raw_bookings if b.get("event_id")}
+    ticket_ids = {b.get("ticket_id") for b in raw_bookings if b.get("ticket_id")}
+    user_emails = {b.get("user_email") for b in raw_bookings if b.get("user_email")}
+    booking_id_strs = [str(b["_id"]) for b in raw_bookings]
+
+    events_map = {}
+    if event_ids:
+        oids = []
+        for eid in event_ids:
+            try:
+                oids.append(ObjectId(eid))
+            except Exception:
+                pass
+        if oids:
+            evs = await event_collection.find({"_id": {"$in": oids}}).to_list(length=len(oids))
+            events_map = {str(e["_id"]): e for e in evs}
+
+    tickets_map = {}
+    if ticket_ids:
+        toids = []
+        for tid in ticket_ids:
+            try:
+                toids.append(ObjectId(tid))
+            except Exception:
+                pass
+        if toids:
+            tks = await ticket_collection.find({"_id": {"$in": toids}}).to_list(length=len(toids))
+            tickets_map = {str(t["_id"]): t for t in tks}
+
+    users_map = {}
+    if user_emails:
+        usrs = await user_collection.find({"email": {"$in": list(user_emails)}}).to_list(length=len(user_emails))
+        users_map = {u.get("email"): u for u in usrs}
+
+    issued_map = {}
+    if booking_id_strs:
+        all_tix = await issued_ticket_collection.find({"booking_id": {"$in": booking_id_strs}}).to_list(length=1000)
+        for t in all_tix:
+            t["_id"] = str(t["_id"])
+            b_id = t.get("booking_id")
+            if b_id not in issued_map:
+                issued_map[b_id] = []
+            issued_map[b_id].append({
+                "ticket_ref": t.get("ticket_ref"),
+                "holder_name": t.get("holder_name"),
+                "holder_email": t.get("holder_email"),
+                "ticket_type": t.get("ticket_type"),
+                "is_checked_in": bool(t.get("is_checked_in")),
+                "check_in_time": t.get("check_in_time"),
+            })
+
+    stats_query = {"event_id": str(event_id)} if event_id else {}
+    all_for_stats = await booking_collection.find(stats_query).to_list(length=2000)
+    total_tickets = sum(int(b.get("quantity", 1)) for b in all_for_stats)
+    total_revenue = sum(
+        float(b.get("total_amount", 0.0))
+        for b in all_for_stats
+        if b.get("booking_status") == "CONFIRMED" or b.get("payment_status") in ("PAID", "NOT_REQUIRED")
+    )
+    
+    tix_query: Dict[str, Any] = {"event_id": str(event_id)} if event_id else {}
+    tix_query["is_checked_in"] = True
+    checked_in_count = await issued_ticket_collection.count_documents(tix_query)
+
+    bookings_res = []
+    for b in raw_bookings:
+        b_id = str(b["_id"])
+        ev = events_map.get(str(b.get("event_id")), {})
+        tk = tickets_map.get(str(b.get("ticket_id")), {})
+        usr = users_map.get(b.get("user_email"), {})
+
+        bookings_res.append({
+            "_id": b_id,
+            "booking_id": b_id,
+            "booking_reference": b.get("booking_reference", f"BKG-{b_id[:8]}"),
+            "event_id": str(b.get("event_id", "")),
+            "event_title": ev.get("title") or b.get("event_title") or "Event",
+            "event_date": ev.get("date"),
+            "ticket_id": str(b.get("ticket_id", "")),
+            "ticket_type": tk.get("type") or b.get("ticket_type") or "General",
+            "user_email": b.get("user_email", ""),
+            "user_name": usr.get("name") or b.get("user_name") or "Attendee",
+            "user_phone": usr.get("phone_number") or usr.get("phone") or b.get("user_phone") or "",
+            "quantity": int(b.get("quantity", 1)),
+            "unit_price": float(b.get("unit_price", 0.0)),
+            "total_amount": float(b.get("total_amount", 0.0)),
+            "booking_status": b.get("booking_status", "CONFIRMED"),
+            "payment_status": b.get("payment_status", "PAID"),
+            "payment_reference": b.get("payment_reference"),
+            "booked_at": b.get("booked_at"),
+            "holder_names": b.get("holder_names", []),
+            "tickets": issued_map.get(b_id, []),
+        })
+
+    return {
+        "total": total,
+        "total_tickets": total_tickets,
+        "total_revenue": total_revenue,
+        "checked_in_count": checked_in_count,
+        "skip": skip,
+        "limit": limit,
+        "bookings": bookings_res,
+    }
+
+@router.get("/events/{event_id}/bookings", tags=["admin-bookings"])
+async def list_admin_event_bookings(
+    event_id: str,
+    status: Optional[str] = None,
+    payment_status: Optional[str] = None,
+    search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100,
+    admin=Depends(get_current_admin)
+):
+    """Super Admin retrieves ticket bookings for a specific event with customer and attendee details."""
+    return await _fetch_admin_bookings(
+        event_id=event_id,
+        status=status,
+        payment_status=payment_status,
+        search=search,
+        skip=skip,
+        limit=limit
+    )
+
+@router.get("/bookings", tags=["admin-bookings"])
+async def list_all_admin_bookings(
+    event_id: Optional[str] = None,
+    status: Optional[str] = None,
+    payment_status: Optional[str] = None,
+    search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100,
+    admin=Depends(get_current_admin)
+):
+    """Super Admin retrieves all ticket bookings across events with metrics and issued tickets."""
+    return await _fetch_admin_bookings(
+        event_id=event_id,
+        status=status,
+        payment_status=payment_status,
+        search=search,
+        skip=skip,
+        limit=limit
+    )
+
+@router.get("/bookings/{booking_id}", tags=["admin-bookings"])
+async def get_admin_booking_detail(booking_id: str, admin=Depends(get_current_admin)):
+    """Super Admin retrieves comprehensive details for an individual ticket booking."""
+    b = None
+    try:
+        b = await booking_collection.find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        pass
+    if not b:
+        b = await booking_collection.find_one({"$or": [{"_id": booking_id}, {"booking_reference": booking_id}]})
+    if not b:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    b_id_str = str(b["_id"])
+    b["_id"] = b_id_str
+    b["booking_id"] = b_id_str
+
+    user = await user_collection.find_one({"email": b.get("user_email")})
+    b["user_name"] = (user.get("name") if user else None) or b.get("user_name") or "Attendee"
+    b["user_phone"] = (user.get("phone_number") or user.get("phone") if user else None) or b.get("user_phone") or ""
+
+    if b.get("event_id"):
+        try:
+            ev = await event_collection.find_one({"_id": ObjectId(b["event_id"])})
+            if ev:
+                b["event_title"] = ev.get("title")
+                b["event_date"] = ev.get("date")
+                b["event_venue"] = ev.get("venue")
+        except Exception:
+            pass
+
+    if b.get("ticket_id"):
+        try:
+            tk = await ticket_collection.find_one({"_id": ObjectId(b["ticket_id"])})
+            if tk:
+                b["ticket_type"] = tk.get("type")
+        except Exception:
+            pass
+
+    tix = await issued_ticket_collection.find({"booking_id": b_id_str}).to_list(length=100)
+    for t in tix:
+        t["_id"] = str(t["_id"])
+    b["tickets"] = tix
+
+    return b

@@ -3,12 +3,14 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from bson import ObjectId
 
+import re
 from app.core.admin_auth import get_current_admin
 from app.core.database import (
     vip_configuration_collection,
     vip_booking_collection,
     vip_pass_collection,
     vip_checkin_collection,
+    user_collection,
 )
 from app.schemas.vip import (
     VIPConfigurationCreateReq,
@@ -267,26 +269,71 @@ async def get_vip_pass_scan_history(
 # VIP Bookings Management
 # ──────────────────────────────────────────────────────────
 
+async def _fetch_vip_bookings(
+    event_id: Optional[str] = None,
+    booking_status: Optional[str] = None,
+    search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50
+):
+    query: Dict[str, Any] = {}
+    if event_id:
+        query["event_id"] = str(event_id)
+    if booking_status:
+        query["booking_status"] = booking_status
+    if search:
+        s_reg = {"$regex": re.escape(search), "$options": "i"}
+        query["$or"] = [
+            {"booking_reference": s_reg},
+            {"user_email": s_reg},
+            {"holder_names": s_reg},
+            {"user_name": s_reg},
+        ]
+
+    total = await vip_booking_collection.count_documents(query)
+    bookings = await vip_booking_collection.find(query).sort("booked_at", -1).skip(skip).limit(limit).to_list(length=limit)
+    
+    emails = list({b.get("user_email") for b in bookings if b.get("user_email")})
+    users_map = {}
+    if emails:
+        usrs = await user_collection.find({"email": {"$in": emails}}).to_list(length=len(emails))
+        users_map = {u.get("email"): u for u in usrs}
+
+    for b in bookings:
+        b_id = str(b["_id"])
+        b["booking_id"] = b_id
+        b["_id"] = b_id
+        usr = users_map.get(b.get("user_email"), {})
+        if not b.get("user_name") or b.get("user_name") == "Guest":
+            b["user_name"] = usr.get("name") or "VIP Customer"
+        b["user_phone"] = usr.get("phone_number") or usr.get("phone") or b.get("user_phone") or ""
+
+    return serialize_mongo({"total": total, "skip": skip, "limit": limit, "bookings": bookings})
+
 @router.get("/events/{event_id}/vip-bookings", response_model=Dict[str, Any])
 async def list_admin_event_vip_bookings(
     event_id: str,
     booking_status: Optional[str] = None,
+    search: Optional[str] = None,
     limit: int = Query(50, ge=1, le=100),
     skip: int = Query(0, ge=0),
     admin: dict = Depends(get_current_admin)
 ):
     """Super Admin inspects all VIP bookings for an event."""
-    query: Dict[str, Any] = {"event_id": str(event_id)}
-    if booking_status:
-        query["booking_status"] = booking_status
+    return await _fetch_vip_bookings(event_id=event_id, booking_status=booking_status, search=search, skip=skip, limit=limit)
 
-    total = await vip_booking_collection.count_documents(query)
-    bookings = await vip_booking_collection.find(query).sort("booked_at", -1).skip(skip).limit(limit).to_list(length=limit)
-    for b in bookings:
-        b["booking_id"] = str(b["_id"])
-        b["_id"] = str(b["_id"])
+@router.get("/vip-bookings", response_model=Dict[str, Any])
+async def list_all_admin_vip_bookings(
+    event_id: Optional[str] = None,
+    booking_status: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=100),
+    skip: int = Query(0, ge=0),
+    admin: dict = Depends(get_current_admin)
+):
+    """Super Admin inspects all VIP bookings across all events."""
+    return await _fetch_vip_bookings(event_id=event_id, booking_status=booking_status, search=search, skip=skip, limit=limit)
 
-    return serialize_mongo({"total": total, "skip": skip, "limit": limit, "bookings": bookings})
 
 @router.get("/vip-bookings/{booking_id}", response_model=Dict[str, Any])
 async def get_admin_vip_booking_detail(

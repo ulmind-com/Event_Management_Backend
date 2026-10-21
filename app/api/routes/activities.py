@@ -4,6 +4,8 @@ from typing import List, Optional
 from bson import ObjectId
 from app.core.database import event_collection, ticket_collection, competition_collection, course_collection, merchandise_collection
 
+from app.services.ticket import TicketService
+
 router = APIRouter()
 
 def clean_ids(docs):
@@ -13,11 +15,23 @@ def clean_ids(docs):
 
 @router.get("/events")
 async def get_events(skip: int = 0, limit: int = 10, search: Optional[str] = None):
-    query = {}
+    query = {"is_deleted": {"$ne": True}}
     if search:
         query["title"] = {"$regex": search, "$options": "i"}
     events = await event_collection.find(query).skip(skip).limit(limit).to_list(length=limit)
     return clean_ids(events)
+
+@router.get("/events/{event_id}")
+async def get_event_by_id(event_id: str):
+    ev = None
+    if ObjectId.is_valid(event_id):
+        ev = await event_collection.find_one({"_id": ObjectId(event_id), "is_deleted": {"$ne": True}})
+    if not ev:
+        ev = await event_collection.find_one({"_id": event_id, "is_deleted": {"$ne": True}})
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ev["_id"] = str(ev["_id"])
+    return ev
 
 @router.get("/tickets")
 async def get_tickets(event_id: Optional[str] = None, skip: int = 0, limit: int = 20):
@@ -54,7 +68,19 @@ async def get_tickets(event_id: Optional[str] = None, skip: int = 0, limit: int 
             default_ticket["_id"] = str(res.inserted_id)
             tickets = [default_ticket]
 
-    return clean_ids(tickets)
+    normalized = [TicketService.normalize_ticket_data(t) for t in tickets]
+    return normalized
+
+@router.get("/tickets/{ticket_id}")
+async def get_ticket_by_id(ticket_id: str):
+    try:
+        t_oid = ObjectId(ticket_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ticket ID")
+    ticket = await ticket_collection.find_one({"_id": t_oid})
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return TicketService.normalize_ticket_data(ticket)
 
 @router.get("/competitions")
 async def get_competitions(skip: int = 0, limit: int = 10, search: Optional[str] = None):

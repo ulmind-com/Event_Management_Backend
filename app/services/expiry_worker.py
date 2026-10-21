@@ -27,6 +27,13 @@ class ExpiryWorker:
                 result["merchandise_expired_orders"] = merch_exp_res.get("expired_orders_count", 0)
             except Exception as e:
                 logger.error(f"Error in Merchandise order expiry cycle: {e}")
+            try:
+                from app.services.ticket import TicketService
+                ticket_exp_res = await TicketService.expire_pending_bookings()
+                result["ticket_expired_bookings"] = ticket_exp_res.get("expired_bookings_count", 0)
+                result["ticket_restored_inventory"] = ticket_exp_res.get("restored_tickets_count", 0)
+            except Exception as e:
+                logger.error(f"Error in ticket booking expiry cycle: {e}")
 
             logger.info(
                 f"Automated coin expiry cycle complete. Lots expired: {result.get('lots_expired_count', 0)}, "

@@ -19,6 +19,7 @@ from app.schemas.cms import (
     PublishToggle, VisibilityToggle, ReorderReq, ApprovalToggle,
 )
 from app.services.audit import log_admin_action
+from app.services.ticket import TicketService
 from datetime import datetime, timezone
 
 router = APIRouter()
@@ -323,7 +324,7 @@ async def list_tickets(event_id: Optional[str] = None, admin=Depends(get_current
             default_ticket["_id"] = str(res.inserted_id)
             docs = [default_ticket]
 
-    return clean_list(docs)
+    return [TicketService.normalize_ticket_data(clean(d)) for d in docs]
 
 @router.post("/tickets", tags=["admin-tickets"])
 async def create_ticket(data: TicketCreate, admin=Depends(get_current_admin)):
@@ -334,18 +335,28 @@ async def create_ticket(data: TicketCreate, admin=Depends(get_current_admin)):
     result = await ticket_collection.insert_one(doc)
     await log_admin_action(admin["email"], "create", "ticket", str(result.inserted_id))
     doc["_id"] = str(result.inserted_id)
-    return doc
+    return TicketService.normalize_ticket_data(doc)
 
 @router.put("/tickets/{tid}", tags=["admin-tickets"])
 async def update_ticket(tid: str, data: TicketUpdate, admin=Depends(get_current_admin)):
-    update = {k: v for k, v in data.model_dump().items() if v is not None}
-    update["updated_at"] = datetime.now(timezone.utc)
-    result = await ticket_collection.update_one({"_id": oid(tid)}, {"$set": update})
-    if result.matched_count == 0:
+    existing = await ticket_collection.find_one({"_id": oid(tid)})
+    if not existing:
         raise HTTPException(status_code=404, detail="Ticket not found")
+
+    update = {k: v for k, v in data.model_dump().items() if v is not None}
+    
+    # Keep available in sync when total_quantity is modified without explicit available
+    if "total_quantity" in update and "available" not in update:
+        old_total = int(existing.get("total_quantity") or existing.get("quantity") or 0)
+        old_avail = int(existing.get("available") if existing.get("available") is not None else old_total)
+        sold = max(0, old_total - old_avail)
+        update["available"] = max(0, int(update["total_quantity"]) - sold)
+
+    update["updated_at"] = datetime.now(timezone.utc)
+    await ticket_collection.update_one({"_id": oid(tid)}, {"$set": update})
     await log_admin_action(admin["email"], "update", "ticket", tid)
     doc = await ticket_collection.find_one({"_id": oid(tid)})
-    return clean(doc)
+    return TicketService.normalize_ticket_data(clean(doc))
 
 @router.delete("/tickets/{tid}", tags=["admin-tickets"])
 async def delete_ticket(tid: str, admin=Depends(get_current_admin)):

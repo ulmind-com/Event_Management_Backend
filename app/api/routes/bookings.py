@@ -181,6 +181,8 @@ async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, curre
     unit_price = float(ticket.get("price", 0.0))
     total_amount = unit_price * req.quantity
     booking_ref = f"BKG-{uuid.uuid4().hex[:10].upper()}"
+    now_utc = datetime.now(timezone.utc)
+    expires_at = now_utc + timedelta(minutes=15)
 
     booking = {
         "booking_reference": booking_ref,
@@ -190,7 +192,8 @@ async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, curre
         "quantity": req.quantity,
         "unit_price": unit_price,
         "total_amount": total_amount,
-        "booked_at": datetime.now(timezone.utc),
+        "booked_at": now_utc,
+        "expires_at": expires_at,
         "payment_reference": None
     }
 
@@ -199,10 +202,12 @@ async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, curre
     if total_amount == 0.0:
         booking["booking_status"] = BookingStatus.CONFIRMED.value
         booking["payment_status"] = PaymentStatus.NOT_REQUIRED.value
+        booking["confirmed_at"] = now_utc
         res = await booking_collection.insert_one(booking)
         bg_tasks.add_task(
             generate_tickets, str(res.inserted_id), booking_ref, str(e_id), ticket.get("type"), current_user["email"], req.quantity, req.holder_names
         )
+        await event_collection.update_one({"_id": e_id}, {"$inc": {"registered_count": req.quantity}})
         response_data["message"] = "Free ticket booked and confirmed successfully."
         response_data["booking_status"] = BookingStatus.CONFIRMED.value
     else:
@@ -215,7 +220,19 @@ async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, curre
         response_data["booking_status"] = BookingStatus.PENDING.value
         response_data["payment_info"] = payment_info
 
-    response_data["booking_id"] = str(res.inserted_id)
+    # Fetch updated ticket metrics to return real-time remaining count
+    updated_ticket = await ticket_collection.find_one({"_id": t_id})
+    norm = TicketService.normalize_ticket_data(updated_ticket) if updated_ticket else {}
+    response_data.update({
+        "booking_id": str(res.inserted_id),
+        "ticket_id": str(t_id),
+        "total_tickets": norm.get("total_quantity", 0),
+        "remaining_tickets": norm.get("available", 0),
+        "available": norm.get("available", 0),
+        "sold_count": norm.get("sold_count", 0),
+        "quantity_booked": req.quantity,
+        "expires_at": expires_at.isoformat() if total_amount > 0.0 else None,
+    })
     return response_data
 
 @router.get("/my")
@@ -239,12 +256,22 @@ async def cancel_my_booking(booking_id: str, current_user: dict = Depends(get_cu
     if booking.get("booking_status") in [BookingStatus.CANCELLED.value, BookingStatus.EXPIRED.value]:
         raise HTTPException(status_code=400, detail="Booking already cancelled or expired")
         
+    was_confirmed = (booking.get("booking_status") == BookingStatus.CONFIRMED.value)
     await booking_collection.update_one({"_id": b_id}, {"$set": {"booking_status": BookingStatus.CANCELLED.value}})
     
-    await ticket_collection.update_one(
-        {"_id": ObjectId(booking["ticket_id"])},
-        {"$inc": {"available": booking["quantity"]}}
-    )
+    # Restore available ticket inventory
+    if ObjectId.is_valid(booking.get("ticket_id")):
+        await ticket_collection.update_one(
+            {"_id": ObjectId(booking["ticket_id"])},
+            {"$inc": {"available": booking["quantity"]}}
+        )
+
+    # If booking was confirmed, decrement registered_count on event
+    if was_confirmed and ObjectId.is_valid(booking.get("event_id")):
+        await event_collection.update_one(
+            {"_id": ObjectId(booking["event_id"])},
+            {"$inc": {"registered_count": -booking["quantity"]}}
+        )
     
     if booking.get("payment_status") == PaymentStatus.PAID.value:
         await PaymentService.process_refund(booking["booking_reference"], booking["total_amount"])

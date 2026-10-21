@@ -296,8 +296,8 @@ class AdminAnalyticsService:
             revenue = float(rev_result[0]["total"]) if rev_result else 0.0
             qty_sold = rev_result[0]["qty"] if rev_result else 0
 
-            total_capacity = int(t.get("quantity", 0))
-            available = int(t.get("available", 0))
+            total_capacity = int(t.get("total_quantity") if t.get("total_quantity") is not None else t.get("quantity", 0))
+            available = int(t.get("available") if t.get("available") is not None else max(0, total_capacity - qty_sold))
 
             summaries.append({
                 "ticket_id": tid,

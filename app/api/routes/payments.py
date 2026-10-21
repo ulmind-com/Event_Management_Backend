@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from bson import ObjectId
 
 from app.api.deps import get_current_user
-from app.core.database import booking_collection
+from app.core.database import booking_collection, event_collection, ticket_collection
 from app.schemas.booking import PaymentVerifyReq, BookingStatus, PaymentStatus
 from app.api.routes.bookings import generate_tickets
 from app.services.payment import PaymentService
@@ -93,6 +93,13 @@ async def verify_razorpay_payment(
             "payment_provider": "RAZORPAY"
         }}
     )
+
+    # Increment registered_count on event
+    if ObjectId.is_valid(booking.get("event_id")):
+        await event_collection.update_one(
+            {"_id": ObjectId(booking["event_id"])},
+            {"$inc": {"registered_count": booking.get("quantity", 1)}}
+        )
 
     # 6. Trigger Ticket Generation background task
     bg_tasks.add_task(
@@ -274,6 +281,11 @@ async def handle_razorpay_booking_webhook(
                             "payment_provider": "RAZORPAY"
                         }}
                     )
+                    if ObjectId.is_valid(booking.get("event_id")):
+                        await event_collection.update_one(
+                            {"_id": ObjectId(booking["event_id"])},
+                            {"$inc": {"registered_count": booking.get("quantity", 1)}}
+                        )
                     bg_tasks.add_task(
                         generate_tickets,
                         str(b_id),
@@ -343,6 +355,11 @@ async def verify_payment_mock(
                 "payment_reference": req.transaction_id
             }}
         )
+        if ObjectId.is_valid(booking.get("event_id")):
+            await event_collection.update_one(
+                {"_id": ObjectId(booking["event_id"])},
+                {"$inc": {"registered_count": booking.get("quantity", 1)}}
+            )
         bg_tasks.add_task(
             generate_tickets,
             str(b_id),
@@ -362,4 +379,10 @@ async def verify_payment_mock(
                 "booking_status": BookingStatus.CANCELLED.value
             }}
         )
-        return {"message": "Payment failed, booking cancelled"}
+        # Restore ticket inventory on failed payment
+        if ObjectId.is_valid(booking.get("ticket_id")):
+            await ticket_collection.update_one(
+                {"_id": ObjectId(booking["ticket_id"])},
+                {"$inc": {"available": booking.get("quantity", 1)}}
+            )
+        return {"message": "Payment failed, booking cancelled and inventory restored"}

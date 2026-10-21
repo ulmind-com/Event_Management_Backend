@@ -7,7 +7,7 @@ from app.core.database import (
     certificate_collection, reward_collection, user_badge_award_collection,
     competition_collection, competition_registration_collection,
     competition_submission_collection, judge_score_collection, merchandise_order_collection,
-    coin_ledger_collection, course_collection
+    coin_ledger_collection, course_collection, leaderboard_result_collection
 )
 from app.schemas.profile import ProfileUpdateReq, ProfileUpdateRes, DashboardRes
 from app.services.cloudinary_srv import upload_image
@@ -121,9 +121,20 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user)):
                 c_info = await competition_collection.find_one({"_id": ObjectId(comp_id_str)})
             
             sub = await competition_submission_collection.find_one({"competition_id": comp_id_str, "user_email": email})
-            score_doc = await judge_score_collection.find_one({"competition_id": comp_id_str, "participant_id": email})
-            rank_val = ar.get("rank") or (score_doc.get("rank") if score_doc else None)
-            score_val = ar.get("score") or (score_doc.get("score") if score_doc else None)
+            sub_id = str(sub["_id"]) if sub else ""
+
+            score_match = [{"participant_id": email}, {"user_email": email}]
+            if sub_id:
+                score_match.append({"submission_id": sub_id})
+            score_doc = await judge_score_collection.find_one({"competition_id": comp_id_str, "$or": score_match})
+
+            lb_match = [{"participant_id": email}, {"email": email}]
+            if sub_id:
+                lb_match.append({"submission_id": sub_id})
+            lb_doc = await leaderboard_result_collection.find_one({"competition_id": comp_id_str, "$or": lb_match})
+
+            rank_val = ar.get("rank") or (lb_doc.get("rank") if lb_doc else None) or (score_doc.get("rank") if score_doc else None)
+            score_val = ar.get("score") or (lb_doc.get("total_score") or lb_doc.get("score") if lb_doc else None) or (score_doc.get("total_score") if score_doc else None)
             
             c_title = c_info.get("title") if c_info else "Competition"
             is_confirmed = (ar.get("status") == "CONFIRMED" or ar.get("payment_status") in ("PAID", "NOT_REQUIRED"))

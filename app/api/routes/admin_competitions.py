@@ -217,8 +217,8 @@ async def lock_scores(comp_id: str, admin: dict = Depends(get_current_admin)):
 @router.post("/{comp_id}/results/approve")
 async def approve_results(comp_id: str, admin: dict = Depends(get_current_admin)):
     """
-    Recalculates the leaderboard ONLY from LOCKED scores.
-    This acts as the official provisional ranking.
+    Recalculates the leaderboard from locked scores, generates leaderboard entries,
+    and approves the official result snapshot.
     """
     comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
     if not comp:
@@ -234,44 +234,105 @@ async def approve_results(comp_id: str, admin: dict = Depends(get_current_admin)
     ]
     
     score_agg = await judge_score_collection.aggregate(pipeline).to_list(length=1000)
-    
     await leaderboard_result_collection.delete_many({"competition_id": comp_id})
     
     docs = []
     for s in score_agg:
+        sub = await competition_submission_collection.find_one({"_id": ObjectId(s["_id"]) if ObjectId.is_valid(s["_id"]) else s["_id"]})
+        user_email = sub.get("user_email") if sub else ""
+        user_info = await user_collection.find_one({"email": user_email}) if user_email else None
+        p_name = (user_info.get("full_name") or user_info.get("name") or sub.get("name") or user_email.split("@")[0].title()) if user_email else "Contestant"
+        
         docs.append({
             "competition_id": comp_id,
             "submission_id": s["_id"],
+            "participant_id": user_email,
+            "email": user_email,
+            "name": p_name,
             "total_score": s["total_judge_score"],
             "rank": 0,
             "status": "APPROVED"
         })
         
-    if not docs:
-        return {"message": "No locked scores available to calculate."}
-        
-    docs.sort(key=lambda x: x["total_score"], reverse=True)
-    current_rank = 1
-    for i, doc in enumerate(docs):
-        if i > 0 and docs[i]["total_score"] == docs[i-1]["total_score"]:
-            doc["rank"] = docs[i-1]["rank"]
-        else:
-            doc["rank"] = current_rank
-        current_rank += 1
-            
-    await leaderboard_result_collection.insert_many(docs)
+    if docs:
+        docs.sort(key=lambda x: x["total_score"], reverse=True)
+        current_rank = 1
+        for i, doc in enumerate(docs):
+            if i > 0 and docs[i]["total_score"] == docs[i-1]["total_score"]:
+                doc["rank"] = docs[i-1]["rank"]
+            else:
+                doc["rank"] = current_rank
+            current_rank += 1
+        await leaderboard_result_collection.insert_many(docs)
+
+    # Approve snapshot if exists
+    from app.core.database import db
+    result_snapshots = db["result_snapshots"]
+    snapshot = await result_snapshots.find_one({"competition_id": comp_id, "is_published": False})
+    if snapshot:
+        await result_snapshots.update_one(
+            {"_id": snapshot["_id"]},
+            {"$set": {"is_approved": True, "approved_by": admin.get("email"), "approved_at": datetime.now(timezone.utc)}}
+        )
+    
+    await competition_collection.update_one(
+        {"_id": ObjectId(comp_id)},
+        {"$set": {"result_status": "APPROVED", "results_approved_at": datetime.now(timezone.utc)}}
+    )
     return {"message": "Results approved and Leaderboard generated successfully.", "total_ranked": len(docs)}
 
 @router.post("/{comp_id}/results/publish")
 async def publish_results(comp_id: str, admin: dict = Depends(get_current_admin)):
-    """Publishes the approved leaderboard to the public."""
-    # In a real app, this might just flip a boolean on the Competition.
+    """Publishes the approved leaderboard to the public and dispatches notifications."""
+    from app.core.database import db
+    result_snapshots = db["result_snapshots"]
+    
+    snapshot = await result_snapshots.find_one({"competition_id": comp_id, "is_approved": True})
+    if snapshot:
+        await result_snapshots.update_one(
+            {"_id": snapshot["_id"]},
+            {"$set": {"is_published": True, "published_by": admin.get("email"), "published_at": datetime.now(timezone.utc)}}
+        )
+
     res = await competition_collection.update_one(
         {"_id": ObjectId(comp_id)},
-        {"$set": {"results_published": True, "results_published_at": datetime.now(timezone.utc)}}
+        {"$set": {
+            "result_status": "PUBLISHED",
+            "results_published": True,
+            "results_published_at": datetime.now(timezone.utc)
+        }}
     )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Competition not found")
+
+    # Authoritative trigger: COMPETITION_RESULT & LEADERBOARD_UPDATE
+    try:
+        from app.services.notification_service import NotificationService
+        from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+
+        comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+        comp_title = comp.get("title", "Competition") if comp else "Competition"
+
+        regs = await competition_registration_collection.find({"competition_id": comp_id}).to_list(2000)
+        subs = await competition_submission_collection.find({"competition_id": comp_id}).to_list(2000)
+        recipients = list(set([r["user_email"] for r in regs if r.get("user_email")] + [s["user_email"] for s in subs if s.get("user_email")]))
+
+        if recipients:
+            await NotificationService.create_bulk_notifications(
+                recipient_emails=recipients,
+                notification_type=NotificationType.COMPETITION_RESULT,
+                title=f"Results Published: {comp_title}",
+                message=f"The official results and leaderboard rankings for '{comp_title}' are now published!",
+                resource_type="competition",
+                resource_id=comp_id,
+                action_url=f"/competitions/{comp_id}/results",
+                priority=NotificationPriority.HIGH,
+                sound_category=SoundCategory.SUCCESS,
+                dedup_prefix=f"comp_result_{comp_id}",
+            )
+    except Exception:
+        pass
+
     return {"message": "Results published successfully."}
 
 # ══════════════════════════════════════════════
@@ -534,62 +595,6 @@ async def start_finalization(comp_id: str, admin: dict = Depends(get_current_adm
     await competition_collection.update_one({"_id": ObjectId(comp_id)}, {"$set": {"result_status": "PENDING"}})
     
     return {"message": "Finalization complete. Snapshot generated for review.", "snapshot_id": str(res.inserted_id)}
-
-@router.post("/{comp_id}/results/approve")
-async def approve_results_snapshot(comp_id: str, admin: dict = Depends(get_current_admin)):
-    from app.core.database import db
-    result_snapshots = db["result_snapshots"]
-    
-    snapshot = await result_snapshots.find_one({"competition_id": comp_id, "is_published": False})
-    if not snapshot:
-        raise HTTPException(status_code=404, detail="No un-published snapshot found. Start finalization first.")
-        
-    await result_snapshots.update_one({"_id": snapshot["_id"]}, {"$set": {"is_approved": True, "approved_by": admin.get("email"), "approved_at": datetime.now(timezone.utc)}})
-    await competition_collection.update_one({"_id": ObjectId(comp_id)}, {"$set": {"result_status": "APPROVED"}})
-    return {"message": "Result snapshot approved successfully."}
-
-@router.post("/{comp_id}/results/publish")
-async def publish_results_snapshot(comp_id: str, admin: dict = Depends(get_current_admin)):
-    from app.core.database import db
-    result_snapshots = db["result_snapshots"]
-    
-    snapshot = await result_snapshots.find_one({"competition_id": comp_id, "is_approved": True})
-    if not snapshot:
-        raise HTTPException(status_code=400, detail="Result must be approved before publication.")
-        
-    await result_snapshots.update_one({"_id": snapshot["_id"]}, {"$set": {"is_published": True, "published_by": admin.get("email"), "published_at": datetime.now(timezone.utc)}})
-    await competition_collection.update_one({"_id": ObjectId(comp_id)}, {"$set": {"result_status": "PUBLISHED"}})
-
-    # Authoritative trigger: COMPETITION_RESULT & LEADERBOARD_UPDATE
-    try:
-        from app.services.notification_service import NotificationService
-        from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
-
-        comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
-        comp_title = comp.get("title", "Competition") if comp else "Competition"
-
-        # Find all registered participants and submitters
-        regs = await competition_registration_collection.find({"competition_id": comp_id}).to_list(2000)
-        subs = await competition_submission_collection.find({"competition_id": comp_id}).to_list(2000)
-        recipients = list(set([r["user_email"] for r in regs if r.get("user_email")] + [s["user_email"] for s in subs if s.get("user_email")]))
-
-        if recipients:
-            await NotificationService.create_bulk_notifications(
-                recipient_emails=recipients,
-                notification_type=NotificationType.COMPETITION_RESULT,
-                title=f"Results Published: {comp_title}",
-                message=f"The official results and leaderboard rankings for '{comp_title}' are now published!",
-                resource_type="competition",
-                resource_id=comp_id,
-                action_url=f"/competitions/{comp_id}/results",
-                priority=NotificationPriority.HIGH,
-                sound_category=SoundCategory.SUCCESS,
-                dedup_prefix=f"comp_result_{comp_id}",
-            )
-    except Exception:
-        pass
-
-    return {"message": "Result published officially!"}
 
 
 @router.get("/{comp_id}/overview")

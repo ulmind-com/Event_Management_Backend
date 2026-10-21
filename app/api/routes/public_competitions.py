@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends
 from bson import ObjectId
 from app.core.database import judge_feedback_collection, competition_collection, leaderboard_result_collection
 from bson import ObjectId
@@ -136,42 +136,146 @@ async def submit_audience_vote(comp_id: str, req: VoteReq, user: dict = Depends(
 async def provisional_leaderboard(comp_id: str):
     """Returns the real-time provisional leaderboard calculated by the ranking service."""
     from app.services.ranking_service import RankingService
-    comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
-    if not comp: raise HTTPException(status_code=404, detail="Competition not found")
-    
-    submissions = await competition_submission_collection.find({"competition_id": comp_id, "status": {"$in": ["APPROVED", "SUBMITTED"]}}).to_list(length=5000)
-    
+    from app.core.database import (
+        judge_score_collection,
+        competition_registration_collection,
+        user_collection,
+        leaderboard_result_collection,
+        db
+    )
+
+    comp = None
+    if ObjectId.is_valid(comp_id):
+        comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp:
+        comp = await competition_collection.find_one({"_id": comp_id})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    # If officially published snapshot exists, return it
+    if comp.get("result_status") == "PUBLISHED" or comp.get("results_published"):
+        snapshot = await db["result_snapshots"].find_one({"competition_id": comp_id, "is_published": True})
+        if snapshot and snapshot.get("leaderboard"):
+            return {
+                "ranking_mode": snapshot.get("ranking_mode", "FINAL"),
+                "is_published": True,
+                "leaderboard": snapshot["leaderboard"]
+            }
+
+    # Gather all participant candidates from submissions, registrations, and existing leaderboard docs
+    submissions = await competition_submission_collection.find({
+        "competition_id": comp_id,
+        "status": {"$in": ["APPROVED", "SUBMITTED", "PENDING", "COMPLETED"]}
+    }).to_list(length=5000)
+
+    registrations = await competition_registration_collection.find({
+        "competition_id": comp_id
+    }).to_list(length=5000)
+
+    # Build unique mapping of participants
+    participants_map = {}
+    for sub in submissions:
+        email = sub.get("user_email")
+        if email:
+            participants_map[email] = {
+                "user_email": email,
+                "submission_id": str(sub["_id"]),
+                "sub_name": sub.get("name"),
+            }
+
+    for reg in registrations:
+        email = reg.get("user_email") or reg.get("email")
+        if email and email not in participants_map:
+            participants_map[email] = {
+                "user_email": email,
+                "submission_id": str(reg.get("submission_id") or ""),
+                "sub_name": reg.get("name") or reg.get("participant_name"),
+            }
+
+    # Also check if leaderboard_result_collection already has ranked entries
+    lb_docs = await leaderboard_result_collection.find({"competition_id": comp_id}).to_list(length=1000)
+    for lb in lb_docs:
+        email = lb.get("email") or lb.get("participant_id") or lb.get("user_email")
+        if email and email not in participants_map:
+            participants_map[email] = {
+                "user_email": email,
+                "submission_id": str(lb.get("submission_id") or ""),
+                "sub_name": lb.get("name"),
+            }
+
     max_judge_score = sum(crit.get("max_score", 0) for crit in comp.get("judging_criteria", []))
     participants_data = []
     max_audience_votes = 0
-    from app.core.database import judge_score_collection
-    
-    for sub in submissions:
-        user_email = sub["user_email"]
-        # Sum voting power
+
+    for email, p_info in participants_map.items():
+        sub_id = p_info.get("submission_id") or ""
+
+        # Aggregate audience votes by participant_id or sub_id
+        vote_match = [{"participant_id": email}]
+        if sub_id:
+            vote_match.append({"participant_id": sub_id})
         pipeline = [
-            {"$match": {"competition_id": comp_id, "participant_id": user_email}},
+            {"$match": {"competition_id": comp_id, "$or": vote_match}},
             {"$group": {"_id": None, "total": {"$sum": "$voting_power"}}}
         ]
         agg_res = await audience_vote_collection.aggregate(pipeline).to_list(1)
-        votes = agg_res[0]["total"] if agg_res else 0
-        
-        if votes > max_audience_votes: max_audience_votes = votes
-        
-        # Calculate avg judge score for this user
-        scores = await judge_score_collection.find({"competition_id": comp_id, "participant_id": user_email}).to_list(length=100)
-        total_judge = 0
+        votes = int(agg_res[0]["total"]) if agg_res else 0
+        if votes > max_audience_votes:
+            max_audience_votes = votes
+
+        # Calculate average judge score (matches submission_id, participant_id, or user_email)
+        score_match = [{"participant_id": email}, {"user_email": email}]
+        if sub_id:
+            score_match.append({"submission_id": sub_id})
+        scores = await judge_score_collection.find({
+            "competition_id": comp_id,
+            "$or": score_match
+        }).to_list(length=100)
+
+        total_judge = 0.0
         if scores:
+            score_sums = []
             for s in scores:
-                total_judge += sum(s.get("scores", {}).values())
-            total_judge = total_judge / len(scores)
-            
+                if s.get("total_score") is not None and s.get("total_score") > 0:
+                    score_sums.append(float(s["total_score"]))
+                elif s.get("scores") and isinstance(s["scores"], dict):
+                    score_sums.append(float(sum(s["scores"].values())))
+            if score_sums:
+                total_judge = sum(score_sums) / len(score_sums)
+
+        # Fallback to score saved in leaderboard_result_collection if judge_scores empty
+        if total_judge == 0.0:
+            lb_match = [{"participant_id": email}, {"email": email}]
+            if sub_id:
+                lb_match.append({"submission_id": sub_id})
+            existing_lb = await leaderboard_result_collection.find_one({
+                "competition_id": comp_id,
+                "$or": lb_match
+            })
+            if existing_lb:
+                total_judge = float(existing_lb.get("total_score") or existing_lb.get("score") or 0.0)
+
+        # Look up user name and avatar
+        user_doc = await user_collection.find_one({"email": email}) or {}
+        display_name = (
+            user_doc.get("full_name")
+            or user_doc.get("name")
+            or p_info.get("sub_name")
+            or email.split("@")[0].replace(".", " ").title()
+        )
+        avatar = user_doc.get("profile_photo") or ""
+
         participants_data.append({
-            "participant_id": user_email,
-            "name": sub.get("name", user_email),
+            "participant_id": email,
+            "email": email,
+            "name": display_name,
+            "profile_photo": avatar,
             "audience_votes": votes,
             "judge_score": total_judge
         })
-        
+
     final_leaderboard = RankingService.calculate_leaderboard(participants_data, max_audience_votes, max_judge_score, comp)
-    return {"ranking_mode": final_leaderboard[0]["ranking_mode"] if final_leaderboard else "UNKNOWN", "leaderboard": final_leaderboard}
+    return {
+        "ranking_mode": final_leaderboard[0]["ranking_mode"] if final_leaderboard else "UNKNOWN",
+        "leaderboard": final_leaderboard
+    }

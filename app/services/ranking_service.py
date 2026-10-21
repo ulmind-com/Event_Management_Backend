@@ -1,4 +1,4 @@
-﻿from typing import List, Dict, Any
+from typing import List, Dict, Any
 import logging
 
 logger = logging.getLogger(__name__)
@@ -26,26 +26,52 @@ class RankingService:
         Authoritative service to calculate a single participant's final ranking score.
         """
         norm_audience = RankingService.normalize_scores(float(audience_votes), float(max_audience_votes)) if max_audience_votes > 0 else 0.0
-        norm_judge = RankingService.normalize_scores(judge_score, max_judge_score) if max_judge_score > 0 else 0.0
+        
+        # If max_judge_score <= 0 or not configured, normalize against 100 or use raw judge_score
+        effective_max_judge = max_judge_score if max_judge_score > 0 else (100.0 if judge_score <= 100.0 else judge_score)
+        norm_judge = RankingService.normalize_scores(judge_score, effective_max_judge) if effective_max_judge > 0 else judge_score
         
         final_score = 0.0
         ranking_mode = "UNKNOWN"
 
         if audience_enabled and not judge_enabled:
             ranking_mode = "AUDIENCE_VOTING_ONLY"
-            final_score = norm_audience
+            final_score = norm_audience if max_audience_votes > 0 else float(audience_votes)
             
         elif not audience_enabled and judge_enabled:
             ranking_mode = "JUDGES_SCORE_ONLY"
-            final_score = norm_judge
+            final_score = norm_judge if max_judge_score > 0 else judge_score
             
         elif audience_enabled and judge_enabled:
             ranking_mode = "COMBINED_AUDIENCE_AND_JUDGES"
             # Ensure weights are applied as fractions
             a_frac = audience_weight if audience_weight <= 1.0 else (audience_weight / 100.0)
             j_frac = judge_weight if judge_weight <= 1.0 else (judge_weight / 100.0)
+            if a_frac == 0 and j_frac == 0:
+                a_frac, j_frac = 0.5, 0.5
             
             final_score = (norm_audience * a_frac) + (norm_judge * j_frac)
+        else:
+            # Fallback when explicit flags are not set on comp document
+            if judge_score > 0 and audience_votes > 0:
+                ranking_mode = "COMBINED_AUDIENCE_AND_JUDGES"
+                final_score = (norm_audience * 0.5) + (norm_judge * 0.5)
+            elif judge_score > 0:
+                ranking_mode = "JUDGES_SCORE_ONLY"
+                final_score = norm_judge or judge_score
+            elif audience_votes > 0:
+                ranking_mode = "AUDIENCE_VOTING_ONLY"
+                final_score = norm_audience or float(audience_votes)
+            else:
+                ranking_mode = "UNKNOWN"
+                final_score = 0.0
+
+        # Safety: If final score evaluated to 0.0 but user has actual points, don't drop points to zero
+        if final_score <= 0.0:
+            if judge_score > 0:
+                final_score = judge_score
+            elif audience_votes > 0:
+                final_score = float(audience_votes)
         
         return {
             "participant_id": participant_id,
@@ -54,6 +80,9 @@ class RankingService:
             "raw_judge_score": judge_score,
             "normalized_judge_score": norm_judge,
             "final_score": round(final_score, 2),
+            "total_score": round(final_score, 2),
+            "score": round(final_score, 2),
+            "points": round(final_score, 2),
             "audience_weight": audience_weight,
             "judge_weight": judge_weight,
             "ranking_mode": ranking_mode
@@ -87,6 +116,11 @@ class RankingService:
             if "name" in p: result["name"] = p["name"]
             if "email" in p: result["email"] = p["email"]
             if "profile_photo" in p: result["profile_photo"] = p["profile_photo"]
+            if "audience_votes" in p: result["audience_votes"] = p["audience_votes"]
+            if "judge_score" in p: result["judge_score"] = p["judge_score"]
+            result["total_score"] = result.get("total_score", result["final_score"])
+            result["score"] = result.get("score", result["final_score"])
+            result["points"] = result.get("points", result["final_score"])
             
             leaderboard.append(result)
             

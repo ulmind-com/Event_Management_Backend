@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from bson import ObjectId
 from app.api.deps import get_current_user
 from app.core.database import (
@@ -225,9 +225,12 @@ async def submit_score(submission_id: str, req: ScoreReq, judge: dict = Depends(
         weight = next((c.get("weight", 1.0) for c in criteria if c["name"] == crit_name), 1.0)
         total_score += (score_val * weight)
 
+    participant_email = submission.get("user_email", "")
     doc = {
         "submission_id": submission_id,
         "competition_id": comp_id,
+        "participant_id": participant_email,
+        "user_email": participant_email,
         "judge_email": judge["email"],
         "scores": req.scores,
         "total_score": total_score,

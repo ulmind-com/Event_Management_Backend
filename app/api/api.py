@@ -9,7 +9,8 @@ from app.api.routes import (
     admin_vip, user_vip, vip_webhooks,
     admin_merchandise, user_merchandise, merchandise_webhooks,
     notifications, admin_notifications, notification_ws,
-    admin_kyc, user_kyc, digilocker
+    admin_kyc, user_kyc, digilocker,
+    admin_analytics
 )
 
 api_router = APIRouter()
@@ -53,6 +54,7 @@ api_router.include_router(admin_judges.router, prefix="/admin/judges", tags=["ad
 api_router.include_router(admin_volunteers.router, prefix="/admin/volunteers", tags=["admin-volunteers"])
 api_router.include_router(admin_notifications.router, prefix="/admin/notifications", tags=["admin-notifications"])
 api_router.include_router(admin_kyc.router, prefix="/admin/kyc", tags=["admin-kyc"])
+api_router.include_router(admin_analytics.router, prefix="/admin/analytics", tags=["admin-analytics"])
 
 
 # ── Public APIs ──

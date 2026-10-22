@@ -6,7 +6,6 @@ from app.api.deps import get_current_user
 from app.core.database import merchandise_order_collection
 from app.schemas.merchandise import (
     OrderCreateReq,
-    OrderCancelReq,
     MerchandiseCategory
 )
 from app.services.merchandise_service import MerchandiseService, serialize_mongo
@@ -122,15 +121,6 @@ async def get_my_merchandise_order_tracking(
         "tracking_number": order.get("tracking_number"),
         "timeline": order.get("status_history", [])
     })
-
-@router.post("/orders/{order_id}/cancel", response_model=Dict[str, Any])
-async def cancel_my_merchandise_order(
-    order_id: str,
-    req: OrderCancelReq,
-    current_user: dict = Depends(get_current_user)
-):
-    """User attempts to cancel an order. Placed orders are strictly final and non-refundable."""
-    return await MerchandiseService.cancel_order(order_id, current_user.get("email"), req.reason, admin_view=False)
 
 
 class MerchandisePaymentVerifyReq(BaseModel):

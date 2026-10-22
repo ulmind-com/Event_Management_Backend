@@ -87,42 +87,32 @@ async def test_merchandise_orders_are_strictly_non_refundable_and_cannot_be_canc
             "created_at": datetime.now(timezone.utc)
         })
 
-        # ── Test 1: User attempts to cancel confirmed/paid order by order_id ──
+        # ── Test 1: Verify cancel order endpoint is removed from OpenAPI/Swagger schema ──
+        res_openapi = await ac.get("/openapi.json")
+        assert res_openapi.status_code == 200
+        schema = res_openapi.json()
+        assert "/api/merchandise/orders/{order_id}/cancel" not in schema.get("paths", {})
+
+        # ── Test 2: Any HTTP request to cancel order returns 404 Not Found ──
         res_cancel = await ac.post(
             f"/api/merchandise/orders/{order_id}/cancel",
             json={"reason": "Changed my mind, please refund"},
             headers=user_headers
         )
-        assert res_cancel.status_code == 400
-        assert "non-refundable" in res_cancel.json()["detail"].lower()
-        assert "cannot be cancelled" in res_cancel.json()["detail"].lower()
+        assert res_cancel.status_code == 404
 
-        # ── Test 2: User attempts to cancel by order_number ──
-        res_cancel_num = await ac.post(
-            f"/api/merchandise/orders/{order_number}/cancel",
-            json={"reason": "Need money back"},
-            headers=user_headers
-        )
-        assert res_cancel_num.status_code == 400
-        assert "non-refundable" in res_cancel_num.json()["detail"].lower()
+        # ── Test 3: MerchandiseService.cancel_order directly raises 400 non-refundable ──
+        from app.services.merchandise_service import MerchandiseService
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            await MerchandiseService.cancel_order(order_id, test_user_email, "Direct cancel attempt")
+        assert exc_info.value.status_code == 400
+        assert "non-refundable" in exc_info.value.detail.lower()
 
-        # ── Test 3: Status remains unchanged (CONFIRMED & PAID) in database ──
+        # ── Test 4: Status remains unchanged (CONFIRMED & PAID) in database ──
         unchanged_order = await merchandise_order_collection.find_one({"_id": ObjectId(order_id)})
         assert unchanged_order["status"] == OrderStatus.CONFIRMED.value
         assert unchanged_order["payment_status"] == PaymentStatus.PAID.value
-
-        # ── Test 4: Processing / Shipped orders are also strictly blocked ──
-        await merchandise_order_collection.update_one(
-            {"_id": ObjectId(order_id)},
-            {"$set": {"status": OrderStatus.PROCESSING.value}}
-        )
-        res_cancel_proc = await ac.post(
-            f"/api/merchandise/orders/{order_id}/cancel",
-            json={"reason": "Cancel processing"},
-            headers=user_headers
-        )
-        assert res_cancel_proc.status_code == 400
-        assert "non-refundable" in res_cancel_proc.json()["detail"].lower()
 
     finally:
         # Cleanup

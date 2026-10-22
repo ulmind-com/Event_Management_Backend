@@ -129,7 +129,7 @@ async def cancel_my_merchandise_order(
     req: OrderCancelReq,
     current_user: dict = Depends(get_current_user)
 ):
-    """User cancels an eligible order. Releases reserved stock or submits refund request."""
+    """User attempts to cancel an order. Placed orders are strictly final and non-refundable."""
     return await MerchandiseService.cancel_order(order_id, current_user.get("email"), req.reason, admin_view=False)
 
 

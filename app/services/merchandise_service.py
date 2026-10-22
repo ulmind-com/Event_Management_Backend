@@ -714,15 +714,31 @@ class MerchandiseService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found or unauthorized.")
 
         current_status = order.get("status")
-        if current_status in [OrderStatus.SHIPPED.value, OrderStatus.DELIVERED.value, OrderStatus.CANCELLED.value]:
+        is_paid = (
+            order.get("payment_status") == PaymentStatus.PAID.value
+            or current_status in [
+                OrderStatus.CONFIRMED.value,
+                OrderStatus.PROCESSING.value,
+                OrderStatus.PACKED.value,
+                OrderStatus.SHIPPED.value,
+                OrderStatus.OUT_FOR_DELIVERY.value,
+                OrderStatus.DELIVERED.value,
+                OrderStatus.CANCELLED.value,
+                OrderStatus.REFUND_PENDING.value,
+                OrderStatus.REFUNDED.value
+            ]
+        )
+
+        # Merchandise orders are strictly final and non-refundable once placed
+        if is_paid or current_status != OrderStatus.PENDING_PAYMENT.value:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Order cannot be cancelled in status '{current_status}'."
+                detail="Merchandise orders are final and non-refundable. Once an order is placed, it cannot be cancelled or refunded."
             )
 
         now_utc = datetime.now(timezone.utc)
 
-        # If pending payment, release reserved stock
+        # Only unpaid pending reservations can be cancelled to release reserved stock
         if current_status == OrderStatus.PENDING_PAYMENT.value:
             for it in order.get("items", []):
                 p_oid = MerchandiseService._to_object_id(it["product_id"])
@@ -751,7 +767,7 @@ class MerchandiseService:
                     "quantity_delta": -qty,
                     "related_order_number": order.get("order_number"),
                     "actor": user_email,
-                    "reason": f"Pending order cancelled: {reason}",
+                    "reason": f"Pending unpaid checkout session cancelled: {reason}",
                     "timestamp": now_utc
                 })
 
@@ -762,48 +778,12 @@ class MerchandiseService:
                     "$push": {"status_history": {"status": OrderStatus.CANCELLED.value, "timestamp": now_utc, "actor": user_email, "notes": reason}}
                 }
             )
-            return serialize_mongo({"message": "Order cancelled and reserved stock released.", "order_number": order.get("order_number")})
+            return serialize_mongo({"message": "Unpaid session cancelled and reserved stock released.", "order_number": order.get("order_number")})
 
-        # If paid and confirmed (before shipment), mark REFUND_PENDING and restock
-        elif current_status in [OrderStatus.CONFIRMED.value, OrderStatus.PROCESSING.value]:
-            for it in order.get("items", []):
-                p_oid = MerchandiseService._to_object_id(it["product_id"])
-                p_filter: Dict[str, Any] = {"_id": p_oid} if p_oid else {"_id": it["product_id"]}
-                qty = it.get("quantity", 1)
-
-                if it.get("variant") and it["variant"].get("variant_id"):
-                    p_filter["variants.variant_id"] = it["variant"]["variant_id"]
-                    await merchandise_product_collection.update_one(
-                        p_filter,
-                        {"$inc": {"variants.$.stock_quantity": qty, "stock_quantity": qty}}
-                    )
-                else:
-                    await merchandise_product_collection.update_one(
-                        p_filter,
-                        {"$inc": {"stock_quantity": qty}}
-                    )
-
-                await merchandise_inventory_movement_collection.insert_one({
-                    "product_id": it["product_id"],
-                    "variant_id": it["variant"]["variant_id"] if it.get("variant") else None,
-                    "movement_type": InventoryMovementType.RETURN_RESTOCK.value,
-                    "quantity_delta": qty,
-                    "related_order_number": order.get("order_number"),
-                    "actor": user_email,
-                    "reason": f"Order cancelled before shipment. Stock restored. Reason: {reason}",
-                    "timestamp": now_utc
-                })
-
-            await merchandise_order_collection.update_one(
-                {"_id": order["_id"]},
-                {
-                    "$set": {"status": OrderStatus.REFUND_PENDING.value, "payment_status": PaymentStatus.REFUNDED.value, "updated_at": now_utc},
-                    "$push": {"status_history": {"status": OrderStatus.REFUND_PENDING.value, "timestamp": now_utc, "actor": user_email, "notes": reason}}
-                }
-            )
-            return serialize_mongo({"message": "Order cancelled. Physical stock restored and refund pending.", "order_number": order.get("order_number")})
-
-        return serialize_mongo({"message": "Cancellation request processed.", "order_number": order.get("order_number")})
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Order cannot be cancelled in its current state."
+        )
 
     @staticmethod
     async def expire_pending_orders() -> Dict[str, Any]:

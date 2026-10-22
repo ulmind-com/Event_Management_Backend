@@ -231,11 +231,35 @@ async def register_competition(comp_id: str, rules_accepted: bool = False, user:
         )
         return {"message": "Registration pending payment.", "status": RegistrationStatus.PENDING.value, "payment_info": payment_info, "reference": reg_ref}
 
-@router.post("/v1/competitions/{comp_id}/submissions")
-async def submit_files(comp_id: str, files: list[UploadFile] = File(...), field_names: str = Form(...), user: dict = Depends(get_current_user)):
+@router.post(
+    "/v1/competitions/{comp_id}/submissions",
+    summary="Submit Competition Entry Files / Links",
+    response_description="Returns the processed submission document with verified file URLs and links",
+)
+async def submit_files(
+    comp_id: str,
+    files: list[UploadFile] = File(..., description="Multipart files or text files containing YouTube links"),
+    field_names: str = Form(..., description="JSON-encoded array of strings or comma-separated list of field names matching dynamic fields"),
+    user: dict = Depends(get_current_user),
+):
     """
-    Accepts multipart uploads. field_names is a comma separated string matching the dynamic fields.
-    e.g. "Vocal Audio, Performance Video"
+    Submit competition entry files and/or performance links.
+
+    ### Submission Rules & Policies:
+    - **Audio Fields (`Audio`, `Audio Only`):**
+      - Strictly **MP3 format (`.mp3`)** only.
+      - Binary header magic bytes are strictly verified (ID3v2 or MPEG Sync).
+      - Rejects WAV, MP4/M4A, AAC, and all non-MP3 containers.
+      - Uploaded to Cloudinary (`eventora/submissions`) and secure Cloudinary URL is stored.
+    - **Video Fields (`Video`, `Performance Video`):**
+      - Strictly **YouTube links** only (`https://youtube.com/watch?v=...`, `https://youtu.be/...`, or `https://youtube.com/shorts/...`).
+      - Direct video file uploads (`.mp4`, `.mov`, `.avi`, `.mkv`) are strictly rejected with HTTP 400.
+      - YouTube link is stored directly in database (no Cloudinary consumption).
+    - **Dual Fields (`Video/Audio`, `Audio/Video`):**
+      - Accepts either an MP3 audio file (uploaded to Cloudinary) or a YouTube video link (saved directly).
+    - **Field Names Format:**
+      - JSON string (e.g., `["Performance Entry (Video/Audio or Link)"]`) or comma-separated string.
+      - Automatically normalizes legacy `Video, Audio` to `Video/Audio`.
     """
     comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
     if not comp:

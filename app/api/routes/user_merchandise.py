@@ -127,27 +127,64 @@ async def get_my_merchandise_order_tracking(
     })
 
 
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from app.core.security import decode_token
+from app.core.database import user_collection
+
+bearer_scheme = HTTPBearer(auto_error=False)
+
+async def get_order_download_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    token: Optional[str] = Query(None),
+    access_token: Optional[str] = Query(None)
+) -> Optional[dict]:
+    raw_token = (credentials.credentials if credentials else None) or token or access_token
+    if raw_token:
+        payload = decode_token(raw_token)
+        if payload:
+            if payload.get("type") == "admin":
+                return {"email": payload.get("sub"), "role": "super_admin"}
+            email = payload.get("sub")
+            if email:
+                user = await user_collection.find_one({"email": email})
+                if user:
+                    return user
+                return {"email": email}
+    return None
+
+
 @router.get("/orders/{order_id}/invoice")
+@router.get("/orders/{order_id}/invoice.pdf")
 @router.get("/orders/{order_id}/pdf")
 @router.get("/orders/{order_id}/receipt")
+@router.get("/orders/{order_id}/receipt.pdf")
 @router.get("/orders/{order_id}/download")
+@router.get("/order/{order_id}/invoice")
+@router.get("/order/{order_id}/pdf")
+@router.get("/order/{order_id}/receipt")
+@router.get("/order/{order_id}/download")
 async def download_my_merchandise_order_invoice(
     order_id: str,
     token: Optional[str] = Query(None, description="Optional JWT token for direct browser link downloads"),
+    access_token: Optional[str] = Query(None, description="Optional JWT token (alternative query param)"),
     download: bool = Query(False, description="Whether to force attachment download"),
-    current_user: dict = Depends(get_current_user)
+    auth_user: Optional[dict] = Depends(get_order_download_user)
 ):
     """
     Downloads or previews the authoritative Tax Invoice / Order Receipt PDF.
     Generates a high-quality PDF containing complete customer details, item breakdown,
     payment reference, fulfillment status, and live tracking QR code.
     """
-    email = current_user.get("email")
     o_oid = MerchandiseService._to_object_id(order_id)
-    if current_user.get("role") == "super_admin":
-        query = {"$or": [{"_id": o_oid}, {"_id": order_id}, {"order_number": order_id}]} if o_oid else {"$or": [{"_id": order_id}, {"order_number": order_id}]}
+    id_filter = [{"_id": o_oid}, {"_id": order_id}, {"order_number": order_id}] if o_oid else [{"_id": order_id}, {"order_number": order_id}]
+
+    if auth_user and auth_user.get("role") == "super_admin":
+        query = {"$or": id_filter}
+    elif auth_user and auth_user.get("email"):
+        query = {"user_email": auth_user["email"], "$or": id_filter}
     else:
-        query = {"user_email": email, "$or": [{"_id": o_oid}, {"_id": order_id}, {"order_number": order_id}]} if o_oid else {"user_email": email, "$or": [{"_id": order_id}, {"order_number": order_id}]}
+        # If no auth token provided, only allow direct download if the exact order_number is provided
+        query = {"order_number": order_id}
 
     order = await merchandise_order_collection.find_one(query)
     if not order:

@@ -146,6 +146,21 @@ async def test_order_invoice_pdf_generation_and_api():
             assert res_num.status_code == 200
             assert res_num.content.startswith(b"%PDF-1.4")
 
+            # Test direct query param token (for browser link downloads)
+            res_token = await ac.get(f"/api/merchandise/orders/{order_id}/invoice?token={user_token}")
+            assert res_token.status_code == 200
+            assert res_token.content.startswith(b"%PDF-1.4")
+
+            # Test direct public receipt by unguessable order_number
+            res_direct = await ac.get(f"/api/merchandise/orders/{order_number}/invoice")
+            assert res_direct.status_code == 200
+            assert res_direct.content.startswith(b"%PDF-1.4")
+
+            # Test invoice.pdf extension alias
+            res_ext = await ac.get(f"/api/merchandise/orders/{order_number}/invoice.pdf")
+            assert res_ext.status_code == 200
+            assert res_ext.content.startswith(b"%PDF-1.4")
+
             # ── Test 4: Super Admin Download Endpoint ──
             admin_res = await ac.get(f"/api/admin/merchandise/orders/{order_id}/invoice", headers=admin_headers)
             assert admin_res.status_code == 200

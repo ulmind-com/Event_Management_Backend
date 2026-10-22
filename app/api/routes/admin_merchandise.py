@@ -144,8 +144,15 @@ async def get_admin_order_detail(
     return serialize_mongo(order)
 
 @router.get("/orders/{order_id}/invoice")
+@router.get("/orders/{order_id}/invoice.pdf")
 @router.get("/orders/{order_id}/pdf")
 @router.get("/orders/{order_id}/receipt")
+@router.get("/orders/{order_id}/receipt.pdf")
+@router.get("/orders/{order_id}/download")
+@router.get("/order/{order_id}/invoice")
+@router.get("/order/{order_id}/pdf")
+@router.get("/order/{order_id}/receipt")
+@router.get("/order/{order_id}/download")
 async def download_admin_order_invoice(
     order_id: str,
     download: bool = Query(False, description="Whether to force attachment download"),

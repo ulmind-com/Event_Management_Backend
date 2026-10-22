@@ -26,6 +26,40 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
         if existing.get("status") == "CONFIRMED":
             raise HTTPException(status_code=400, detail="Already registered for this activity")
         elif existing.get("status") == "PENDING_PAYMENT":
+            req_method = (getattr(req, "payment_method", None) or "ONLINE").strip().upper()
+            if req_method in ["CASH", "OFFLINE"]:
+                await registration_collection.update_one(
+                    {"_id": existing["_id"]},
+                    {"$set": {
+                        "status": "CONFIRMED",
+                        "payment_status": "PENDING",
+                        "payment_status_display": "PENDING",
+                        "payment_method": "CASH",
+                        "cash_payment": True,
+                        "cash_status": "PENDING"
+                    }}
+                )
+                try:
+                    obj_id = ObjectId(req.activity_id)
+                    if req.activity_type == "event":
+                        await event_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
+                    elif req.activity_type == "competition":
+                        await competition_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
+                    elif req.activity_type in ("course", "workshop"):
+                        await course_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
+                except Exception:
+                    pass
+                return {
+                    "message": "Registration updated to Cash on Venue. Cash payment pending.",
+                    "registration_id": str(existing["_id"]),
+                    "status": "CONFIRMED",
+                    "payment_status": "PENDING",
+                    "payment_status_display": "PENDING",
+                    "payment_method": "CASH",
+                    "payable_amount": float(existing.get("payable_amount", 0.0)),
+                    "order_reference": existing.get("order_reference")
+                }
+
             order_ref = existing.get("order_reference")
             payable_amount = float(existing.get("payable_amount", 0.0))
             if payable_amount == 0.0:
@@ -170,19 +204,35 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
                 raise HTTPException(status_code=400, detail=res_result.get("reason", "Failed to reserve coins"))
 
     payable_amount = max(0.0, price - discount_amount)
+    payment_method = (getattr(req, "payment_method", None) or "ONLINE").strip().upper()
+    if payment_method not in ["ONLINE", "CASH", "OFFLINE"]:
+        payment_method = "ONLINE"
     
     if payable_amount == 0.0:
         # Fully covered by coins or free: confirm and commit reserved coins
         final_status = "CONFIRMED"
+        payment_status = "NOT_REQUIRED"
+        payment_status_display = "SUCCESS"
+        if coins_applied > 0:
+            await WalletService.commit_reserved_coins(order_ref)
+    elif payment_method in ["CASH", "OFFLINE"]:
+        # Cash on Venue / Spot participation: Registration completed, cash payment pending at event
+        final_status = "CONFIRMED"
+        payment_status = "PENDING"
+        payment_status_display = "PENDING"
+        payment_method = "CASH"
         if coins_applied > 0:
             await WalletService.commit_reserved_coins(order_ref)
     else:
         final_status = "PENDING_PAYMENT"
+        payment_status = "PENDING"
+        payment_status_display = "PENDING"
+        payment_method = "ONLINE"
 
     # Register
     new_reg = {
         "email": email,
-        "participant_name": current_user.get("full_name", email.split('@')[0]),
+        "participant_name": current_user.get("full_name") or current_user.get("name") or email.split('@')[0],
         "participant_email": email,
         "activity_id": req.activity_id,
         "activity_type": req.activity_type,
@@ -193,12 +243,17 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
         "payable_amount": payable_amount,
         "order_reference": order_ref,
         "created_at": now,
-        "status": final_status
+        "status": final_status,
+        "payment_status": payment_status,
+        "payment_status_display": payment_status_display,
+        "payment_method": payment_method,
+        "cash_payment": (payment_method == "CASH"),
+        "cash_status": "PENDING" if payment_method == "CASH" else None
     }
     
     await registration_collection.insert_one(new_reg)
     
-    # Authoritative trigger: REGISTRATION_CONFIRMATION (if free or fully covered by coins)
+    # Authoritative trigger: REGISTRATION_CONFIRMATION (if free, coin-covered, or cash-registered)
     if final_status == "CONFIRMED":
         try:
             from app.services.notification_service import NotificationService
@@ -210,7 +265,7 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
                 recipient_user_id=email,
                 notification_type=NotificationType.REGISTRATION_CONFIRMATION,
                 title=f"Registration Confirmed: {act_title}",
-                message=f"Your registration for {req.activity_type} '{act_title}' has been successfully confirmed.",
+                message=f"Your registration for {req.activity_type} '{act_title}' has been successfully confirmed." + (" Cash payment is pending at venue." if payment_method == "CASH" else ""),
                 resource_type=req.activity_type,
                 resource_id=req.activity_id,
                 action_url=f"/{req.activity_type}s/{req.activity_id}",
@@ -223,7 +278,7 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
         except Exception:
             pass
 
-    # Update count if free or confirmed immediately
+    # Update count if free, coin-covered, or confirmed via cash registration
     if final_status == "CONFIRMED":
         if req.activity_type == "event":
             await event_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
@@ -232,9 +287,8 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
         elif req.activity_type == "course":
             await course_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
 
-
     payment_info = None
-    if payable_amount > 0.0:
+    if payable_amount > 0.0 and payment_method == "ONLINE":
         from app.services.payment import PaymentService
         payment_info = await PaymentService.initiate_payment(
             booking_reference=order_ref,
@@ -249,11 +303,21 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
             }
         )
 
+    if payment_method == "CASH":
+        msg = f"Registration successful! Cash payment of ₹{payable_amount:.2f} is pending at the event venue."
+    elif final_status == "CONFIRMED":
+        msg = "Registration successful"
+    else:
+        msg = "Registration pending payment. Please proceed to payment."
+
     response_data = {
-        "message": "Registration successful" if final_status == "CONFIRMED" else "Registration pending payment. Please proceed to payment.",
+        "message": msg,
         "registration_id": str(new_reg["_id"]),
         "order_reference": order_ref,
         "status": final_status,
+        "payment_status": payment_status,
+        "payment_status_display": payment_status_display,
+        "payment_method": payment_method,
         "payable_amount": payable_amount
     }
     if payment_info:

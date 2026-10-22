@@ -11,7 +11,7 @@ import uuid
 
 router = APIRouter()
 
-async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, ticket_type: str, user_email: str, quantity: int, names: list):
+async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, ticket_type: str, user_email: str, quantity: int, names: list, payment_method: str = "ONLINE", payment_status: str = "PENDING"):
     """Background task to generate digital tickets once confirmed."""
     docs = []
     for i in range(quantity):
@@ -29,6 +29,8 @@ async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, tic
             "is_checked_in": False,
             "check_in_time": None,
             "qr_token": qr_token,
+            "payment_method": payment_method,
+            "payment_status": payment_status,
             "issued_at": datetime.now(timezone.utc)
         })
     if docs:
@@ -184,40 +186,81 @@ async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, curre
     now_utc = datetime.now(timezone.utc)
     expires_at = now_utc + timedelta(minutes=15)
 
+    payment_method = (getattr(req, "payment_method", None) or "ONLINE").strip().upper()
+    if payment_method not in ["ONLINE", "CASH", "OFFLINE"]:
+        payment_method = "ONLINE"
+
     booking = {
         "booking_reference": booking_ref,
         "event_id": str(e_id),
         "ticket_id": str(t_id),
         "user_email": current_user["email"],
+        "user_name": current_user.get("name") or current_user.get("full_name") or "Attendee",
+        "user_phone": current_user.get("phone_number") or current_user.get("phone") or "",
+        "holder_names": req.holder_names or [],
         "quantity": req.quantity,
         "unit_price": unit_price,
         "total_amount": total_amount,
         "booked_at": now_utc,
         "expires_at": expires_at,
+        "payment_method": payment_method,
         "payment_reference": None
     }
 
-    response_data = {"message": "", "booking_reference": booking_ref, "total_amount": total_amount}
+    response_data = {
+        "message": "",
+        "booking_reference": booking_ref,
+        "total_amount": total_amount,
+        "payment_method": payment_method
+    }
 
     if total_amount == 0.0:
         booking["booking_status"] = BookingStatus.CONFIRMED.value
         booking["payment_status"] = PaymentStatus.NOT_REQUIRED.value
+        booking["payment_status_display"] = "SUCCESS"
         booking["confirmed_at"] = now_utc
         res = await booking_collection.insert_one(booking)
         bg_tasks.add_task(
-            generate_tickets, str(res.inserted_id), booking_ref, str(e_id), ticket.get("type"), current_user["email"], req.quantity, req.holder_names
+            generate_tickets, str(res.inserted_id), booking_ref, str(e_id), ticket.get("type"), current_user["email"], req.quantity, req.holder_names, payment_method, "NOT_REQUIRED"
         )
         await event_collection.update_one({"_id": e_id}, {"$inc": {"registered_count": req.quantity}})
         response_data["message"] = "Free ticket booked and confirmed successfully."
         response_data["booking_status"] = BookingStatus.CONFIRMED.value
+        response_data["payment_status"] = PaymentStatus.NOT_REQUIRED.value
+        response_data["payment_status_display"] = "SUCCESS"
+    elif payment_method in ["CASH", "OFFLINE"]:
+        # Cash on Venue / Spot registration: registration is active & confirmed, payment is PENDING cash collection
+        booking["booking_status"] = BookingStatus.CONFIRMED.value
+        booking["payment_status"] = PaymentStatus.PENDING.value
+        booking["payment_status_display"] = "PENDING"
+        booking["payment_method"] = "CASH"
+        booking["cash_payment"] = True
+        booking["cash_status"] = "PENDING"
+        booking["confirmed_at"] = now_utc
+        res = await booking_collection.insert_one(booking)
+        bg_tasks.add_task(
+            generate_tickets, str(res.inserted_id), booking_ref, str(e_id), ticket.get("type"), current_user["email"], req.quantity, req.holder_names, "CASH", "PENDING"
+        )
+        await event_collection.update_one({"_id": e_id}, {"$inc": {"registered_count": req.quantity}})
+        response_data["message"] = f"Registration successful! Cash payment of ₹{total_amount:.2f} is pending at the event venue."
+        response_data["booking_status"] = BookingStatus.CONFIRMED.value
+        response_data["payment_status"] = PaymentStatus.PENDING.value
+        response_data["payment_status_display"] = "PENDING"
+        response_data["payment_method"] = "CASH"
     else:
+        # Online payment via Razorpay
         booking["booking_status"] = BookingStatus.PENDING.value
         booking["payment_status"] = PaymentStatus.PENDING.value
+        booking["payment_status_display"] = "PENDING"
+        booking["payment_method"] = "ONLINE"
         res = await booking_collection.insert_one(booking)
         
         payment_info = await PaymentService.initiate_payment(booking_ref, total_amount)
         response_data["message"] = "Booking reserved. Proceed to payment."
         response_data["booking_status"] = BookingStatus.PENDING.value
+        response_data["payment_status"] = PaymentStatus.PENDING.value
+        response_data["payment_status_display"] = "PENDING"
+        response_data["payment_method"] = "ONLINE"
         response_data["payment_info"] = payment_info
 
     # Fetch updated ticket metrics to return real-time remaining count

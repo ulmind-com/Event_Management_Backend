@@ -1,4 +1,4 @@
-﻿from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
@@ -21,6 +21,7 @@ class BookingCreateReq(BaseModel):
     ticket_id: str
     quantity: int = Field(..., gt=0, le=10)
     holder_names: Optional[List[str]] = None
+    payment_method: Optional[str] = "ONLINE"  # "ONLINE" or "CASH"
 
 class BookingResponse(BaseModel):
     id: str

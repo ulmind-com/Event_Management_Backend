@@ -69,6 +69,7 @@ def calculate_age(dob_val: Any) -> int:
 
 class CompetitionRegisterReq(BaseModel):
     rules_accepted: Optional[bool] = None
+    payment_method: Optional[str] = "ONLINE"
 
 
 @router.get("/v1/competitions/{comp_id}")
@@ -179,14 +180,22 @@ async def get_my_competition_registration_status(
 async def register_competition(
     comp_id: str,
     rules_accepted: Optional[bool] = Query(None),
+    payment_method: Optional[str] = Query(None),
     body: Optional[CompetitionRegisterReq] = Body(None),
     user: dict = Depends(get_current_user)
 ):
-    """Registers the user for a competition with fee safety and payment support."""
+    """Registers the user for a competition with fee safety, cash, and online payment support."""
     is_rules_accepted = (
         rules_accepted if rules_accepted is not None
         else (body.rules_accepted if body and body.rules_accepted is not None else False)
     )
+    pay_method = (
+        payment_method if payment_method is not None
+        else (body.payment_method if body and body.payment_method is not None else "ONLINE")
+    ).strip().upper()
+    if pay_method not in ["ONLINE", "CASH", "OFFLINE"]:
+        pay_method = "ONLINE"
+
     if not is_rules_accepted:
         raise HTTPException(status_code=400, detail="You must accept the competition rules.")
 
@@ -255,6 +264,8 @@ async def register_competition(
                 {"$set": {
                     "status": RegistrationStatus.CONFIRMED.value,
                     "payment_status": PaymentStatus.NOT_REQUIRED.value,
+                    "payment_status_display": "SUCCESS",
+                    "payment_method": pay_method,
                     "registered_at": datetime.now(timezone.utc)
                 }}
             )
@@ -265,7 +276,36 @@ async def register_competition(
                 )
             except Exception:
                 pass
-            return {"message": "Registration confirmed.", "status": RegistrationStatus.CONFIRMED.value, "reference": reg_ref}
+            return {"message": "Registration confirmed.", "status": RegistrationStatus.CONFIRMED.value, "payment_status": PaymentStatus.NOT_REQUIRED.value, "payment_method": pay_method, "reference": reg_ref}
+
+        if pay_method in ["CASH", "OFFLINE"]:
+            await competition_registration_collection.update_one(
+                {"_id": existing["_id"]},
+                {"$set": {
+                    "status": RegistrationStatus.CONFIRMED.value,
+                    "payment_status": PaymentStatus.PENDING.value,
+                    "payment_status_display": "PENDING",
+                    "payment_method": "CASH",
+                    "cash_payment": True,
+                    "cash_status": "PENDING",
+                    "registered_at": datetime.now(timezone.utc)
+                }}
+            )
+            try:
+                await competition_collection.update_one(
+                    {"_id": c_id},
+                    {"$inc": {"registered_count": 1}}
+                )
+            except Exception:
+                pass
+            return {
+                "message": f"Registration updated to Cash on Venue! Cash payment of ₹{fee:.2f} is pending.",
+                "status": RegistrationStatus.CONFIRMED.value,
+                "payment_status": PaymentStatus.PENDING.value,
+                "payment_status_display": "PENDING",
+                "payment_method": "CASH",
+                "reference": reg_ref
+            }
 
         # If registration is pending payment, re-initiate payment gateway order
         payment_info = await PaymentService.initiate_payment(
@@ -282,6 +322,9 @@ async def register_competition(
         return {
             "message": "Registration pending payment. Please proceed to payment.",
             "status": RegistrationStatus.PENDING.value,
+            "payment_status": PaymentStatus.PENDING.value,
+            "payment_status_display": "PENDING",
+            "payment_method": "ONLINE",
             "payment_info": payment_info,
             "reference": reg_ref
         }
@@ -299,12 +342,14 @@ async def register_competition(
         "eligibility_status": "ELIGIBLE",
         "rules_accepted": is_rules_accepted,
         "fee": fee,
+        "payment_method": pay_method,
         "registered_at": datetime.now(timezone.utc)
     }
 
     if fee == 0.0:
         doc["status"] = RegistrationStatus.CONFIRMED.value
         doc["payment_status"] = PaymentStatus.NOT_REQUIRED.value
+        doc["payment_status_display"] = "SUCCESS"
         await competition_registration_collection.insert_one(doc)
         try:
             await competition_collection.update_one(
@@ -313,10 +358,35 @@ async def register_competition(
             )
         except Exception:
             pass
-        return {"message": "Registration confirmed.", "status": RegistrationStatus.CONFIRMED.value, "reference": reg_ref}
+        return {"message": "Registration confirmed.", "status": RegistrationStatus.CONFIRMED.value, "payment_status": PaymentStatus.NOT_REQUIRED.value, "payment_method": pay_method, "reference": reg_ref}
+    elif pay_method in ["CASH", "OFFLINE"]:
+        doc["status"] = RegistrationStatus.CONFIRMED.value
+        doc["payment_status"] = PaymentStatus.PENDING.value
+        doc["payment_status_display"] = "PENDING"
+        doc["payment_method"] = "CASH"
+        doc["cash_payment"] = True
+        doc["cash_status"] = "PENDING"
+        await competition_registration_collection.insert_one(doc)
+        try:
+            await competition_collection.update_one(
+                {"_id": c_id},
+                {"$inc": {"registered_count": 1}}
+            )
+        except Exception:
+            pass
+        return {
+            "message": f"Registration confirmed! Cash payment of ₹{fee:.2f} is pending at the venue.",
+            "status": RegistrationStatus.CONFIRMED.value,
+            "payment_status": PaymentStatus.PENDING.value,
+            "payment_status_display": "PENDING",
+            "payment_method": "CASH",
+            "reference": reg_ref
+        }
     else:
         doc["status"] = RegistrationStatus.PENDING.value
         doc["payment_status"] = PaymentStatus.PENDING.value
+        doc["payment_status_display"] = "PENDING"
+        doc["payment_method"] = "ONLINE"
         await competition_registration_collection.insert_one(doc)
         payment_info = await PaymentService.initiate_payment(
             booking_reference=reg_ref,
@@ -332,6 +402,9 @@ async def register_competition(
         return {
             "message": "Registration pending payment.",
             "status": RegistrationStatus.PENDING.value,
+            "payment_status": PaymentStatus.PENDING.value,
+            "payment_status_display": "PENDING",
+            "payment_method": "ONLINE",
             "payment_info": payment_info,
             "reference": reg_ref
         }

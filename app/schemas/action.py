@@ -7,10 +7,12 @@ class RegistrationReq(BaseModel):
     activity_type: str
     coins_to_use: Optional[int] = None
     order_reference: Optional[str] = None
+    payment_method: Optional[str] = "ONLINE"  # "ONLINE" or "CASH"
 
 class BookingReq(BaseModel):
     ticket_id: str
     quantity: int
+    payment_method: Optional[str] = "ONLINE"  # "ONLINE" or "CASH"
 
 class OrderReq(BaseModel):
     merchandise_id: str

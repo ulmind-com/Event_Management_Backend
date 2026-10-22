@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 import re
 from typing import Optional, List, Dict, Any
 from bson import ObjectId
@@ -9,6 +10,7 @@ from app.core.database import (
     course_collection, competition_collection, contest_promotion_collection,
     app_promotion_collection, important_link_collection, audit_log_collection,
     booking_collection, issued_ticket_collection, user_collection,
+    registration_collection, competition_registration_collection
 )
 from app.schemas.cms import (
     WebsiteSettingsUpdate, VotingPowerSettings, EventCreate, EventUpdate,
@@ -530,6 +532,7 @@ async def _fetch_admin_bookings(
     event_id: Optional[str] = None,
     status: Optional[str] = None,
     payment_status: Optional[str] = None,
+    payment_method: Optional[str] = None,
     search: Optional[str] = None,
     skip: int = 0,
     limit: int = 100
@@ -540,14 +543,38 @@ async def _fetch_admin_bookings(
     if status:
         query["booking_status"] = status
     if payment_status:
-        query["payment_status"] = payment_status
-    if search:
-        s_reg = {"$regex": re.escape(search), "$options": "i"}
-        query["$or"] = [
+        query["payment_status"] = payment_status.upper()
+    if payment_method:
+        query["payment_method"] = payment_method.upper()
+
+    matched_emails = []
+    if search and search.strip():
+        s_term = search.strip()
+        s_reg = {"$regex": re.escape(s_term), "$options": "i"}
+
+        # Search user_collection for attendee name, full_name, phone, email
+        matched_users = await user_collection.find({
+            "$or": [
+                {"name": s_reg},
+                {"full_name": s_reg},
+                {"phone_number": s_reg},
+                {"phone": s_reg},
+                {"email": s_reg}
+            ]
+        }).to_list(length=300)
+        matched_emails = [u.get("email") for u in matched_users if u.get("email")]
+
+        search_conditions = [
             {"booking_reference": s_reg},
             {"user_email": s_reg},
+            {"user_name": s_reg},
+            {"user_phone": s_reg},
             {"holder_names": s_reg},
         ]
+        if matched_emails:
+            search_conditions.append({"user_email": {"$in": matched_emails}})
+
+        query["$or"] = search_conditions
 
     total = await booking_collection.count_documents(query)
     raw_bookings = await booking_collection.find(query).sort("booked_at", -1).skip(skip).limit(limit).to_list(length=limit)
@@ -599,6 +626,8 @@ async def _fetch_admin_bookings(
                 "holder_name": t.get("holder_name"),
                 "holder_email": t.get("holder_email"),
                 "ticket_type": t.get("ticket_type"),
+                "payment_status": t.get("payment_status", "PAID"),
+                "payment_method": t.get("payment_method", "ONLINE"),
                 "is_checked_in": bool(t.get("is_checked_in")),
                 "check_in_time": t.get("check_in_time"),
             })
@@ -609,7 +638,7 @@ async def _fetch_admin_bookings(
     total_revenue = sum(
         float(b.get("total_amount", 0.0))
         for b in all_for_stats
-        if b.get("booking_status") == "CONFIRMED" or b.get("payment_status") in ("PAID", "NOT_REQUIRED")
+        if (b.get("booking_status") == "CONFIRMED" and b.get("payment_status") in ("PAID", "NOT_REQUIRED", "SUCCESS"))
     )
     
     tix_query: Dict[str, Any] = {"event_id": str(event_id)} if event_id else {}
@@ -623,6 +652,13 @@ async def _fetch_admin_bookings(
         tk = tickets_map.get(str(b.get("ticket_id")), {})
         usr = users_map.get(b.get("user_email"), {})
 
+        raw_p_status = (b.get("payment_status") or "PENDING").upper()
+        raw_p_method = (b.get("payment_method") or ("CASH" if b.get("is_cash") or b.get("cash_payment") else "ONLINE")).upper()
+        
+        is_paid = (raw_p_status in ["PAID", "SUCCESS", "NOT_REQUIRED"] or bool(b.get("cash_approved")))
+        p_status = "PAID" if is_paid else "PENDING"
+        p_display = "SUCCESS" if is_paid else "PENDING"
+
         bookings_res.append({
             "_id": b_id,
             "booking_id": b_id,
@@ -633,21 +669,93 @@ async def _fetch_admin_bookings(
             "ticket_id": str(b.get("ticket_id", "")),
             "ticket_type": tk.get("type") or b.get("ticket_type") or "General",
             "user_email": b.get("user_email", ""),
-            "user_name": usr.get("name") or b.get("user_name") or "Attendee",
+            "user_name": usr.get("name") or usr.get("full_name") or b.get("user_name") or "Attendee",
             "user_phone": usr.get("phone_number") or usr.get("phone") or b.get("user_phone") or "",
             "quantity": int(b.get("quantity", 1)),
             "unit_price": float(b.get("unit_price", 0.0)),
             "total_amount": float(b.get("total_amount", 0.0)),
             "booking_status": b.get("booking_status", "CONFIRMED"),
-            "payment_status": b.get("payment_status", "PAID"),
+            "payment_status": p_status,
+            "payment_status_display": p_display,
+            "payment_method": raw_p_method,
+            "is_cash": (raw_p_method == "CASH"),
+            "can_approve_cash": (raw_p_method == "CASH" and not is_paid),
+            "cash_approved": bool(b.get("cash_approved")),
+            "approved_by": b.get("approved_by"),
+            "approved_at": b.get("approved_at"),
+            "paid_at": b.get("paid_at"),
             "payment_reference": b.get("payment_reference"),
             "booked_at": b.get("booked_at"),
             "holder_names": b.get("holder_names", []),
             "tickets": issued_map.get(b_id, []),
         })
 
+    # Also include direct event registrations from registration_collection if querying a specific event or search
+    if event_id:
+        reg_query: Dict[str, Any] = {"activity_id": str(event_id), "activity_type": "event"}
+        if status:
+            reg_query["status"] = status
+        if payment_status:
+            reg_query["payment_status"] = payment_status.upper()
+        if payment_method:
+            reg_query["payment_method"] = payment_method.upper()
+        if search and search.strip():
+            s_reg = {"$regex": re.escape(search.strip()), "$options": "i"}
+            reg_conds = [
+                {"participant_name": s_reg},
+                {"participant_email": s_reg},
+                {"email": s_reg},
+                {"order_reference": s_reg}
+            ]
+            if matched_emails:
+                reg_conds.append({"email": {"$in": matched_emails}})
+            reg_query["$or"] = reg_conds
+
+        direct_regs = await registration_collection.find(reg_query).sort("created_at", -1).to_list(length=100)
+        existing_refs = {b["booking_reference"] for b in bookings_res}
+        for dr in direct_regs:
+            r_ref = dr.get("order_reference", f"REG-{str(dr['_id'])[:8]}")
+            if r_ref in existing_refs:
+                continue
+            dr_id = str(dr["_id"])
+            dr_user = users_map.get(dr.get("email"), {})
+            dr_p_status = (dr.get("payment_status") or "PENDING").upper()
+            dr_p_method = (dr.get("payment_method") or ("CASH" if dr.get("cash_payment") else "ONLINE")).upper()
+            dr_is_paid = (dr_p_status in ["PAID", "SUCCESS", "NOT_REQUIRED"] or bool(dr.get("cash_approved")))
+
+            bookings_res.append({
+                "_id": dr_id,
+                "booking_id": dr_id,
+                "booking_reference": r_ref,
+                "event_id": str(event_id),
+                "event_title": events_map.get(str(event_id), {}).get("title", "Event"),
+                "event_date": events_map.get(str(event_id), {}).get("date"),
+                "ticket_id": "",
+                "ticket_type": "Event Registration",
+                "user_email": dr.get("email") or dr.get("participant_email", ""),
+                "user_name": dr.get("participant_name") or dr_user.get("name") or dr_user.get("full_name") or "Participant",
+                "user_phone": dr_user.get("phone_number") or dr_user.get("phone") or "",
+                "quantity": 1,
+                "unit_price": float(dr.get("payable_amount", 0.0)),
+                "total_amount": float(dr.get("payable_amount", 0.0)),
+                "booking_status": dr.get("status", "CONFIRMED"),
+                "payment_status": "PAID" if dr_is_paid else "PENDING",
+                "payment_status_display": "SUCCESS" if dr_is_paid else "PENDING",
+                "payment_method": dr_p_method,
+                "is_cash": (dr_p_method == "CASH"),
+                "can_approve_cash": (dr_p_method == "CASH" and not dr_is_paid),
+                "cash_approved": bool(dr.get("cash_approved")),
+                "approved_by": dr.get("approved_by"),
+                "approved_at": dr.get("approved_at"),
+                "paid_at": dr.get("paid_at"),
+                "payment_reference": dr.get("payment_reference"),
+                "booked_at": dr.get("created_at"),
+                "holder_names": [dr.get("participant_name") or "Participant"],
+                "tickets": [],
+            })
+
     return {
-        "total": total,
+        "total": len(bookings_res) if event_id else total,
         "total_tickets": total_tickets,
         "total_revenue": total_revenue,
         "checked_in_count": checked_in_count,
@@ -657,40 +765,49 @@ async def _fetch_admin_bookings(
     }
 
 @router.get("/events/{event_id}/bookings", tags=["admin-bookings"])
+@router.get("/events/{event_id}/registrations", tags=["admin-bookings"])
+@router.get("/events/{event_id}/participants", tags=["admin-bookings"])
+@router.get("/events/{event_id}/attendees", tags=["admin-bookings"])
 async def list_admin_event_bookings(
     event_id: str,
     status: Optional[str] = None,
     payment_status: Optional[str] = None,
+    payment_method: Optional[str] = None,
     search: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
     admin=Depends(get_current_admin)
 ):
-    """Super Admin retrieves ticket bookings for a specific event with customer and attendee details."""
+    """Super Admin retrieves participants and ticket bookings for a specific event with customer and attendee details, searchable by name, email, phone, reference."""
     return await _fetch_admin_bookings(
         event_id=event_id,
         status=status,
         payment_status=payment_status,
+        payment_method=payment_method,
         search=search,
         skip=skip,
         limit=limit
     )
 
 @router.get("/bookings", tags=["admin-bookings"])
+@router.get("/registrations", tags=["admin-bookings"])
+@router.get("/participants", tags=["admin-bookings"])
 async def list_all_admin_bookings(
     event_id: Optional[str] = None,
     status: Optional[str] = None,
     payment_status: Optional[str] = None,
+    payment_method: Optional[str] = None,
     search: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
     admin=Depends(get_current_admin)
 ):
-    """Super Admin retrieves all ticket bookings across events with metrics and issued tickets."""
+    """Super Admin retrieves all ticket bookings and registrations across events with metrics, filters, and search."""
     return await _fetch_admin_bookings(
         event_id=event_id,
         status=status,
         payment_status=payment_status,
+        payment_method=payment_method,
         search=search,
         skip=skip,
         limit=limit
@@ -740,4 +857,237 @@ async def get_admin_booking_detail(booking_id: str, admin=Depends(get_current_ad
         t["_id"] = str(t["_id"])
     b["tickets"] = tix
 
+    raw_p_status = (b.get("payment_status") or "PENDING").upper()
+    raw_p_method = (b.get("payment_method") or ("CASH" if b.get("is_cash") or b.get("cash_payment") else "ONLINE")).upper()
+    is_paid = (raw_p_status in ["PAID", "SUCCESS", "NOT_REQUIRED"] or bool(b.get("cash_approved")))
+    b["payment_status"] = "PAID" if is_paid else "PENDING"
+    b["payment_status_display"] = "SUCCESS" if is_paid else "PENDING"
+    b["payment_method"] = raw_p_method
+    b["is_cash"] = (raw_p_method == "CASH")
+    b["can_approve_cash"] = (raw_p_method == "CASH" and not is_paid)
+
     return b
+
+
+# ════════════════════════════════════════════════════════════
+# ADMIN CASH PAYMENT APPROVAL CONTROLS (SPOT / EVENT-DAY CASH)
+# ════════════════════════════════════════════════════════════
+
+class CashApprovalPayload(BaseModel):
+    notes: Optional[str] = None
+    amount_received: Optional[float] = None
+
+
+@router.post("/bookings/{booking_id}/approve-cash", tags=["admin-bookings"])
+@router.patch("/bookings/{booking_id}/approve-cash", tags=["admin-bookings"])
+@router.post("/events/{event_id}/bookings/{booking_id}/approve-cash", tags=["admin-bookings"])
+@router.patch("/events/{event_id}/bookings/{booking_id}/approve-cash", tags=["admin-bookings"])
+@router.post("/registrations/{booking_id}/approve-cash", tags=["admin-bookings"])
+@router.patch("/registrations/{booking_id}/approve-cash", tags=["admin-bookings"])
+@router.post("/events/{event_id}/registrations/{booking_id}/approve-cash", tags=["admin-bookings"])
+@router.patch("/events/{event_id}/registrations/{booking_id}/approve-cash", tags=["admin-bookings"])
+async def approve_admin_cash_payment(
+    booking_id: str,
+    event_id: Optional[str] = None,
+    payload: Optional[CashApprovalPayload] = None,
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Super Admin verifies and approves an offline cash payment for an attendee on event day.
+    Updates payment_status to 'PAID' (display: 'SUCCESS'), payment_method to 'CASH', records
+    audit metadata (admin email, timestamp), updates digital tickets, and dispatches confirmation notification.
+    """
+    notes = payload.notes if payload else None
+    admin_email = admin.get("email", "admin")
+    now_utc = datetime.now(timezone.utc)
+
+    # 1. Check in booking_collection
+    b = None
+    try:
+        b = await booking_collection.find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        pass
+    if not b:
+        b = await booking_collection.find_one({"$or": [{"_id": booking_id}, {"booking_reference": booking_id}]})
+
+    if b:
+        payment_ref = f"CASH-{admin_email.split('@')[0]}-{int(now_utc.timestamp())}"
+        await booking_collection.update_one(
+            {"_id": b["_id"]},
+            {"$set": {
+                "payment_status": "PAID",
+                "payment_status_display": "SUCCESS",
+                "payment_method": "CASH",
+                "booking_status": "CONFIRMED",
+                "cash_status": "APPROVED",
+                "cash_approved": True,
+                "cash_received": True,
+                "paid_at": now_utc,
+                "approved_at": now_utc,
+                "approved_by": admin_email,
+                "payment_reference": payment_ref,
+                "admin_notes": notes
+            }}
+        )
+        # Update all issued tickets for this booking
+        await issued_ticket_collection.update_many(
+            {"booking_id": str(b["_id"])},
+            {"$set": {
+                "payment_status": "PAID",
+                "payment_method": "CASH",
+                "is_paid": True,
+                "cash_approved": True
+            }}
+        )
+
+        # Dispatch confirmation notification
+        try:
+            from app.services.notification_service import NotificationService
+            from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+            from app.schemas.notification import NotificationCreate
+
+            total_amt = float(b.get("total_amount", 0.0))
+            await NotificationService.create_notification(NotificationCreate(
+                recipient_user_id=b.get("user_email"),
+                notification_type=NotificationType.PAYMENT_CONFIRMATION,
+                title="Cash Payment Approved",
+                message=f"Your cash payment of ₹{total_amt:.2f} for booking {b.get('booking_reference')} has been verified and approved.",
+                resource_type="booking",
+                resource_id=str(b["_id"]),
+                action_url="/dashboard?tab=events",
+                priority=NotificationPriority.HIGH,
+                sound_category=SoundCategory.SUCCESS,
+                deduplication_key=f"cash_appr_{b['_id']}",
+                source_module="bookings",
+                source_event_id=b.get("booking_reference")
+            ))
+        except Exception:
+            pass
+
+        return {
+            "message": "Cash payment approved successfully",
+            "booking_id": str(b["_id"]),
+            "booking_reference": b.get("booking_reference"),
+            "payment_status": "PAID",
+            "payment_status_display": "SUCCESS",
+            "payment_method": "CASH",
+            "total_amount": float(b.get("total_amount", 0.0)),
+            "approved_by": admin_email,
+            "approved_at": now_utc.isoformat(),
+            "cash_approved": True
+        }
+
+    # 2. Check in registration_collection
+    reg = None
+    try:
+        reg = await registration_collection.find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        pass
+    if not reg:
+        reg = await registration_collection.find_one({"$or": [{"_id": booking_id}, {"order_reference": booking_id}]})
+
+    if reg:
+        payment_ref = f"CASH-{admin_email.split('@')[0]}-{int(now_utc.timestamp())}"
+        await registration_collection.update_one(
+            {"_id": reg["_id"]},
+            {"$set": {
+                "payment_status": "PAID",
+                "payment_status_display": "SUCCESS",
+                "payment_method": "CASH",
+                "status": "CONFIRMED",
+                "cash_status": "APPROVED",
+                "cash_approved": True,
+                "cash_received": True,
+                "paid_at": now_utc,
+                "approved_at": now_utc,
+                "approved_by": admin_email,
+                "payment_reference": payment_ref,
+                "admin_notes": notes
+            }}
+        )
+
+        try:
+            from app.services.wallet_service import WalletService
+            await WalletService.commit_reserved_coins(reg.get("order_reference"))
+        except Exception:
+            pass
+
+        # Dispatch notification
+        try:
+            from app.services.notification_service import NotificationService
+            from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
+            from app.schemas.notification import NotificationCreate
+
+            total_amt = float(reg.get("payable_amount", 0.0))
+            await NotificationService.create_notification(NotificationCreate(
+                recipient_user_id=reg.get("email"),
+                notification_type=NotificationType.PAYMENT_CONFIRMATION,
+                title="Cash Payment Approved",
+                message=f"Your cash payment of ₹{total_amt:.2f} for registration has been verified and approved.",
+                resource_type="registration",
+                resource_id=str(reg["_id"]),
+                action_url="/dashboard",
+                priority=NotificationPriority.HIGH,
+                sound_category=SoundCategory.SUCCESS,
+                deduplication_key=f"cash_appr_reg_{reg['_id']}",
+                source_module="registrations",
+                source_event_id=reg.get("order_reference")
+            ))
+        except Exception:
+            pass
+
+        return {
+            "message": "Cash payment approved successfully",
+            "registration_id": str(reg["_id"]),
+            "order_reference": reg.get("order_reference"),
+            "payment_status": "PAID",
+            "payment_status_display": "SUCCESS",
+            "payment_method": "CASH",
+            "total_amount": float(reg.get("payable_amount", 0.0)),
+            "approved_by": admin_email,
+            "approved_at": now_utc.isoformat(),
+            "cash_approved": True
+        }
+
+    # 3. Check in competition_registration_collection
+    creg = None
+    try:
+        creg = await competition_registration_collection.find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        pass
+    if not creg:
+        creg = await competition_registration_collection.find_one({"$or": [{"_id": booking_id}, {"registration_reference": booking_id}]})
+
+    if creg:
+        payment_ref = f"CASH-{admin_email.split('@')[0]}-{int(now_utc.timestamp())}"
+        await competition_registration_collection.update_one(
+            {"_id": creg["_id"]},
+            {"$set": {
+                "payment_status": "PAID",
+                "payment_status_display": "SUCCESS",
+                "payment_method": "CASH",
+                "status": "CONFIRMED",
+                "cash_status": "APPROVED",
+                "cash_approved": True,
+                "cash_received": True,
+                "paid_at": now_utc,
+                "approved_at": now_utc,
+                "approved_by": admin_email,
+                "payment_reference": payment_ref,
+                "admin_notes": notes
+            }}
+        )
+        return {
+            "message": "Cash payment approved successfully",
+            "registration_id": str(creg["_id"]),
+            "registration_reference": creg.get("registration_reference"),
+            "payment_status": "PAID",
+            "payment_status_display": "SUCCESS",
+            "payment_method": "CASH",
+            "total_amount": float(creg.get("fee", 0.0)),
+            "approved_by": admin_email,
+            "approved_at": now_utc.isoformat(),
+            "cash_approved": True
+        }
+
+    raise HTTPException(status_code=404, detail="Registration or booking not found")

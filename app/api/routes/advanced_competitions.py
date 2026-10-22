@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from fastapi import status, APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form
+from fastapi import status, APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form, Query, Body
 from bson import ObjectId
 from app.api.deps import get_current_user, get_current_user_allow_incomplete
 from app.core.database import (
@@ -11,7 +11,8 @@ from app.core.database import (
 from app.schemas.booking import PaymentStatus
 from app.schemas.competition import RegistrationStatus, SubmissionStatus
 from app.services.payment import PaymentService
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
+from typing import Optional, Any, Dict, List
 import uuid
 import os
 import json
@@ -21,22 +22,61 @@ from app.services.cloudinary_srv import upload_image
 
 router = APIRouter()
 
-def calculate_age(dob_str: str) -> int:
+
+def safe_object_id(id_str: str) -> Optional[ObjectId]:
+    """Safely converts a string to a BSON ObjectId, returning None on invalid format."""
+    if not id_str:
+        return None
     try:
-        dob = datetime.strptime(dob_str, "%Y-%m-%d")
+        return ObjectId(str(id_str).strip())
+    except Exception:
+        return None
+
+
+def extract_fee(comp_dict: Optional[dict], fallback_fee: float = 0.0) -> float:
+    """Safely extracts the fee/price from a competition dictionary without crashing on None."""
+    if not comp_dict:
+        return max(0.0, float(fallback_fee or 0.0))
+    for k in ("participation_fee", "fee", "entry_fee", "price"):
+        v = comp_dict.get(k)
+        if v is not None:
+            try:
+                f_val = float(v)
+                return max(0.0, f_val)
+            except (ValueError, TypeError):
+                continue
+    return max(0.0, float(fallback_fee or 0.0))
+
+
+def calculate_age(dob_val: Any) -> int:
+    """Calculates age safely from string (YYYY-MM-DD or ISO), date, or datetime object."""
+    if not dob_val:
+        return -1
+    try:
+        if isinstance(dob_val, datetime):
+            dob = dob_val
+        elif isinstance(dob_val, date):
+            dob = datetime(dob_val.year, dob_val.month, dob_val.day)
+        else:
+            s = str(dob_val).strip()[:10]
+            dob = datetime.strptime(s, "%Y-%m-%d")
         today = datetime.now(timezone.utc)
         age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
         return age
-    except:
+    except Exception:
         return -1
+
+
+class CompetitionRegisterReq(BaseModel):
+    rules_accepted: Optional[bool] = None
+
 
 @router.get("/v1/competitions/{comp_id}")
 async def get_competition_by_id(comp_id: str):
     """Fetch single competition details."""
-    try:
-        c_id = ObjectId(comp_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid competition ID")
+    c_id = safe_object_id(comp_id)
+    if not c_id:
+        raise HTTPException(status_code=400, detail="Invalid competition ID format.")
     comp = await competition_collection.find_one({"_id": c_id})
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
@@ -46,26 +86,37 @@ async def get_competition_by_id(comp_id: str):
 @router.get("/v1/competitions/{comp_id}/eligibility")
 async def check_eligibility(comp_id: str, user: dict = Depends(get_current_user)):
     """Checks user eligibility based on age."""
-    comp = await competition_collection.find_one({"_id": ObjectId(comp_id), "is_published": True})
+    c_id = safe_object_id(comp_id)
+    if not c_id:
+        raise HTTPException(status_code=400, detail="Invalid competition ID format.")
+
+    comp = await competition_collection.find_one({"_id": c_id, "is_published": True})
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
-        
+
     dob = user.get("date_of_birth")
-    if not dob:
-        return {"eligible": False, "status": "PROFILE_INCOMPLETE", "reason": "Date of birth is required for eligibility check."}
-        
     age = calculate_age(dob)
+    if age < 0 and user.get("age") is not None:
+        try:
+            age = int(user["age"])
+        except (ValueError, TypeError):
+            pass
+
     if age < 0:
-        return {"eligible": False, "status": "INVALID_DOB", "reason": "Invalid date of birth format."}
-        
+        return {
+            "eligible": False,
+            "status": "PROFILE_INCOMPLETE",
+            "reason": "Date of birth or age is required in your profile for eligibility verification.",
+        }
+
     min_age = comp.get("min_age")
     max_age = comp.get("max_age")
-    
+
     if min_age is not None and age < min_age:
         return {"eligible": False, "status": "NOT_ELIGIBLE", "reason": f"Minimum age requirement is {min_age}."}
     if max_age is not None and age > max_age:
         return {"eligible": False, "status": "NOT_ELIGIBLE", "reason": f"Maximum age requirement is {max_age}."}
-        
+
     return {"eligible": True, "status": "ELIGIBLE", "reason": "User is eligible."}
 
 @router.get("/v1/competitions/{comp_id}/my-registration")
@@ -83,18 +134,18 @@ async def get_my_competition_registration_status(
 
     # 1. Check advanced competition registration
     existing = await competition_registration_collection.find_one({
-        "competition_id": comp_id,
+        "competition_id": str(comp_id),
         "user_email": user_email
     })
-    
+
     # 2. Check legacy registration collection fallback
     if not existing:
         existing = await registration_collection.find_one({
-            "activity_id": comp_id,
+            "activity_id": str(comp_id),
             "email": user_email,
             "activity_type": "competition"
         })
-        
+
     if not existing:
         return {
             "is_registered": False,
@@ -107,12 +158,12 @@ async def get_my_competition_registration_status(
         or existing.get("payment_status") in (PaymentStatus.PAID.value, PaymentStatus.NOT_REQUIRED.value)
         or existing.get("is_confirmed") is True
     )
-    
+
     sub = await competition_submission_collection.find_one({
-        "competition_id": comp_id,
+        "competition_id": str(comp_id),
         "user_email": user_email
     })
-    
+
     return {
         "is_registered": True,
         "is_confirmed": is_confirmed,
@@ -125,32 +176,78 @@ async def get_my_competition_registration_status(
     }
 
 @router.post("/v1/competitions/{comp_id}/register")
-async def register_competition(comp_id: str, rules_accepted: bool = False, user: dict = Depends(get_current_user)):
-    """Registers the user for a competition."""
-    if not rules_accepted:
+async def register_competition(
+    comp_id: str,
+    rules_accepted: Optional[bool] = Query(None),
+    body: Optional[CompetitionRegisterReq] = Body(None),
+    user: dict = Depends(get_current_user)
+):
+    """Registers the user for a competition with fee safety and payment support."""
+    is_rules_accepted = (
+        rules_accepted if rules_accepted is not None
+        else (body.rules_accepted if body and body.rules_accepted is not None else False)
+    )
+    if not is_rules_accepted:
         raise HTTPException(status_code=400, detail="You must accept the competition rules.")
-        
-    comp = await competition_collection.find_one({"_id": ObjectId(comp_id), "is_published": True})
+
+    c_id = safe_object_id(comp_id)
+    if not c_id:
+        raise HTTPException(status_code=400, detail="Invalid competition ID format.")
+
+    comp = await competition_collection.find_one({"_id": c_id, "is_published": True})
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
-        
-    # Check registration window
-    now = datetime.now(timezone.utc)
-    # Basic date checks (could add more robust parsing if needed)
-    
-    # Check eligibility again
+
+    reg_status = (comp.get("registration_status") or "").upper()
+    if reg_status == "CLOSED":
+        raise HTTPException(status_code=400, detail="Registration for this competition is closed.")
+    if reg_status == "UPCOMING":
+        raise HTTPException(status_code=400, detail="Registration for this competition has not opened yet.")
+
+    # Check eligibility
     eligibility = await check_eligibility(comp_id, user)
     if not eligibility.get("eligible"):
         raise HTTPException(status_code=403, detail=eligibility.get("reason"))
-        
+
+    user_email = user.get("email")
+    if not user_email:
+        raise HTTPException(status_code=401, detail="User email not found in session.")
+
     # Check duplicate or pending registration
-    existing = await competition_registration_collection.find_one({"competition_id": comp_id, "user_email": user["email"]})
+    existing = await competition_registration_collection.find_one({
+        "competition_id": str(comp_id),
+        "user_email": user_email
+    })
+    if not existing:
+        legacy = await registration_collection.find_one({
+            "activity_id": str(comp_id),
+            "email": user_email,
+            "activity_type": "competition"
+        })
+        if legacy:
+            existing = legacy
+
     if existing:
-        if existing.get("status") == RegistrationStatus.CONFIRMED.value or existing.get("payment_status") in (PaymentStatus.PAID.value, PaymentStatus.NOT_REQUIRED.value):
+        is_already_confirmed = (
+            existing.get("status") == RegistrationStatus.CONFIRMED.value
+            or existing.get("payment_status") in (PaymentStatus.PAID.value, PaymentStatus.NOT_REQUIRED.value)
+            or existing.get("is_confirmed") is True
+        )
+        if is_already_confirmed:
             raise HTTPException(status_code=409, detail="Already registered and confirmed for this competition.")
-        
-        fee = float(comp.get("participation_fee", existing.get("fee", 0.0)))
-        reg_ref = existing.get("registration_reference") or f"CRG-{uuid.uuid4().hex[:10].upper()}"
+
+        fee = extract_fee(comp, existing.get("fee", 0.0))
+        reg_ref = (
+            existing.get("registration_reference")
+            or existing.get("order_reference")
+            or f"CRG-{uuid.uuid4().hex[:10].upper()}"
+        )
+
+        if not existing.get("registration_reference"):
+            await competition_registration_collection.update_one(
+                {"_id": existing["_id"]},
+                {"$set": {"registration_reference": reg_ref}}
+            )
 
         if fee == 0.0:
             await competition_registration_collection.update_one(
@@ -163,13 +260,13 @@ async def register_competition(comp_id: str, rules_accepted: bool = False, user:
             )
             try:
                 await competition_collection.update_one(
-                    {"_id": ObjectId(comp_id)},
+                    {"_id": c_id},
                     {"$inc": {"registered_count": 1}}
                 )
             except Exception:
                 pass
             return {"message": "Registration confirmed.", "status": RegistrationStatus.CONFIRMED.value, "reference": reg_ref}
-        
+
         # If registration is pending payment, re-initiate payment gateway order
         payment_info = await PaymentService.initiate_payment(
             booking_reference=reg_ref,
@@ -177,8 +274,8 @@ async def register_competition(comp_id: str, rules_accepted: bool = False, user:
             currency="INR",
             notes={
                 "type": "competition_registration",
-                "competition_id": comp_id,
-                "user_email": user["email"],
+                "competition_id": str(comp_id),
+                "user_email": user_email,
                 "registration_reference": reg_ref
             }
         )
@@ -188,27 +285,30 @@ async def register_competition(comp_id: str, rules_accepted: bool = False, user:
             "payment_info": payment_info,
             "reference": reg_ref
         }
-        
-    fee = float(comp.get("participation_fee", 0.0))
+
+    fee = extract_fee(comp, 0.0)
     reg_ref = f"CRG-{uuid.uuid4().hex[:10].upper()}"
-    
+
     doc = {
         "registration_reference": reg_ref,
-        "competition_id": comp_id,
-        "user_email": user["email"],
+        "competition_id": str(comp_id),
+        "user_email": user_email,
+        "user_name": user.get("name") or user.get("full_name") or "",
+        "user_phone": user.get("phone_number") or user.get("phone") or "",
+        "user_id": str(user.get("_id")) if user.get("_id") else "",
         "eligibility_status": "ELIGIBLE",
-        "rules_accepted": rules_accepted,
+        "rules_accepted": is_rules_accepted,
         "fee": fee,
         "registered_at": datetime.now(timezone.utc)
     }
-    
+
     if fee == 0.0:
         doc["status"] = RegistrationStatus.CONFIRMED.value
         doc["payment_status"] = PaymentStatus.NOT_REQUIRED.value
         await competition_registration_collection.insert_one(doc)
         try:
             await competition_collection.update_one(
-                {"_id": ObjectId(comp_id)},
+                {"_id": c_id},
                 {"$inc": {"registered_count": 1}}
             )
         except Exception:
@@ -224,12 +324,17 @@ async def register_competition(comp_id: str, rules_accepted: bool = False, user:
             currency="INR",
             notes={
                 "type": "competition_registration",
-                "competition_id": comp_id,
-                "user_email": user["email"],
+                "competition_id": str(comp_id),
+                "user_email": user_email,
                 "registration_reference": reg_ref
             }
         )
-        return {"message": "Registration pending payment.", "status": RegistrationStatus.PENDING.value, "payment_info": payment_info, "reference": reg_ref}
+        return {
+            "message": "Registration pending payment.",
+            "status": RegistrationStatus.PENDING.value,
+            "payment_info": payment_info,
+            "reference": reg_ref
+        }
 
 @router.post(
     "/v1/competitions/{comp_id}/submissions",
@@ -261,23 +366,37 @@ async def submit_files(
       - JSON string (e.g., `["Performance Entry (Video/Audio or Link)"]`) or comma-separated string.
       - Automatically normalizes legacy `Video, Audio` to `Video/Audio`.
     """
-    comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    c_id = safe_object_id(comp_id)
+    if not c_id:
+        raise HTTPException(status_code=400, detail="Invalid competition ID format.")
+
+    comp = await competition_collection.find_one({"_id": c_id})
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
-        
+
+    user_email = user.get("email")
+    if not user_email:
+        raise HTTPException(status_code=401, detail="User email not found in session.")
+
     # Verify confirmed registration
     reg = await competition_registration_collection.find_one({
-        "competition_id": comp_id, 
-        "user_email": user["email"],
+        "competition_id": str(comp_id), 
+        "user_email": user_email,
         "status": RegistrationStatus.CONFIRMED.value
     })
     if not reg:
-        raise HTTPException(status_code=403, detail="Confirmed registration required to submit.")
-        
+        legacy_reg = await registration_collection.find_one({
+            "activity_id": str(comp_id),
+            "email": user_email,
+            "status": "CONFIRMED"
+        })
+        if not legacy_reg:
+            raise HTTPException(status_code=403, detail="Confirmed registration required to submit.")
+
     # Dynamic Fields Check
     fields = comp.get("dynamic_submission_fields", [])
     expected_fields = [f["name"] for f in fields if f.get("required")]
-    
+
     # Parse field_names (support both JSON array and comma-separated string)
     raw_fn = field_names.strip()
     if raw_fn.startswith("[") and raw_fn.endswith("]"):
@@ -287,7 +406,7 @@ async def submit_files(
             provided_fields = [f.strip() for f in raw_fn.split(",") if f.strip()]
     else:
         provided_fields = [f.strip() for f in raw_fn.split(",") if f.strip()]
-    
+
     # Normalize legacy field naming variations if needed
     normalized_expected = [
         ef.replace("Video, Audio", "Video/Audio").replace("video,audio", "video/audio")
@@ -301,10 +420,10 @@ async def submit_files(
     missing = set(normalized_expected) - set(normalized_provided)
     if missing:
         raise HTTPException(status_code=400, detail=f"Missing required fields: {missing}")
-        
+
     if len(files) != len(provided_fields):
         raise HTTPException(status_code=400, detail="Number of files does not match number of field names provided.")
-        
+
     # Process files: enforce strict MP3 audio validation for uploads & YouTube-only links for videos
     uploaded_urls = {}
     for i, file_obj in enumerate(files):
@@ -383,17 +502,35 @@ async def submit_files(
             )
 
         uploaded_urls[norm_field_name] = cloud_url
-        
-    doc = {
-        "competition_id": comp_id,
-        "user_email": user["email"],
-        "files": uploaded_urls,
-        "status": SubmissionStatus.SUBMITTED.value,
-        "submitted_at": datetime.now(timezone.utc)
-    }
-    
-    res = await competition_submission_collection.insert_one(doc)
-    return {"message": "Submission successful", "submission_id": str(res.inserted_id), "files": uploaded_urls}
+
+    # Check existing submission to update or insert fresh
+    existing_sub = await competition_submission_collection.find_one({
+        "competition_id": str(comp_id),
+        "user_email": user_email
+    })
+
+    if existing_sub:
+        await competition_submission_collection.update_one(
+            {"_id": existing_sub["_id"]},
+            {"$set": {
+                "files": uploaded_urls,
+                "status": SubmissionStatus.SUBMITTED.value,
+                "updated_at": datetime.now(timezone.utc)
+            }}
+        )
+        sub_id = str(existing_sub["_id"])
+    else:
+        doc = {
+            "competition_id": str(comp_id),
+            "user_email": user_email,
+            "files": uploaded_urls,
+            "status": SubmissionStatus.SUBMITTED.value,
+            "submitted_at": datetime.now(timezone.utc)
+        }
+        res = await competition_submission_collection.insert_one(doc)
+        sub_id = str(res.inserted_id)
+
+    return {"message": "Submission successful", "submission_id": sub_id, "files": uploaded_urls}
 
 
 class CompetitionPaymentVerifyReq(BaseModel):
@@ -413,6 +550,10 @@ async def verify_competition_payment(
     Client-side verification for paid competition registration checkout.
     Verifies Razorpay cryptographic HMAC signature and marks registration as CONFIRMED.
     """
+    c_id = safe_object_id(comp_id)
+    if not c_id:
+        raise HTTPException(status_code=400, detail="Invalid competition ID format.")
+
     is_valid = PaymentService.verify_payment_signature(
         razorpay_order_id=req.razorpay_order_id,
         razorpay_payment_id=req.razorpay_payment_id,
@@ -425,13 +566,13 @@ async def verify_competition_payment(
         )
 
     reg = await competition_registration_collection.find_one({
-        "competition_id": comp_id,
         "registration_reference": req.registration_reference
     })
-    if not reg:
+    if not reg or str(reg.get("competition_id")) != str(comp_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Competition registration not found")
 
-    if reg.get("user_email") != user.get("email") and user.get("role") != "super_admin":
+    user_email = user.get("email")
+    if reg.get("user_email") != user_email and user.get("role") != "super_admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
 
     if reg.get("status") == RegistrationStatus.CONFIRMED.value and reg.get("payment_status") == PaymentStatus.PAID.value:
@@ -457,7 +598,7 @@ async def verify_competition_payment(
     # Increment registered_count on competition
     try:
         await competition_collection.update_one(
-            {"_id": ObjectId(comp_id)},
+            {"_id": c_id},
             {"$inc": {"registered_count": 1}}
         )
     except Exception:

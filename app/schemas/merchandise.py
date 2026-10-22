@@ -145,11 +145,10 @@ class OrderFulfillmentUpdateReq(BaseModel):
     courier_name: Optional[str] = None
     notes: Optional[str] = None
 
+
 class StockAdjustmentReq(BaseModel):
     product_id: str
     variant_id: Optional[str] = None
     quantity_delta: int = Field(..., description="Positive to add stock, negative to reduce stock")
     reason: str = Field(..., min_length=3, max_length=300)
 
-class OrderCancelReq(BaseModel):
-    reason: str = Field(..., min_length=3, max_length=300)

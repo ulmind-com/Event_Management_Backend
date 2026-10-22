@@ -59,6 +59,11 @@ async def update_my_profile(
             )
             if profile_url:
                 update_data["profile_photo"] = profile_url
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to upload profile photo to cloud storage. Please try again."
+                )
                 
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields provided for update")

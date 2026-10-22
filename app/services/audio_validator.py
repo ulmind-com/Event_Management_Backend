@@ -90,6 +90,11 @@ class AudioValidator:
                     status_code=400,
                     detail=f"Invalid link URL format for '{field_name}'.",
                 )
+            if "res.cloudinary.com/demo" in text or "cloudinary.com/demo" in text:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid link submitted for '{field_name}'. Fake or demo Cloudinary URLs are strictly prohibited.",
+                )
             return text
 
         # If it was named *_link.txt specifically but does not have a URL

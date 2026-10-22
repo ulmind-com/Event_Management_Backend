@@ -85,6 +85,14 @@ class MerchandiseService:
                     detail=f"Variant price override for SKU '{v.sku}' must be strictly positive (> 0)."
                 )
 
+        # Validate images: reject fake demo Cloudinary URLs
+        for img in req.images:
+            if "res.cloudinary.com/demo" in img.lower() or "cloudinary.com/demo" in img.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Fake demo Cloudinary image URLs are strictly prohibited."
+                )
+
         # 3. Generate URL-friendly slug if not provided
         base_slug = req.slug or re.sub(r"[^a-z0-9]+", "-", req.name.lower()).strip("-")
         slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
@@ -149,6 +157,14 @@ class MerchandiseService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Price must be strictly positive (> 0). Free merchandise is prohibited."
             )
+
+        if "images" in update_dict and update_dict["images"]:
+            for img in update_dict["images"]:
+                if "res.cloudinary.com/demo" in img.lower() or "cloudinary.com/demo" in img.lower():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Fake demo Cloudinary image URLs are strictly prohibited."
+                    )
 
         now_utc = datetime.now(timezone.utc)
         update_dict["updated_at"] = now_utc

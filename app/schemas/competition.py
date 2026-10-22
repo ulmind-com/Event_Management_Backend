@@ -1,7 +1,14 @@
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
+
+def check_no_fake_cloudinary(v: Optional[str]) -> Optional[str]:
+    if v and isinstance(v, str):
+        v_low = v.lower()
+        if "res.cloudinary.com/demo" in v_low or "cloudinary.com/demo" in v_low:
+            raise ValueError("Fake demo Cloudinary URLs are strictly prohibited.")
+    return v
 
 class FieldType(str, Enum):
     TEXT = "TEXT"
@@ -69,6 +76,11 @@ class CompetitionCreateReq(BaseModel):
     dynamic_submission_fields: List[DynamicFieldConfig] = []
     judging_criteria: List[JudgingCriterion] = []
 
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def validate_image_url(cls, v):
+        return check_no_fake_cloudinary(v)
+
 class CompetitionUpdateReq(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
@@ -99,6 +111,11 @@ class CompetitionUpdateReq(BaseModel):
     rules: Optional[CompetitionRules] = None
     dynamic_submission_fields: Optional[List[DynamicFieldConfig]] = None
     judging_criteria: Optional[List[JudgingCriterion]] = None
+
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def validate_image_url(cls, v):
+        return check_no_fake_cloudinary(v)
 
 
 

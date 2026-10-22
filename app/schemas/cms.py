@@ -1,6 +1,13 @@
-﻿from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, field_validator
 from typing import Optional, List
 from datetime import datetime
+
+def check_no_fake_cloudinary(v: Optional[str]) -> Optional[str]:
+    if v and isinstance(v, str):
+        v_low = v.lower()
+        if "res.cloudinary.com/demo" in v_low or "cloudinary.com/demo" in v_low:
+            raise ValueError("Fake demo Cloudinary URLs are strictly prohibited.")
+    return v
 
 # ── Website Settings (Singleton) ──
 class SocialMediaLinks(BaseModel):
@@ -31,6 +38,11 @@ class WebsiteSettingsUpdate(BaseModel):
     terms_url: Optional[str] = None
     social_media: Optional[SocialMediaLinks] = None
 
+    @field_validator("logo_url", "favicon_url", mode="before")
+    @classmethod
+    def validate_cms_urls(cls, v):
+        return check_no_fake_cloudinary(v)
+
 # ── Events ──
 class EventCreate(BaseModel):
     title: str
@@ -49,6 +61,11 @@ class EventCreate(BaseModel):
     ticket_enabled: bool = False
     display_order: int = 0
 
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def validate_image_url(cls, v):
+        return check_no_fake_cloudinary(v)
+
 class EventUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
@@ -65,6 +82,11 @@ class EventUpdate(BaseModel):
     registration_enabled: Optional[bool] = None
     ticket_enabled: Optional[bool] = None
     display_order: Optional[int] = None
+
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def validate_image_url(cls, v):
+        return check_no_fake_cloudinary(v)
 
 # ── Live Events ──
 class LiveEventCreate(BaseModel):
@@ -105,6 +127,11 @@ class BannerCreate(BaseModel):
     is_published: bool = False
     is_visible: bool = True
 
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def validate_image_url(cls, v):
+        return check_no_fake_cloudinary(v)
+
 class BannerUpdate(BaseModel):
     title: Optional[str] = None
     image_url: Optional[str] = None
@@ -118,6 +145,11 @@ class BannerUpdate(BaseModel):
     is_published: Optional[bool] = None
     is_visible: Optional[bool] = None
 
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def validate_image_url(cls, v):
+        return check_no_fake_cloudinary(v)
+
 # ── Testimonials ──
 class TestimonialCreate(BaseModel):
     person_name: str
@@ -128,6 +160,11 @@ class TestimonialCreate(BaseModel):
     is_published: bool = False
     display_order: int = 0
 
+    @field_validator("profile_image", mode="before")
+    @classmethod
+    def validate_profile_image(cls, v):
+        return check_no_fake_cloudinary(v)
+
 class TestimonialUpdate(BaseModel):
     person_name: Optional[str] = None
     role: Optional[str] = None
@@ -136,6 +173,11 @@ class TestimonialUpdate(BaseModel):
     is_approved: Optional[bool] = None
     is_published: Optional[bool] = None
     display_order: Optional[int] = None
+
+    @field_validator("profile_image", mode="before")
+    @classmethod
+    def validate_profile_image(cls, v):
+        return check_no_fake_cloudinary(v)
 
 # ── Courses / Workshops ──
 class CourseCreate(BaseModel):
@@ -155,6 +197,11 @@ class CourseCreate(BaseModel):
     is_visible: bool = True
     display_order: int = 0
 
+    @field_validator("thumbnail", mode="before")
+    @classmethod
+    def validate_thumbnail(cls, v):
+        return check_no_fake_cloudinary(v)
+
 class CourseUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
@@ -171,6 +218,11 @@ class CourseUpdate(BaseModel):
     is_published: Optional[bool] = None
     is_visible: Optional[bool] = None
     display_order: Optional[int] = None
+
+    @field_validator("thumbnail", mode="before")
+    @classmethod
+    def validate_thumbnail(cls, v):
+        return check_no_fake_cloudinary(v)
 
 # ── Tickets ──
 class TicketCreate(BaseModel):
@@ -208,6 +260,11 @@ class ContestPromotionCreate(BaseModel):
     is_visible: bool = True
     display_order: int = 0
 
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def validate_image_url(cls, v):
+        return check_no_fake_cloudinary(v)
+
 class ContestPromotionUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
@@ -221,6 +278,11 @@ class ContestPromotionUpdate(BaseModel):
     is_visible: Optional[bool] = None
     display_order: Optional[int] = None
 
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def validate_image_url(cls, v):
+        return check_no_fake_cloudinary(v)
+
 # ── Mobile App Promotion (Singleton) ──
 class AppPromotionUpdate(BaseModel):
     section_title: Optional[str] = None
@@ -231,6 +293,11 @@ class AppPromotionUpdate(BaseModel):
     cta_text: Optional[str] = None
     is_enabled: Optional[bool] = None
     is_published: Optional[bool] = None
+
+    @field_validator("promotional_image", mode="before")
+    @classmethod
+    def validate_promotional_image(cls, v):
+        return check_no_fake_cloudinary(v)
     display_order: Optional[int] = None
 
 # ── Important Links ──

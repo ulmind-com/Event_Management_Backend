@@ -150,6 +150,11 @@ async def register_step3(
                 folder="eventora/profiles",
                 filename=profile_photo.filename,
             )
+            if not profile_url:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to upload profile photo to cloud storage. Please try again."
+                )
 
     # Hash the password!
     hashed_pwd = get_password_hash(password)

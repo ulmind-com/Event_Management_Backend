@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from enum import Enum
@@ -80,6 +80,15 @@ class ProductCreateReq(BaseModel):
     shipping_fee: float = Field(default=0.0, ge=0.0)
     status: ProductStatus = ProductStatus.ACTIVE
 
+    @field_validator("images", mode="before")
+    @classmethod
+    def validate_merchandise_images(cls, v):
+        if v and isinstance(v, list):
+            for img in v:
+                if isinstance(img, str) and ("res.cloudinary.com/demo" in img.lower() or "cloudinary.com/demo" in img.lower()):
+                    raise ValueError("Fake demo Cloudinary URLs are strictly prohibited.")
+        return v
+
 class ProductUpdateReq(BaseModel):
     name: Optional[str] = None
     slug: Optional[str] = None
@@ -96,6 +105,15 @@ class ProductUpdateReq(BaseModel):
     requires_shipping: Optional[bool] = None
     shipping_fee: Optional[float] = Field(default=None, ge=0.0)
     status: Optional[ProductStatus] = None
+
+    @field_validator("images", mode="before")
+    @classmethod
+    def validate_merchandise_images(cls, v):
+        if v and isinstance(v, list):
+            for img in v:
+                if isinstance(img, str) and ("res.cloudinary.com/demo" in img.lower() or "cloudinary.com/demo" in img.lower()):
+                    raise ValueError("Fake demo Cloudinary URLs are strictly prohibited.")
+        return v
 
 # ──────────────────────────────────────────────────────────
 # Order Models

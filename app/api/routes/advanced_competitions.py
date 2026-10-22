@@ -13,8 +13,10 @@ from app.schemas.competition import RegistrationStatus, SubmissionStatus
 from app.services.payment import PaymentService
 from datetime import datetime, timezone
 import uuid
+import os
+import json
 
-from app.services.audio_validator import AudioValidator
+from app.services.audio_validator import AudioValidator, VIDEO_EXTENSIONS
 from app.services.cloudinary_srv import upload_image
 
 router = APIRouter()
@@ -252,30 +254,91 @@ async def submit_files(comp_id: str, files: list[UploadFile] = File(...), field_
     fields = comp.get("dynamic_submission_fields", [])
     expected_fields = [f["name"] for f in fields if f.get("required")]
     
-    provided_fields = [f.strip() for f in field_names.split(",")]
+    # Parse field_names (support both JSON array and comma-separated string)
+    raw_fn = field_names.strip()
+    if raw_fn.startswith("[") and raw_fn.endswith("]"):
+        try:
+            provided_fields = [str(x).strip() for x in json.loads(raw_fn)]
+        except Exception:
+            provided_fields = [f.strip() for f in raw_fn.split(",") if f.strip()]
+    else:
+        provided_fields = [f.strip() for f in raw_fn.split(",") if f.strip()]
     
-    missing = set(expected_fields) - set(provided_fields)
+    # Normalize legacy field naming variations if needed
+    normalized_expected = [
+        ef.replace("Video, Audio", "Video/Audio").replace("video,audio", "video/audio")
+        for ef in expected_fields
+    ]
+    normalized_provided = [
+        pf.replace("Video, Audio", "Video/Audio").replace("video,audio", "video/audio")
+        for pf in provided_fields
+    ]
+
+    missing = set(normalized_expected) - set(normalized_provided)
     if missing:
         raise HTTPException(status_code=400, detail=f"Missing required fields: {missing}")
         
     if len(files) != len(provided_fields):
         raise HTTPException(status_code=400, detail="Number of files does not match number of field names provided.")
         
-    # Process files: enforce strict audio validation for uploads & extract links (YouTube/Drive)
+    # Process files: enforce strict MP3 audio validation for uploads & YouTube-only links for videos
     uploaded_urls = {}
     for i, file_obj in enumerate(files):
         field_name = provided_fields[i]
+        norm_field_name = normalized_provided[i]
 
-        # 1. Check if submission is a YouTube / Google Drive / web link
+        field_cfg = next(
+            (f for f in fields if f.get("name") in (field_name, norm_field_name)),
+            {}
+        )
+        field_type = (field_cfg.get("type") or "").upper()
+        field_name_lower = norm_field_name.lower()
+
+        is_video_field = field_type == "VIDEO" or "video" in field_name_lower
+        is_audio_field = field_type == "AUDIO" or "audio" in field_name_lower
+        is_dual_field = is_video_field and is_audio_field
+
+        # 1. Check if submission is a web link (YouTube video link)
         link_url = await AudioValidator.validate_and_extract_link(file_obj, field_name)
         if link_url:
-            uploaded_urls[field_name] = link_url
-            continue
+            is_yt = AudioValidator.is_valid_youtube_url(link_url)
+            if is_yt:
+                # Valid YouTube link: stored directly in database!
+                uploaded_urls[norm_field_name] = link_url
+                continue
 
-        # 2. Strict audio file validation (extension, MIME, magic numbers)
-        await AudioValidator.validate_audio_file(file_obj, field_name)
+            # Link was provided, but is not a valid YouTube link
+            if is_video_field or is_dual_field:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"For video entries in '{field_name}', only valid YouTube links (e.g. https://www.youtube.com/watch?v=... or https://youtu.be/...) are accepted."
+                )
+            elif is_audio_field:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Audio field '{field_name}' requires an MP3 audio file (.mp3) upload, not a link."
+                )
+            else:
+                uploaded_urls[norm_field_name] = link_url
+                continue
 
-        # 3. Stream to Cloudinary
+        # 2. It is a binary file upload.
+        # Check if user tried to upload a direct video file:
+        filename_lower = (file_obj.filename or "").lower()
+        file_ext = os.path.splitext(filename_lower)[1]
+        ct = (file_obj.content_type or "").lower()
+
+        if file_ext in VIDEO_EXTENSIONS or ct.startswith("video/"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Direct video file uploads are not supported for '{field_name}'. Please provide a YouTube link instead."
+            )
+
+        # 3. For Audio or Dual Video/Audio fields: MUST be strictly MP3 audio file!
+        if is_audio_field or is_dual_field:
+            await AudioValidator.validate_mp3_file(file_obj, field_name)
+
+        # 4. Stream to Cloudinary (for MP3 audio files or other allowed attachments like images)
         await file_obj.seek(0)
         file_bytes = await file_obj.read()
         if not file_bytes:
@@ -295,7 +358,7 @@ async def submit_files(comp_id: str, files: list[UploadFile] = File(...), field_
                 detail=f"Failed to upload submission file for '{field_name}' to cloud storage. Please try again."
             )
 
-        uploaded_urls[field_name] = cloud_url
+        uploaded_urls[norm_field_name] = cloud_url
         
     doc = {
         "competition_id": comp_id,

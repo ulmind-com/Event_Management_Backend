@@ -86,7 +86,7 @@ async def test_audio_only_submission_validation():
             ]
         )
         assert r_bad_video.status_code == 400
-        assert "Only audio files" in r_bad_video.json()["detail"] or "Invalid file type" in r_bad_video.json()["detail"]
+        assert "Direct video file uploads are not supported" in r_bad_video.json()["detail"] or "Only audio files" in r_bad_video.json()["detail"]
 
         # 4. TEST REJECTION: Image file (.png)
         r_bad_png = await ac.post(
@@ -158,21 +158,57 @@ async def test_audio_only_submission_validation():
         # Clean submission for next test
         await db["competition_submissions"].delete_many({"user_email": "audio_test_user@example.com"})
 
-        # 9. TEST SUCCESS: Valid Audio File (.wav) + Google Drive Link
-        r_ok_drive = await ac.post(
+        # 9. TEST REJECTION: Non-MP3 Audio (.wav) is rejected (Strictly MP3-only policy)
+        r_bad_wav = await ac.post(
             f"/api/v1/competitions/{comp_id}/submissions",
             headers=user_headers,
             data={"field_names": "Audition Audio, Video Performance"},
             files=[
                 ("files", ("audition.wav", b"RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00", "audio/wav")),
-                ("files", ("video_link.txt", b"https://drive.google.com/file/d/1A2B3C4D/view?usp=sharing", "text/plain"))
+                ("files", ("video_link.txt", b"https://www.youtube.com/watch?v=dQw4w9WgXcQ", "text/plain"))
             ]
         )
-        assert r_ok_drive.status_code == 200, f"Drive submission failed: {r_ok_drive.text}"
-        data_drive = r_ok_drive.json()
-        assert data_drive["files"]["Video Performance"] == "https://drive.google.com/file/d/1A2B3C4D/view?usp=sharing"
-        assert "/demo/" not in data_drive["files"]["Audition Audio"], "Should never generate fake demo Cloudinary URL"
-        assert settings.CLOUDINARY_CLOUD_NAME in data_drive["files"]["Audition Audio"], "Must be stored in configured Cloudinary cloud"
+        assert r_bad_wav.status_code == 400
+        assert "Only MP3 audio files (.mp3) are permitted" in r_bad_wav.json()["detail"]
 
-        # 10. Clean up
+        # 10. TEST REJECTION: Non-YouTube Link (Google Drive) is rejected for video
+        r_bad_drive = await ac.post(
+            f"/api/v1/competitions/{comp_id}/submissions",
+            headers=user_headers,
+            data={"field_names": "Audition Audio, Video Performance"},
+            files=[
+                ("files", ("vocal.mp3", b"ID3\x03\x00\x00\x00\x00\x00\x00\x00real vocal bytes", "audio/mpeg")),
+                ("files", ("video_link.txt", b"https://drive.google.com/file/d/1A2B3C4D/view", "text/plain"))
+            ]
+        )
+        assert r_bad_drive.status_code == 400
+        assert "only valid YouTube links" in r_bad_drive.json()["detail"]
+
+        # 11. TEST REJECTION: Direct video upload (.mp4) is rejected
+        r_bad_mp4 = await ac.post(
+            f"/api/v1/competitions/{comp_id}/submissions",
+            headers=user_headers,
+            data={"field_names": "Audition Audio, Video Performance"},
+            files=[
+                ("files", ("vocal.mp3", b"ID3\x03\x00\x00\x00\x00\x00\x00\x00real vocal bytes", "audio/mpeg")),
+                ("files", ("clip.mp4", b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41", "video/mp4"))
+            ]
+        )
+        assert r_bad_mp4.status_code == 400
+        assert "Direct video file uploads are not supported" in r_bad_mp4.json()["detail"]
+
+        # 12. TEST SUCCESS: MP3 Audio + Short YouTube link (https://youtu.be/dQw4w9WgXcQ)
+        r_ok_short_yt = await ac.post(
+            f"/api/v1/competitions/{comp_id}/submissions",
+            headers=user_headers,
+            data={"field_names": "Audition Audio, Video Performance"},
+            files=[
+                ("files", ("vocal.mp3", b"ID3\x03\x00\x00\x00\x00\x00\x00\x00real vocal bytes", "audio/mpeg")),
+                ("files", ("video_link.txt", b"https://youtu.be/dQw4w9WgXcQ", "text/plain"))
+            ]
+        )
+        assert r_ok_short_yt.status_code == 200
+        assert r_ok_short_yt.json()["files"]["Video Performance"] == "https://youtu.be/dQw4w9WgXcQ"
+
+        # 13. Clean up
         await ac.delete(f"/api/admin/advanced-competitions/{comp_id}", headers=admin_headers)

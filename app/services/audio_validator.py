@@ -1,45 +1,22 @@
 import os
 import re
-from typing import Optional
+from typing import Optional, Tuple
 from fastapi import HTTPException, UploadFile
 
-ALLOWED_AUDIO_EXTENSIONS = {
-    ".mp3",
-    ".wav",
-    ".m4a",
-    ".aac",
-    ".flac",
-    ".ogg",
-    ".wma",
-    ".opus",
-    ".aiff",
-    ".alac",
-}
+ALLOWED_MP3_EXTENSIONS = {".mp3"}
 
-ALLOWED_AUDIO_MIMES = {
+ALLOWED_MP3_MIMES = {
     "audio/mpeg",
     "audio/mp3",
-    "audio/wav",
-    "audio/x-wav",
-    "audio/wave",
-    "audio/x-pn-wav",
-    "audio/aac",
-    "audio/x-aac",
-    "audio/mp4",
-    "audio/m4a",
-    "audio/x-m4a",
-    "audio/flac",
-    "audio/x-flac",
-    "audio/ogg",
-    "application/ogg",
-    "audio/opus",
-    "audio/wma",
-    "audio/x-ms-wma",
-    "audio/aiff",
-    "audio/x-aiff",
-    "audio/webm",
-    "application/octet-stream",  # Some browsers/OS send octet-stream for .wav or .m4a
+    "audio/x-mpeg",
+    "audio/x-mp3",
+    "application/octet-stream",  # Fallback for systems that treat mp3 as octet-stream
 }
+
+YOUTUBE_REGEX = re.compile(
+    r"^(https?://)?(www\.|m\.|music\.)?(youtube\.com/(watch\?v=|embed/|shorts/|v/)|youtu\.be/)([a-zA-Z0-9_-]{11})([?&][^\s]*)?$",
+    re.IGNORECASE,
+)
 
 URL_REGEX = re.compile(
     r"^https?://[^\s/$.?#].[^\s]*$",
@@ -58,12 +35,32 @@ FORBIDDEN_BINARY_SIGNATURES = [
     (b"PK\x03\x04", "ZIP or Office archive"),
 ]
 
+VIDEO_EXTENSIONS = {
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".mkv",
+    ".webm",
+    ".flv",
+    ".wmv",
+    ".m4v",
+    ".3gp",
+}
+
 
 class AudioValidator:
     @staticmethod
+    def is_valid_youtube_url(url: str) -> bool:
+        """Checks if a URL is a valid YouTube video link."""
+        if not url or not isinstance(url, str):
+            return False
+        clean = url.strip()
+        return bool(YOUTUBE_REGEX.match(clean))
+
+    @staticmethod
     async def validate_and_extract_link(file_obj: UploadFile, field_name: str) -> Optional[str]:
         """
-        Detects if this upload is a link reference (e.g. YouTube or Google Drive link).
+        Detects if this upload is a link reference (e.g. YouTube link).
         Returns the extracted URL if valid, or None if it is a regular binary file.
         Raises HTTPException if it is a text link file with an invalid URL.
         """
@@ -101,72 +98,83 @@ class AudioValidator:
         if filename.endswith("_link.txt") or filename.endswith(".link"):
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid link submitted for '{field_name}'. Must be a valid URL starting with http:// or https:// (e.g. YouTube or Google Drive).",
+                detail=f"Invalid link submitted for '{field_name}'. Must be a valid URL starting with http:// or https:// (e.g. YouTube video link).",
             )
 
         return None
 
-    @staticmethod
-    async def validate_audio_file(file_obj: UploadFile, field_name: str) -> None:
+    @classmethod
+    async def validate_mp3_file(cls, file_obj: UploadFile, field_name: str) -> None:
         """
-        Validates that the uploaded file is strictly an audio file:
-        1. Checks extension against allowed audio extensions.
-        2. Checks MIME type against audio mimes.
-        3. Inspects binary magic bytes to reject disguised non-audio files (images, PDFs, executables, video).
+        Validates that the uploaded file is strictly an MP3 audio file:
+        1. Checks extension against .mp3.
+        2. Checks MIME type against audio/mpeg.
+        3. Inspects binary magic bytes for ID3 tag or MPEG sync header.
         """
         filename = file_obj.filename or ""
         ext = os.path.splitext(filename)[1].lower()
 
-        if ext not in ALLOWED_AUDIO_EXTENSIONS:
-            allowed_list = ", ".join(sorted(ALLOWED_AUDIO_EXTENSIONS))
+        if ext != ".mp3":
             raise HTTPException(
                 status_code=400,
                 detail=(
                     f"Invalid file type '{ext or 'unknown'}' for '{field_name}'. "
-                    f"Only audio files ({allowed_list}) or YouTube/Google Drive links are accepted."
+                    f"Only MP3 audio files (.mp3) are permitted for audio submissions."
                 ),
             )
 
         # Check content type if specified
         if file_obj.content_type:
             ct = file_obj.content_type.lower()
-            if not (ct.startswith("audio/") or ct in ALLOWED_AUDIO_MIMES):
+            if ct not in ALLOWED_MP3_MIMES and not ct.startswith("audio/"):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Invalid content type '{file_obj.content_type}' for '{field_name}'. Expected an audio file.",
+                    detail=f"Invalid content type '{file_obj.content_type}' for '{field_name}'. Expected an MP3 audio file.",
                 )
 
         # Read first 512 bytes for magic byte verification
         header = await file_obj.read(512)
         await file_obj.seek(0)
 
+        if not header:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Uploaded file for '{field_name}' is empty.",
+            )
+
         # Reject known non-audio formats
         for sig, label in FORBIDDEN_BINARY_SIGNATURES:
             if header.startswith(sig):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Uploaded file for '{field_name}' is a {label}, not a supported audio file.",
+                    detail=f"Uploaded file for '{field_name}' is a {label}, not a supported MP3 audio file.",
                 )
 
-        # Specific check for RIFF AVI / WEBP
-        if header.startswith(b"RIFF") and len(header) >= 12:
-            fourcc = header[8:12]
-            if fourcc == b"WEBP":
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Uploaded file for '{field_name}' is a WebP image, not an audio file.",
-                )
-            if fourcc == b"AVI ":
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Uploaded file for '{field_name}' is an AVI video file, not an audio file.",
-                )
+        # Reject RIFF WAV / AVI / WEBP
+        if header.startswith(b"RIFF"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Uploaded file for '{field_name}' is a RIFF container (WAV/AVI), not an MP3 audio file. Only .mp3 is permitted.",
+            )
 
-        # Specific check for MP4 video container when not .m4a
-        if len(header) >= 12 and header[4:8] == b"ftyp":
-            brand = header[8:12]
-            if brand in (b"isom", b"mp41", b"avc1", b"qt  ") and ext not in (".m4a", ".aac"):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Uploaded file for '{field_name}' is a video container, not an audio file.",
-                )
+        # Reject MP4 / M4A / MOV video/audio container
+        if len(header) >= 8 and header[4:8] == b"ftyp":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Uploaded file for '{field_name}' is an MP4/M4A container, not an MP3 audio file. Only .mp3 is permitted.",
+            )
+
+        # Verify MP3 Header: Starts with ID3v2 tag or MPEG audio frame sync byte (0xFF)
+        has_id3 = header.startswith(b"ID3") or b"ID3" in header[:64]
+        has_mpeg_sync = len(header) >= 2 and header[0] == 0xFF and (header[1] & 0xE0) == 0xE0
+
+        if not (has_id3 or has_mpeg_sync):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Uploaded file for '{field_name}' does not contain valid MP3 audio stream headers.",
+            )
+
+    @classmethod
+    async def validate_audio_file(cls, file_obj: UploadFile, field_name: str) -> None:
+        """Backward-compatible alias for validate_mp3_file."""
+        await cls.validate_mp3_file(file_obj, field_name)

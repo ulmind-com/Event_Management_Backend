@@ -41,7 +41,11 @@ async def public_feedbacks(comp_id: str, submission_id: str):
     return feedbacks
 
 from app.api.deps import get_current_user
-from app.core.database import audience_vote_collection, competition_submission_collection
+from app.core.database import (
+    audience_vote_collection,
+    competition_submission_collection,
+    competition_registration_collection
+)
 from app.schemas.competition import VoteReq
 from datetime import datetime, timezone
 
@@ -68,28 +72,140 @@ async def get_live_voting(user: dict = Depends(get_current_user)):
 @router.post("/competitions/{comp_id}/vote")
 async def submit_audience_vote(comp_id: str, req: VoteReq, user: dict = Depends(get_current_user)):
     """Allows an authenticated user to submit a vote if voting is OPEN."""
-    comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
-    if not comp: raise HTTPException(status_code=404, detail="Competition not found")
+    comp = None
+    if ObjectId.is_valid(comp_id):
+        comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp:
+        comp = await competition_collection.find_one({"_id": comp_id})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
     
     if not comp.get("audience_voting_enabled"):
         raise HTTPException(status_code=400, detail="Audience voting is not enabled for this competition.")
         
     if comp.get("voting_status", "OPEN") != "OPEN":
         raise HTTPException(status_code=400, detail="Voting is currently closed.")
-        
-    # Check if participant is a valid approved contestant
+
+    comp_id_str = str(comp["_id"])
+    comp_id_match = [comp_id_str, comp_id]
+    if ObjectId.is_valid(comp_id_str):
+        comp_id_match.append(ObjectId(comp_id_str))
+
+    voter_email = (user.get("email") or "").strip().lower()
+    if not voter_email:
+        raise HTTPException(status_code=401, detail="Voter email not found in session.")
+    voter_user_id = str(user.get("_id") or "").strip()
+
+    req_participant_id = (req.participant_id or "").strip()
+    if not req_participant_id:
+        raise HTTPException(status_code=400, detail="Participant ID is required.")
+
+    # Look up target contestant / submission
+    sub_conditions = [
+        {"user_email": req_participant_id},
+        {"_id": req_participant_id}
+    ]
+    if ObjectId.is_valid(req_participant_id):
+        sub_conditions.append({"_id": ObjectId(req_participant_id)})
+
     submission = await competition_submission_collection.find_one({
-        "competition_id": comp_id, 
-        "user_email": req.participant_id, 
-        "status": {"$in": ["APPROVED", "SUBMITTED"]}
+        "competition_id": {"$in": comp_id_match}, 
+        "$or": sub_conditions,
+        "status": {"$in": ["APPROVED", "SUBMITTED", "PENDING", "COMPLETED"]}
     })
+
+    registration = None
     if not submission:
+        reg_conditions = [
+            {"user_email": req_participant_id},
+            {"email": req_participant_id},
+            {"_id": req_participant_id}
+        ]
+        if ObjectId.is_valid(req_participant_id):
+            reg_conditions.append({"_id": ObjectId(req_participant_id)})
+
+        registration = await competition_registration_collection.find_one({
+            "competition_id": {"$in": comp_id_match},
+            "$or": reg_conditions
+        })
+
+    if not submission and not registration:
         raise HTTPException(status_code=400, detail="Participant is not an eligible contestant.")
-        
-    # Prevent duplicate voting if required (e.g. 1 vote per user per contestant)
+
+    # Target contestant info
+    target_email = ""
+    target_user_id = ""
+    if submission:
+        target_email = (submission.get("user_email") or "").strip().lower()
+        target_user_id = str(submission.get("user_id") or "").strip()
+    elif registration:
+        target_email = (registration.get("user_email") or registration.get("email") or "").strip().lower()
+        target_user_id = str(registration.get("user_id") or "").strip()
+
+    # ── Rule 1: Self-Voting Prevention ──
+    # Contestants are strictly forbidden from voting for their own submission
+    is_self_vote = False
+    if target_email and target_email == voter_email:
+        is_self_vote = True
+    elif req_participant_id.lower() == voter_email:
+        is_self_vote = True
+    elif target_user_id and voter_user_id and target_user_id == voter_user_id:
+        is_self_vote = True
+
+    if is_self_vote:
+        raise HTTPException(
+            status_code=400,
+            detail="Contestants cannot vote for their own submission."
+        )
+
+    # ── Rule 2: Competition Participant Prevention ──
+    # A registered participant in this competition cannot cast audience votes
+    voter_has_sub = await competition_submission_collection.find_one({
+        "competition_id": {"$in": comp_id_match},
+        "user_email": voter_email
+    })
+
+    voter_has_reg = None
+    if not voter_has_sub:
+        voter_has_reg = await competition_registration_collection.find_one({
+            "competition_id": {"$in": comp_id_match},
+            "$or": [
+                {"user_email": voter_email},
+                {"email": voter_email}
+            ]
+        })
+
+    if not voter_has_sub and not voter_has_reg:
+        from app.core.database import registration_collection
+        voter_has_legacy = await registration_collection.find_one({
+            "activity_id": {"$in": comp_id_match},
+            "email": voter_email,
+            "activity_type": "competition"
+        })
+        if voter_has_legacy:
+            voter_has_reg = voter_has_legacy
+
+    if voter_has_sub or voter_has_reg:
+        raise HTTPException(
+            status_code=400,
+            detail="Participants of this competition are not eligible to vote. Audience voting is restricted to audience members and fans."
+        )
+
+    # ── Rule 3: Prevent duplicate voting (1 vote per user per contestant) ──
+    canonical_pid = target_email or req_participant_id
+    sub_id_str = str(submission["_id"]) if submission else None
+
+    dup_filters = [
+        {"participant_id": req_participant_id},
+        {"participant_id": canonical_pid}
+    ]
+    if sub_id_str:
+        dup_filters.append({"participant_id": sub_id_str})
+        dup_filters.append({"submission_id": sub_id_str})
+
     existing_vote = await audience_vote_collection.find_one({
-        "competition_id": comp_id,
-        "participant_id": req.participant_id,
+        "competition_id": {"$in": comp_id_match},
+        "$or": dup_filters,
         "voter_email": user["email"]
     })
     if existing_vote:
@@ -101,14 +217,6 @@ async def submit_audience_vote(comp_id: str, req: VoteReq, user: dict = Depends(
     if getattr(req, "is_paid_pack", False):
         if not req.payment_reference:
             raise HTTPException(status_code=400, detail="Payment reference is required for paid vote packs.")
-        
-        # Payment Gateway Placeholder Integration
-        from app.services.payment import PaymentService
-        # TODO: Uncomment this when payment gateway is implemented!
-        # is_valid = await PaymentService.verify_payment(req.payment_reference)
-        # if not is_valid:
-        #     raise HTTPException(status_code=400, detail="Invalid or unverified payment.")
-            
         voting_power = v_settings.get("voting_power_paid", 10)
     elif getattr(req, "source", "WEBSITE") == "MOBILE_APP":
         voting_power = v_settings.get("voting_power_mobile", 5)
@@ -116,8 +224,9 @@ async def submit_audience_vote(comp_id: str, req: VoteReq, user: dict = Depends(
         voting_power = v_settings.get("voting_power_website", 1)
 
     vote_doc = {
-        "competition_id": comp_id,
-        "participant_id": req.participant_id,
+        "competition_id": comp_id_str,
+        "participant_id": canonical_pid,
+        "submission_id": sub_id_str,
         "voter_email": user["email"],
         "source": getattr(req, "source", "WEBSITE"),
         "is_paid_pack": getattr(req, "is_paid_pack", False),
@@ -126,9 +235,8 @@ async def submit_audience_vote(comp_id: str, req: VoteReq, user: dict = Depends(
     }
     await audience_vote_collection.insert_one(vote_doc)
     
-    # In a real system, you'd emit a WS message here to update the leaderboard
     from app.core.websocket import ws_manager
-    await ws_manager.broadcast_to_competition(comp_id, {"type": "LEADERBOARD_UPDATED"})
+    await ws_manager.broadcast_to_competition(comp_id_str, {"type": "LEADERBOARD_UPDATED"})
     
     return {"message": "Vote submitted successfully"}
 
@@ -214,8 +322,9 @@ async def provisional_leaderboard(comp_id: str):
         vote_match = [{"participant_id": email}]
         if sub_id:
             vote_match.append({"participant_id": sub_id})
+            vote_match.append({"submission_id": sub_id})
         pipeline = [
-            {"$match": {"competition_id": comp_id, "$or": vote_match}},
+            {"$match": {"competition_id": {"$in": [comp_id, str(comp_id)]}, "$or": vote_match}},
             {"$group": {"_id": None, "total": {"$sum": "$voting_power"}}}
         ]
         agg_res = await audience_vote_collection.aggregate(pipeline).to_list(1)

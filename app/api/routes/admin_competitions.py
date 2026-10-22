@@ -547,9 +547,14 @@ async def start_finalization(comp_id: str, admin: dict = Depends(get_current_adm
     max_audience_votes = 0
     for sub in submissions:
         user_email = sub["user_email"]
+        sub_id = str(sub.get("_id", ""))
+        vote_match = [{"participant_id": user_email}]
+        if sub_id:
+            vote_match.append({"participant_id": sub_id})
+            vote_match.append({"submission_id": sub_id})
         # Sum voting power
         pipeline = [
-            {"$match": {"competition_id": comp_id, "participant_id": user_email}},
+            {"$match": {"competition_id": {"$in": [comp_id, str(comp_id)]}, "$or": vote_match}},
             {"$group": {"_id": None, "total": {"$sum": "$voting_power"}}}
         ]
         agg_res = await audience_vote_collection.aggregate(pipeline).to_list(1)

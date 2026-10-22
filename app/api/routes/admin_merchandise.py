@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
+from fastapi.responses import Response
 from typing import List, Optional, Dict, Any
 
 from app.core.admin_auth import get_current_admin
@@ -12,8 +13,10 @@ from app.schemas.merchandise import (
 )
 from app.services.merchandise_service import MerchandiseService, serialize_mongo
 from app.services.cloudinary_srv import upload_image
+from app.services.order_pdf_service import OrderPDFService
 
 router = APIRouter()
+
 
 # ──────────────────────────────────────────────────────────
 # Super Admin Product Management
@@ -140,7 +143,36 @@ async def get_admin_order_detail(
         raise HTTPException(status_code=404, detail="Order not found.")
     return serialize_mongo(order)
 
+@router.get("/orders/{order_id}/invoice")
+@router.get("/orders/{order_id}/pdf")
+@router.get("/orders/{order_id}/receipt")
+async def download_admin_order_invoice(
+    order_id: str,
+    download: bool = Query(False, description="Whether to force attachment download"),
+    admin: dict = Depends(get_current_admin)
+):
+    """Super Admin downloads or previews the official Tax Invoice / Receipt PDF for any order."""
+    o_oid = MerchandiseService._to_object_id(order_id)
+    query = {"$or": [{"_id": o_oid}, {"_id": order_id}, {"order_number": order_id}]} if o_oid else {"$or": [{"_id": order_id}, {"order_number": order_id}]}
+    order = await merchandise_order_collection.find_one(query)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found.")
+
+    pdf_bytes = OrderPDFService.generate_order_invoice_pdf(order)
+    order_number = order.get("order_number", "order")
+    disposition = "attachment" if download else "inline"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'{disposition}; filename="Order_Invoice_{order_number}.pdf"',
+            "Content-Type": "application/pdf"
+        }
+    )
+
 @router.patch("/orders/{order_id}/status", response_model=Dict[str, Any])
+
 async def update_order_fulfillment_status(
     order_id: str,
     req: OrderFulfillmentUpdateReq,

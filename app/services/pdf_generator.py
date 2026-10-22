@@ -1,4 +1,4 @@
-﻿from io import BytesIO
+from io import BytesIO
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -45,8 +45,11 @@ class PDFGenerator:
                 p.get("status", "N/A")
             ])
             
+        if len(data) == 1:
+            data.append(["-", "No registered participants found", "-", "-", "-"])
+
         # Create Table
-        # Column widths: 50, 150, 200, 150, 100
+        # Column widths: 50, 180, 220, 120, 100
         t = Table(data, colWidths=[50, 180, 220, 120, 100])
         
         # Add Style
@@ -72,6 +75,12 @@ class PDFGenerator:
         pdf_bytes = buffer.getvalue()
         buffer.close()
         return pdf_bytes
+
+    @staticmethod
+    def generate_order_invoice_pdf(order: dict) -> bytes:
+        from app.services.order_pdf_service import OrderPDFService
+        return OrderPDFService.generate_order_invoice_pdf(order)
+
 
     @staticmethod
     def generate_course_registrations_pdf(comp: dict, docs: list) -> bytes:

@@ -1,5 +1,7 @@
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
+
 from typing import List, Optional, Dict, Any
 
 from app.api.deps import get_current_user
@@ -9,6 +11,8 @@ from app.schemas.merchandise import (
     MerchandiseCategory
 )
 from app.services.merchandise_service import MerchandiseService, serialize_mongo
+from app.services.order_pdf_service import OrderPDFService
+
 
 router = APIRouter()
 
@@ -121,6 +125,47 @@ async def get_my_merchandise_order_tracking(
         "tracking_number": order.get("tracking_number"),
         "timeline": order.get("status_history", [])
     })
+
+
+@router.get("/orders/{order_id}/invoice")
+@router.get("/orders/{order_id}/pdf")
+@router.get("/orders/{order_id}/receipt")
+@router.get("/orders/{order_id}/download")
+async def download_my_merchandise_order_invoice(
+    order_id: str,
+    token: Optional[str] = Query(None, description="Optional JWT token for direct browser link downloads"),
+    download: bool = Query(False, description="Whether to force attachment download"),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Downloads or previews the authoritative Tax Invoice / Order Receipt PDF.
+    Generates a high-quality PDF containing complete customer details, item breakdown,
+    payment reference, fulfillment status, and live tracking QR code.
+    """
+    email = current_user.get("email")
+    o_oid = MerchandiseService._to_object_id(order_id)
+    if current_user.get("role") == "super_admin":
+        query = {"$or": [{"_id": o_oid}, {"_id": order_id}, {"order_number": order_id}]} if o_oid else {"$or": [{"_id": order_id}, {"order_number": order_id}]}
+    else:
+        query = {"user_email": email, "$or": [{"_id": o_oid}, {"_id": order_id}, {"order_number": order_id}]} if o_oid else {"user_email": email, "$or": [{"_id": order_id}, {"order_number": order_id}]}
+
+    order = await merchandise_order_collection.find_one(query)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found or unauthorized.")
+
+    pdf_bytes = OrderPDFService.generate_order_invoice_pdf(order)
+    order_number = order.get("order_number", "order")
+    disposition = "attachment" if download else "inline"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'{disposition}; filename="Order_Invoice_{order_number}.pdf"',
+            "Content-Type": "application/pdf"
+        }
+    )
+
 
 
 class MerchandisePaymentVerifyReq(BaseModel):

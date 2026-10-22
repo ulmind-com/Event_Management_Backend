@@ -483,12 +483,19 @@ async def export_participants_pdf(comp_id: str, admin: dict = Depends(get_curren
     # Fetch user details
     participants_data = []
     for sub in submissions:
-        user = await user_collection.find_one({"email": sub["user_email"]})
+        user = await user_collection.find_one({"email": sub.get("user_email")}) if sub.get("user_email") else None
         if user:
             participants_data.append({
-                "name": user.get("name", "Unknown"),
+                "name": user.get("name") or user.get("full_name") or "Participant",
                 "email": user.get("email", ""),
-                "phone": user.get("phone_number", ""),
+                "phone": user.get("phone_number") or user.get("phone") or "N/A",
+                "status": sub.get("status", "")
+            })
+        else:
+            participants_data.append({
+                "name": sub.get("participant_name") or sub.get("name") or sub.get("user_email") or "Participant",
+                "email": sub.get("user_email", ""),
+                "phone": sub.get("phone_number") or sub.get("phone") or "N/A",
                 "status": sub.get("status", "")
             })
             

@@ -1,4 +1,4 @@
-﻿import resend
+import resend
 from app.core.config import settings
 import logging
 
@@ -27,7 +27,7 @@ class EmailService:
             'from': f'Eventora <{settings.MAIL_ADDRESS}>',
             'to': [email],
             'subject': 'Welcome to Eventora Judges Panel',
-            'html': f'<strong>Hello {name},</strong><br><br>Congratulations! You have been officially appointed as a Judge for Eventora competitions.<br><br>You can now access your private judges panel by logging into our website at <a href="{login_url}">Eventora Login</a>.<br><br><b>How to login:</b><br>1. Enter this email address ({email}).<br>2. You will receive a secure OTP.<br>3. Enter the OTP to access your assigned competitions and start scoring.<br><br>Thank you!',
+            'html': f'<strong>Hello {name},</strong><br><br>Congratulations! You have been officially appointed as a Judge for Eventora competitions.<br><br>You can now access your private judges panel by logging into our website at <a href="{login_url}">Eventora Login</a>.<br><br><b>How to login:</b><br>1. Enter this email address ({email}).<br>2. You will receive a secure OTP for your first login.<br>3. Enter the OTP to log in.<br>4. Set your permanent password so that you can directly log in with Email and Password next time.<br><br>Thank you!',
         }
         try:
             resend.Emails.send(params)
@@ -44,7 +44,7 @@ class EmailService:
             'from': f'Eventora <{settings.MAIL_ADDRESS}>',
             'to': [email],
             'subject': 'You have been added as a Volunteer (Ticket Scanner)',
-            'html': f'<strong>Hello,</strong><br><br>You have been assigned as a Volunteer for Eventora!<br><br>Your primary role is to scan and verify attendee tickets at the entrance.<br><br><b>How to login:</b><br>1. Go to <a href="{login_url}">Volunteer Login</a>.<br>2. Enter your email ({email}).<br>3. You will receive a secure OTP to log in.<br>4. Once logged in, your device camera will turn on to scan tickets.<br><br>Thank you!',
+            'html': f'<strong>Hello,</strong><br><br>You have been assigned as a Volunteer for Eventora!<br><br>Your primary role is to scan and verify attendee tickets at the entrance.<br><br><b>How to login:</b><br>1. Go to <a href="{login_url}">Volunteer Login</a>.<br>2. Enter your email ({email}).<br>3. You will receive a secure OTP for your first login.<br>4. Enter the OTP and set your permanent password so that you can directly log in with Email and Password next time.<br><br>Thank you!',
         }
         try:
             resend.Emails.send(params)

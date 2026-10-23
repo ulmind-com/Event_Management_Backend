@@ -4,8 +4,15 @@ from httpx import AsyncClient, ASGITransport
 from datetime import datetime, timezone
 
 from app.main import app
-from app.core.database import user_collection, otp_collection, admin_collection
+from app.core.database import (
+    user_collection,
+    otp_collection,
+    admin_collection,
+    issued_ticket_collection,
+    booking_collection,
+)
 from app.core.security import create_access_token
+from app.services.ticket import TicketService
 
 
 @pytest.mark.asyncio
@@ -209,3 +216,118 @@ async def test_full_admin_invitation_to_volunteer_password_flow():
     await user_collection.delete_many({"email": volunteer_email})
     await admin_collection.delete_many({"email": admin_email})
     await otp_collection.delete_many({"email": volunteer_email})
+
+
+@pytest.mark.asyncio
+async def test_volunteer_gate_ticket_checkin():
+    unique_id = str(ObjectId())
+    volunteer_email = f"gate_scanner_{unique_id}@eventora.com"
+    ticket_ref = f"TCK-{unique_id[:8]}"
+    booking_ref = f"BKG-{unique_id[:8]}"
+
+    # 1. Setup Volunteer with set password
+    await user_collection.delete_many({"email": volunteer_email})
+    await issued_ticket_collection.delete_many({"ticket_ref": ticket_ref})
+    await booking_collection.delete_many({"booking_reference": booking_ref})
+
+    from app.core.security import get_password_hash
+    await user_collection.insert_one({
+        "email": volunteer_email,
+        "role": "VOLUNTEER",
+        "registration_complete": True,
+        "has_password": True,
+        "password_hash": get_password_hash("ScannerPassword123!"),
+        "created_at": datetime.now(timezone.utc),
+    })
+
+    # 2. Setup Issued Ticket & Booking in DB
+    booking_res = await booking_collection.insert_one({
+        "booking_reference": booking_ref,
+        "booking_status": "CONFIRMED",
+        "created_at": datetime.now(timezone.utc),
+    })
+    booking_id = str(booking_res.inserted_id)
+
+    qr_token = TicketService.generate_qr_token(ticket_ref, booking_ref)
+    await issued_ticket_collection.insert_one({
+        "ticket_ref": ticket_ref,
+        "booking_id": booking_id,
+        "booking_reference": booking_ref,
+        "holder_name": "Arijit Das",
+        "holder_email": "attendee@test.com",
+        "is_checked_in": False,
+        "check_in_time": None,
+        "qr_token": qr_token,
+    })
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 3. Volunteer logs in directly with Email + Password
+        res_login = await client.post("/api/volunteer/auth/login/password", json={
+            "email": volunteer_email,
+            "password": "ScannerPassword123!"
+        })
+        assert res_login.status_code == 200
+        vol_token = res_login.json()["access_token"]
+        vol_headers = {"Authorization": f"Bearer {vol_token}"}
+
+        # 4. Verify QR ticket through /volunteer/tickets/verify
+        res_verify = await client.post(
+            "/api/volunteer/tickets/verify",
+            json={"qr_token": qr_token},
+            headers=vol_headers
+        )
+        assert res_verify.status_code == 200
+        verify_data = res_verify.json()
+        assert verify_data["is_valid"] is True
+        assert verify_data["ticket"]["ticket_ref"] == ticket_ref
+        assert verify_data["ticket"]["holder_name"] == "Arijit Das"
+        assert verify_data["ticket"]["is_checked_in"] is False
+
+        # 5. Check in the ticket through /volunteer/tickets/check-in
+        res_checkin = await client.post(
+            "/api/volunteer/tickets/check-in",
+            json={"qr_token": qr_token},
+            headers=vol_headers
+        )
+        assert res_checkin.status_code == 200
+        assert res_checkin.json()["ticket_ref"] == ticket_ref
+        assert "Successfully checked in" in res_checkin.json()["message"]
+
+        # Verify DB updated
+        t_db = await issued_ticket_collection.find_one({"ticket_ref": ticket_ref})
+        assert t_db["is_checked_in"] is True
+        assert t_db["scanned_by"] == volunteer_email
+        assert t_db["check_in_time"] is not None
+
+        # 6. Duplicate check-in must be rejected
+        res_dup = await client.post(
+            "/api/volunteer/tickets/check-in",
+            json={"qr_token": qr_token},
+            headers=vol_headers
+        )
+        assert res_dup.status_code == 400
+        assert "already been checked in" in res_dup.json()["detail"]
+
+        # 7. Also verify via /admin/tickets/check-in endpoint
+        res_admin_alias = await client.post(
+            "/api/admin/tickets/check-in",
+            json={"qr_token": qr_token},
+            headers=vol_headers
+        )
+        assert res_admin_alias.status_code == 400  # already checked in
+
+        # 8. Regular USER token cannot access scanner endpoints
+        user_token = create_access_token({"sub": "random_user@test.com", "type": "user"})
+        res_unauthorized = await client.post(
+            "/api/volunteer/tickets/verify",
+            json={"qr_token": qr_token},
+            headers={"Authorization": f"Bearer {user_token}"}
+        )
+        assert res_unauthorized.status_code == 403
+
+    # Clean up
+    await user_collection.delete_many({"email": volunteer_email})
+    await issued_ticket_collection.delete_many({"ticket_ref": ticket_ref})
+    await booking_collection.delete_many({"booking_reference": booking_ref})
+

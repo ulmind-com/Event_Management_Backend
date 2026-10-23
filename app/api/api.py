@@ -38,6 +38,7 @@ api_router.include_router(advanced_competitions.router, tags=["advanced-competit
 api_router.include_router(judge_auth.router, prefix="/judge/auth", tags=["judge-auth"])
 api_router.include_router(judge_competitions.router, prefix="/judge", tags=["judge-competitions"])
 api_router.include_router(volunteer_auth.router, prefix="/volunteer/auth", tags=["volunteer-auth"])
+api_router.include_router(admin_checkin.router, prefix="/volunteer/tickets", tags=["volunteer-checkin"])
 
 # ── Admin APIs ──
 api_router.include_router(admin_auth.router, prefix="/admin", tags=["admin-auth"])

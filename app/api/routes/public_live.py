@@ -104,12 +104,11 @@ def _add_competition_live_status(comp: dict, now: datetime) -> dict:
 
 @router.get(
     "/live/feed",
-    summary="Live Feed – Events & Competitions",
+    summary="Live Feed - Events & Competitions",
     description=(
         "Returns a combined feed of all currently-live broadcast events and "
         "all currently-running competitions. No authentication required."
     ),
-    tags=["public-live"],
     response_description="Combined live events and competitions feed.",
 )
 async def get_live_feed():
@@ -175,7 +174,6 @@ async def get_live_feed():
     "/live/events",
     summary="Live Broadcast Events",
     description="Returns only currently-live broadcast / streaming events.",
-    tags=["public-live"],
 )
 async def get_live_events_only(
     skip: int = Query(0, ge=0, description="Number of items to skip"),
@@ -225,9 +223,8 @@ async def get_live_events_only(
     summary="Live Competitions",
     description=(
         "Returns only currently-running competitions "
-        "(start_date ≤ now ≤ end_date, published)."
+        "(start_date <= now <= end_date, published)."
     ),
-    tags=["public-live"],
 )
 async def get_live_competitions_only(
     category: Optional[str] = Query(None, description="Filter by category"),
@@ -297,7 +294,6 @@ async def get_live_competitions_only(
     "/live/competitions/{comp_id}",
     summary="Live Competition Detail",
     description="Returns full detail for a single live competition with live stats.",
-    tags=["public-live"],
 )
 async def get_live_competition_detail(comp_id: str):
     """
@@ -375,7 +371,6 @@ async def get_live_competition_detail(comp_id: str):
     "/live/events/{event_id}",
     summary="Live Event Detail",
     description="Returns full detail for a single live broadcast event.",
-    tags=["public-live"],
 )
 async def get_live_event_detail(event_id: str):
     """
@@ -410,7 +405,6 @@ async def get_live_event_detail(event_id: str):
         "Returns quick counts of currently-live events and competitions. "
         "Useful for badges, indicators, and real-time counters on the frontend."
     ),
-    tags=["public-live"],
 )
 async def get_live_summary():
     """

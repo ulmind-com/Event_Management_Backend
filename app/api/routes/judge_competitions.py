@@ -4,6 +4,7 @@ from app.api.deps import get_current_user
 from app.core.database import (
     competition_collection,
     competition_submission_collection,
+    competition_registration_collection,
     judge_score_collection,
     judge_assignment_collection,
     judging_session_collection,
@@ -68,14 +69,55 @@ async def list_assigned_competitions(judge: dict = Depends(get_current_judge)):
         c["_id"] = str(c["_id"])
     return comps
 
+def extract_submission_url(sub: dict) -> str:
+    """Extracts a valid previewable or downloadable URL from submission data."""
+    # 1. Direct fields
+    for k in ["submission_url", "media_url", "file_url", "url", "link"]:
+        val = sub.get(k)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+
+    # 2. In files dict, list, or str
+    files = sub.get("files")
+    if isinstance(files, str) and files.strip():
+        return files.strip()
+    elif isinstance(files, dict):
+        for key in ["submission_file", "file", "url", "submission_url", "video", "audio", "document"]:
+            val = files.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        for val in files.values():
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+    elif isinstance(files, (list, tuple)) and files:
+        first = files[0]
+        if isinstance(first, str) and first.strip():
+            return first.strip()
+        elif isinstance(first, dict):
+            for val in first.values():
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
+    return ""
+
+
 @router.get("/{comp_id}/contestants")
 async def list_contestants(comp_id: str, judge: dict = Depends(get_current_judge)):
-    """Returns approved submissions for this competition with scoring status."""
+    """
+    Returns approved submissions for this competition with scoring status and enriched contestant profiles:
+    - User Table Join: full_name, profile_photo / avatar
+    - Registration Table Join: registration_reference (CRG-xxxxx), participant name, phone
+    - Formatted submission_url & media_url for instant preview
+    """
     await verify_judge_assignment(judge["email"], comp_id)
-    subs = await competition_submission_collection.find({
-        "competition_id": comp_id,
+
+    sub_query = {
+        "$or": [{"competition_id": str(comp_id)}],
         "status": {"$in": [SubmissionStatus.SUBMITTED.value, SubmissionStatus.APPROVED.value, "Scored"]}
-    }).to_list(length=1000)
+    }
+    if ObjectId.is_valid(comp_id):
+        sub_query["$or"].append({"competition_id": ObjectId(comp_id)})
+
+    subs = await competition_submission_collection.find(sub_query).to_list(length=1000)
 
     # Fetch all scores submitted by this judge for this competition
     existing_scores = await judge_score_collection.find({
@@ -106,30 +148,110 @@ async def list_contestants(comp_id: str, judge: dict = Depends(get_current_judge
     }).to_list(length=1000)
     draft_set = {str(d["submission_id"]) for d in drafts if d.get("submission_id")}
 
-    # Populate missing contestant names in batch from user_collection
-    missing_emails = [
-        s.get("user_email") for s in subs
-        if not s.get("user_name") and s.get("user_email")
-    ]
-    name_map = {}
-    if missing_emails:
+    # Collect all emails for batch joins
+    all_emails = list({
+        (s.get("user_email") or "").strip().lower()
+        for s in subs if s.get("user_email")
+    })
+
+    # Batch Join 1: user_collection (name, full_name, profile_photo, phone)
+    user_map = {}
+    if all_emails:
         try:
             users = await user_collection.find(
-                {"email": {"$in": missing_emails}},
-                {"email": 1, "name": 1}
-            ).to_list(length=len(missing_emails))
+                {"email": {"$in": all_emails}},
+                {"email": 1, "name": 1, "full_name": 1, "profile_photo": 1, "photo_url": 1, "avatar": 1, "phone": 1, "phone_number": 1}
+            ).to_list(length=len(all_emails) * 2)
             for u in users:
-                name_map[u.get("email")] = u.get("name")
+                em = (u.get("email") or "").strip().lower()
+                if em:
+                    user_map[em] = u
+        except Exception:
+            pass
+
+    # Batch Join 2: competition_registration_collection (registration_reference CRG-xxxxx, participant name, phone)
+    reg_map = {}
+    if all_emails:
+        try:
+            reg_query = {
+                "user_email": {"$in": all_emails},
+                "$or": [{"competition_id": str(comp_id)}]
+            }
+            if ObjectId.is_valid(comp_id):
+                reg_query["$or"].append({"competition_id": ObjectId(comp_id)})
+            regs = await competition_registration_collection.find(reg_query).to_list(length=len(all_emails) * 2)
+            for r in regs:
+                em = (r.get("user_email") or "").strip().lower()
+                if em:
+                    reg_map[em] = r
         except Exception:
             pass
 
     for s in subs:
         sid = str(s["_id"])
         s["_id"] = sid
-        u_email = (s.get("user_email") or "").lower().strip()
-        if not s.get("user_name") and u_email in name_map:
-            s["user_name"] = name_map[u_email]
+        u_email = (s.get("user_email") or "").strip().lower()
+        u_info = user_map.get(u_email, {})
+        r_info = reg_map.get(u_email, {})
 
+        # 1. Resolve User Name / Full Name
+        real_name = (
+            s.get("user_name")
+            or r_info.get("user_name")
+            or u_info.get("full_name")
+            or u_info.get("name")
+            or r_info.get("participant_name")
+            or (u_email.split("@")[0] if u_email else "Contestant")
+        )
+        s["user_name"] = real_name
+        s["full_name"] = real_name
+        s["name"] = real_name
+
+        # 2. Resolve Profile Photo / Avatar
+        photo = (
+            u_info.get("profile_photo")
+            or u_info.get("photo_url")
+            or u_info.get("avatar")
+            or r_info.get("profile_photo")
+            or s.get("profile_photo")
+            or ""
+        )
+        s["profile_photo"] = photo
+        s["avatar"] = photo
+        s["user_photo"] = photo
+
+        # 3. Resolve Registration Reference (CRG-xxxxx) & Phone
+        reg_ref = (
+            r_info.get("registration_reference")
+            or r_info.get("registration_number")
+            or s.get("registration_reference")
+            or s.get("registration_number")
+            or ""
+        )
+        s["registration_number"] = reg_ref
+        s["registration_reference"] = reg_ref
+        s["reg_no"] = reg_ref
+
+        phone = (
+            r_info.get("user_phone")
+            or u_info.get("phone_number")
+            or u_info.get("phone")
+            or s.get("user_phone")
+            or ""
+        )
+        s["user_phone"] = phone
+        s["phone"] = phone
+
+        # 4. Resolve submission_url and media_url
+        sub_url = extract_submission_url(s)
+        s["submission_url"] = sub_url
+        s["media_url"] = sub_url
+
+        # Format title and description
+        s["title"] = s.get("title") or r_info.get("entry_title") or s.get("submission_title") or "Contestant Entry"
+        s["description"] = s.get("description") or ""
+
+        # Status & Scores
         sc = score_by_sub.get(sid) or (score_by_user.get(u_email) if u_email else None)
         if sc:
             s["is_scored"] = True
@@ -493,18 +615,22 @@ async def my_progress(comp_id: str, judge: dict = Depends(get_current_judge)):
     """Shows this judge how many contestants they have scored, skipped, or have pending."""
     await verify_judge_assignment(judge["email"], comp_id)
 
-    total_subs = await competition_submission_collection.count_documents({
-        "competition_id": comp_id,
-        "status": {"$in": [SubmissionStatus.SUBMITTED.value, SubmissionStatus.APPROVED.value]}
-    })
+    sub_query = {
+        "$or": [{"competition_id": str(comp_id)}],
+        "status": {"$in": [SubmissionStatus.SUBMITTED.value, SubmissionStatus.APPROVED.value, "Scored"]}
+    }
+    if ObjectId.is_valid(comp_id):
+        sub_query["$or"].append({"competition_id": ObjectId(comp_id)})
+
+    total_subs = await competition_submission_collection.count_documents(sub_query)
     scored = await judge_score_collection.count_documents({
-        "competition_id": comp_id, "judge_email": judge["email"]
+        "competition_id": str(comp_id), "judge_email": judge["email"]
     })
     skipped = await coi_skip_collection.count_documents({
-        "competition_id": comp_id, "judge_email": judge["email"]
+        "competition_id": str(comp_id), "judge_email": judge["email"]
     })
     drafts = await draft_score_collection.count_documents({
-        "competition_id": comp_id, "judge_email": judge["email"]
+        "competition_id": str(comp_id), "judge_email": judge["email"]
     })
 
     return {
@@ -512,6 +638,6 @@ async def my_progress(comp_id: str, judge: dict = Depends(get_current_judge)):
         "scored": scored,
         "skipped_coi": skipped,
         "drafts_in_progress": drafts,
-        "pending": total_subs - scored - skipped,
+        "pending": max(0, total_subs - scored - skipped),
         "completion_pct": round((scored + skipped) / total_subs * 100, 1) if total_subs > 0 else 0
     }

@@ -5,7 +5,7 @@ from app.api.routes import (
     admin_courses, admin_workshops, admin_users, admin_referrals, admin_certificates,
     admin_badges, public_certificates, user_certificates,
     advanced_competitions, judge_competitions, admin_judges, ws_live,
-    public_competitions, judge_auth, admin_volunteers, volunteer_auth,
+    public_competitions, public_live, judge_auth, admin_volunteers, volunteer_auth,
     admin_vip, user_vip, vip_webhooks,
     admin_merchandise, user_merchandise, merchandise_webhooks,
     notifications, admin_notifications, notification_ws,
@@ -62,6 +62,8 @@ api_router.include_router(admin_analytics.router, prefix="/admin/analytics", tag
 api_router.include_router(public.router, prefix="/v1", tags=["public"])
 api_router.include_router(public_competitions.router, prefix="/v1", tags=["public-competitions"])
 api_router.include_router(public_competitions.router, prefix="/public", tags=["public-competitions"])
+api_router.include_router(public_live.router, prefix="/v1", tags=["public-live"])
+api_router.include_router(public_live.router, prefix="/public", tags=["public-live"])
 api_router.include_router(public_certificates.router, prefix="/public/certificates", tags=["public-certificates"])
 
 # ── WebSocket (Real-time) ──

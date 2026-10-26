@@ -217,25 +217,37 @@ class NotificationDispatcher:
             message = notification.get("message", "")
             action_url = notification.get("action_url") or "https://eventora.com"
 
-            html_body = f"""
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
-                <div style="margin-bottom: 20px;">
-                    <h2 style="color: #4f46e5; margin: 0;">Eventora</h2>
-                </div>
-                <h3 style="color: #1e293b; margin-top: 0;">{title}</h3>
-                <p style="color: #475569; font-size: 16px; line-height: 1.6;">{message}</p>
-                <div style="margin-top: 30px;">
-                    <a href="{action_url}" style="background-color: #4f46e5; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">View in Eventora</a>
-                </div>
-                <hr style="margin-top: 40px; border: none; border-top: 1px solid #e2e8f0;" />
-                <p style="color: #94a3b8; font-size: 12px; margin-top: 20px;">
-                    You received this email according to your Eventora notification preferences.
-                </p>
-            </div>
+            from app.services.email import _render_base_email, _get_sender, _escape
+
+            safe_title = _escape(title)
+            safe_msg = _escape(message)
+            content_html = f"""
+              <h1 style="margin: 0 0 12px 0; font-size: 22px; font-weight: 800; color: #F8FAFC; letter-spacing: -0.4px;">
+                {safe_title}
+              </h1>
+              <p style="margin: 0 0 24px 0; font-size: 15px; color: #CBD5E1; line-height: 1.6;">
+                {safe_msg}
+              </p>
+              <div style="text-align: center; margin: 30px 0 10px 0;">
+                <a href="{action_url}" style="display: inline-block; background: linear-gradient(135deg, #6366F1 0%, #A855F7 100%); color: #FFFFFF; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
+                  View in Eventora &rarr;
+                </a>
+              </div>
             """
 
+            html_body = _render_base_email(
+                title=title,
+                preheader=message[:100] if message else title,
+                badge_text="NOTIFICATION",
+                badge_color="#818CF8",
+                badge_bg="rgba(99, 102, 241, 0.15)",
+                badge_border="rgba(99, 102, 241, 0.35)",
+                content_html=content_html,
+                recipient_email=user_email
+            )
+
             params = {
-                "from": f"Eventora <{settings.MAIL_ADDRESS}>",
+                "from": _get_sender("Eventora Notifications"),
                 "to": [user_email],
                 "subject": f"Eventora: {title}",
                 "html": html_body,

@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, UploadFile, File, Form
 from typing import Optional, List, Dict, Any
 import re
+import json
 from bson import ObjectId
 from app.core.admin_auth import get_current_admin
 from app.core.database import (
@@ -13,14 +14,26 @@ from app.core.database import (
     user_collection,
 )
 from app.schemas.competition import CompetitionCreateReq, CompetitionUpdateReq
+from app.services.cloudinary_srv import upload_image
 from datetime import datetime, timezone
 
 router = APIRouter()
 
 @router.post("/")
 async def create_competition(req: CompetitionCreateReq, admin: dict = Depends(get_current_admin)):
-    """Creates a new advanced competition with rules, criteria, and dynamic fields."""
+    """Creates a new advanced competition with rules, criteria, dynamic fields, and card/banner images."""
     comp_dict = req.model_dump()
+
+    # Sync card and banner image aliases
+    if comp_dict.get("card_image_url") and not comp_dict.get("image_url"):
+        comp_dict["image_url"] = comp_dict["card_image_url"]
+    elif comp_dict.get("image_url") and not comp_dict.get("card_image_url"):
+        comp_dict["card_image_url"] = comp_dict["image_url"]
+
+    if comp_dict.get("banner_image_url") and not comp_dict.get("banner_url"):
+        comp_dict["banner_url"] = comp_dict["banner_image_url"]
+    elif comp_dict.get("banner_url") and not comp_dict.get("banner_image_url"):
+        comp_dict["banner_image_url"] = comp_dict["banner_url"]
     
     # Validation for ranking modes
     if comp_dict.get("audience_voting_enabled") and comp_dict.get("judge_scoring_enabled"):
@@ -41,6 +54,146 @@ async def create_competition(req: CompetitionCreateReq, admin: dict = Depends(ge
     res = await competition_collection.insert_one(comp_dict)
     comp_dict["_id"] = str(res.inserted_id)
     return comp_dict
+
+
+@router.post("/with-media")
+async def create_competition_with_media(
+    competition_data: str = Form(..., description="Competition details JSON string matching CompetitionCreateReq"),
+    card_image: Optional[UploadFile] = File(None, description="Competition Card / Thumbnail image file"),
+    banner_image: Optional[UploadFile] = File(None, description="Competition Banner image file"),
+    admin: dict = Depends(get_current_admin),
+):
+    """
+    Creates a new competition and uploads card image and/or banner image to Cloudinary in a single multipart request.
+    """
+    try:
+        parsed_data = json.loads(competition_data)
+        req = CompetitionCreateReq.model_validate(parsed_data)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid competition data JSON: {exc}")
+
+    comp_dict = req.model_dump()
+
+    # Upload Card Image if provided
+    if card_image and card_image.filename:
+        card_bytes = await card_image.read()
+        if card_bytes and len(card_bytes) > 0:
+            uploaded_card_url = upload_image(
+                card_bytes,
+                folder="eventora/competitions/cards",
+                filename=card_image.filename,
+            )
+            if uploaded_card_url:
+                comp_dict["card_image_url"] = uploaded_card_url
+                comp_dict["image_url"] = uploaded_card_url
+
+    # Upload Banner Image if provided
+    if banner_image and banner_image.filename:
+        banner_bytes = await banner_image.read()
+        if banner_bytes and len(banner_bytes) > 0:
+            uploaded_banner_url = upload_image(
+                banner_bytes,
+                folder="eventora/competitions/banners",
+                filename=banner_image.filename,
+            )
+            if uploaded_banner_url:
+                comp_dict["banner_url"] = uploaded_banner_url
+                comp_dict["banner_image_url"] = uploaded_banner_url
+
+    # Sync card/banner URLs
+    if comp_dict.get("card_image_url") and not comp_dict.get("image_url"):
+        comp_dict["image_url"] = comp_dict["card_image_url"]
+    elif comp_dict.get("image_url") and not comp_dict.get("card_image_url"):
+        comp_dict["card_image_url"] = comp_dict["image_url"]
+
+    if comp_dict.get("banner_image_url") and not comp_dict.get("banner_url"):
+        comp_dict["banner_url"] = comp_dict["banner_image_url"]
+    elif comp_dict.get("banner_url") and not comp_dict.get("banner_image_url"):
+        comp_dict["banner_image_url"] = comp_dict["banner_url"]
+
+    # Validation for ranking modes
+    if comp_dict.get("audience_voting_enabled") and comp_dict.get("judge_scoring_enabled"):
+        w_a = comp_dict.get("audience_vote_weight", 0.0)
+        w_j = comp_dict.get("judge_score_weight", 0.0)
+        if abs((w_a + w_j) - 1.0) > 0.001 and abs((w_a + w_j) - 100.0) > 0.001:
+            raise HTTPException(status_code=400, detail="Combined weights must total 1.0 or 100%")
+    elif not comp_dict.get("audience_voting_enabled") and not comp_dict.get("judge_scoring_enabled"):
+        raise HTTPException(status_code=400, detail="At least one ranking mode must be enabled.")
+
+    comp_dict["voting_status"] = "OPEN" if comp_dict.get("audience_voting_enabled") else "CLOSED"
+    comp_dict["judging_status"] = "OPEN" if comp_dict.get("judge_scoring_enabled") else "CLOSED"
+    comp_dict["result_status"] = "PENDING"
+
+    comp_dict["created_at"] = datetime.now(timezone.utc)
+    comp_dict["updated_at"] = datetime.now(timezone.utc)
+
+    res = await competition_collection.insert_one(comp_dict)
+    comp_dict["_id"] = str(res.inserted_id)
+    return comp_dict
+
+
+@router.post("/upload-card")
+async def upload_competition_card(
+    file: UploadFile = File(...),
+    admin: dict = Depends(get_current_admin),
+):
+    """Uploads a competition card / thumbnail image to Cloudinary and returns secure URL."""
+    contents = await file.read()
+    if not contents or len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    url = upload_image(contents, folder="eventora/competitions/cards", filename=file.filename)
+    if not url:
+        raise HTTPException(status_code=500, detail="Failed to upload card image to storage.")
+    return {
+        "url": url,
+        "card_image_url": url,
+        "image_url": url,
+        "filename": file.filename,
+    }
+
+
+@router.post("/upload-banner")
+async def upload_competition_banner(
+    file: UploadFile = File(...),
+    admin: dict = Depends(get_current_admin),
+):
+    """Uploads a competition banner image to Cloudinary and returns secure URL."""
+    contents = await file.read()
+    if not contents or len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    url = upload_image(contents, folder="eventora/competitions/banners", filename=file.filename)
+    if not url:
+        raise HTTPException(status_code=500, detail="Failed to upload banner image to storage.")
+    return {
+        "url": url,
+        "banner_url": url,
+        "banner_image_url": url,
+        "filename": file.filename,
+    }
+
+
+@router.post("/upload-image")
+async def upload_competition_image(
+    file: UploadFile = File(...),
+    image_type: Optional[str] = Query("card", description="Image target type: 'card' or 'banner'"),
+    admin: dict = Depends(get_current_admin),
+):
+    """General image uploader for competitions (supports card or banner)."""
+    contents = await file.read()
+    if not contents or len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    folder = "eventora/competitions/banners" if image_type == "banner" else "eventora/competitions/cards"
+    url = upload_image(contents, folder=folder, filename=file.filename)
+    if not url:
+        raise HTTPException(status_code=500, detail="Failed to upload image to storage.")
+    return {
+        "url": url,
+        "image_type": image_type,
+        "card_image_url": url if image_type != "banner" else None,
+        "banner_url": url if image_type == "banner" else None,
+        "filename": file.filename,
+    }
+
 
 @router.get("/")
 async def list_competitions(admin: dict = Depends(get_current_admin)):
@@ -76,6 +229,17 @@ async def update_competition(comp_id: str, req: CompetitionUpdateReq, admin: dic
     if not update_data:
         return {"message": "No fields to update"}
 
+    # Sync card and banner image aliases
+    if "card_image_url" in update_data and "image_url" not in update_data:
+        update_data["image_url"] = update_data["card_image_url"]
+    elif "image_url" in update_data and "card_image_url" not in update_data:
+        update_data["card_image_url"] = update_data["image_url"]
+
+    if "banner_image_url" in update_data and "banner_url" not in update_data:
+        update_data["banner_url"] = update_data["banner_image_url"]
+    elif "banner_url" in update_data and "banner_image_url" not in update_data:
+        update_data["banner_image_url"] = update_data["banner_url"]
+
     # Validation: min_age cannot exceed max_age if both are provided
     if update_data.get("min_age") is not None and update_data.get("max_age") is not None:
         if update_data["min_age"] > update_data["max_age"]:
@@ -104,6 +268,58 @@ async def update_competition(comp_id: str, req: CompetitionUpdateReq, admin: dic
         "competition": updated_comp,
         **(updated_comp or {})
     }
+
+
+@router.post("/{comp_id}/upload-card")
+async def upload_card_to_competition(
+    comp_id: str,
+    file: UploadFile = File(...),
+    admin: dict = Depends(get_current_admin),
+):
+    """Uploads card/thumbnail image and attaches directly to the specified competition."""
+    try:
+        c_id = ObjectId(comp_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid competition ID")
+    contents = await file.read()
+    if not contents or len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    url = upload_image(contents, folder="eventora/competitions/cards", filename=file.filename)
+    if not url:
+        raise HTTPException(status_code=500, detail="Failed to upload card image to storage.")
+    res = await competition_collection.update_one(
+        {"_id": c_id},
+        {"$set": {"card_image_url": url, "image_url": url, "updated_at": datetime.now(timezone.utc)}}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Competition not found")
+    return {"message": "Card image uploaded and updated successfully", "card_image_url": url, "image_url": url}
+
+
+@router.post("/{comp_id}/upload-banner")
+async def upload_banner_to_competition(
+    comp_id: str,
+    file: UploadFile = File(...),
+    admin: dict = Depends(get_current_admin),
+):
+    """Uploads banner image and attaches directly to the specified competition."""
+    try:
+        c_id = ObjectId(comp_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid competition ID")
+    contents = await file.read()
+    if not contents or len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    url = upload_image(contents, folder="eventora/competitions/banners", filename=file.filename)
+    if not url:
+        raise HTTPException(status_code=500, detail="Failed to upload banner image to storage.")
+    res = await competition_collection.update_one(
+        {"_id": c_id},
+        {"$set": {"banner_url": url, "banner_image_url": url, "updated_at": datetime.now(timezone.utc)}}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Competition not found")
+    return {"message": "Banner image uploaded and updated successfully", "banner_url": url, "banner_image_url": url}
 
 @router.post("/{comp_id}/publish")
 async def publish_competition(comp_id: str, admin: dict = Depends(get_current_admin)):

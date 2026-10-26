@@ -49,6 +49,9 @@ class CompetitionCreateReq(BaseModel):
     title: str = Field(..., min_length=3)
     description: str
     image_url: Optional[str] = None
+    card_image_url: Optional[str] = None
+    banner_url: Optional[str] = None
+    banner_image_url: Optional[str] = None
     type: str = "General"
     category: str
     
@@ -76,15 +79,18 @@ class CompetitionCreateReq(BaseModel):
     dynamic_submission_fields: List[DynamicFieldConfig] = []
     judging_criteria: List[JudgingCriterion] = []
 
-    @field_validator("image_url", mode="before")
+    @field_validator("image_url", "card_image_url", "banner_url", "banner_image_url", mode="before")
     @classmethod
-    def validate_image_url(cls, v):
+    def validate_image_urls(cls, v):
         return check_no_fake_cloudinary(v)
 
 class CompetitionUpdateReq(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     image_url: Optional[str] = None
+    card_image_url: Optional[str] = None
+    banner_url: Optional[str] = None
+    banner_image_url: Optional[str] = None
     type: Optional[str] = None
     category: Optional[str] = None
     
@@ -112,9 +118,9 @@ class CompetitionUpdateReq(BaseModel):
     dynamic_submission_fields: Optional[List[DynamicFieldConfig]] = None
     judging_criteria: Optional[List[JudgingCriterion]] = None
 
-    @field_validator("image_url", mode="before")
+    @field_validator("image_url", "card_image_url", "banner_url", "banner_image_url", mode="before")
     @classmethod
-    def validate_image_url(cls, v):
+    def validate_image_urls(cls, v):
         return check_no_fake_cloudinary(v)
 
 

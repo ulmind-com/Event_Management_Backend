@@ -1,4 +1,4 @@
-﻿from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.security import decode_token
 from app.core.database import user_collection
@@ -26,7 +26,10 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         raise HTTPException(status_code=404, detail="User not found")
         
     if not user.get("registration_complete"):
-        raise HTTPException(status_code=403, detail="Registration incomplete")
+        raise HTTPException(
+            status_code=403,
+            detail="Registration incomplete. Please complete your profile details first."
+        )
         
     return user
 

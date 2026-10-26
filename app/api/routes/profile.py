@@ -1,7 +1,8 @@
+import re
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
-from typing import Optional
+from typing import Optional, Tuple, List
 from bson import ObjectId
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_current_user_allow_incomplete
 from app.core.database import (
     user_collection, registration_collection, booking_collection, order_collection,
     certificate_collection, reward_collection, user_badge_award_collection,
@@ -12,16 +13,57 @@ from app.core.database import (
 from app.schemas.profile import ProfileUpdateReq, ProfileUpdateRes, DashboardRes
 from app.services.cloudinary_srv import upload_image
 from app.services.wallet_service import WalletService
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 
 router = APIRouter()
 
+
+def calculate_age(dob: date) -> int:
+    today = date.today()
+    return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+
+
+def parse_date(date_str: str) -> Optional[date]:
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(date_str, fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def check_profile_completion(user: dict) -> Tuple[bool, List[str]]:
+    """Checks if required profile fields (name, phone_number, date_of_birth, address) are filled."""
+    if not user:
+        return False, ["name", "phone_number", "date_of_birth", "address"]
+    missing = []
+    if not user.get("name") or not str(user.get("name")).strip():
+        missing.append("name")
+    if not user.get("phone_number") or not str(user.get("phone_number")).strip():
+        missing.append("phone_number")
+    if not user.get("date_of_birth") or not str(user.get("date_of_birth")).strip():
+        missing.append("date_of_birth")
+    if not user.get("address") or not str(user.get("address")).strip():
+        missing.append("address")
+    return len(missing) == 0, missing
+
+
 @router.get("/me")
-async def get_my_profile(current_user: dict = Depends(get_current_user)):
-    """Retrieve own profile."""
+async def get_my_profile(current_user: dict = Depends(get_current_user_allow_incomplete)):
+    """Retrieve own profile, including profile completeness status."""
     if "_id" in current_user:
         del current_user["_id"]
+    if "password_hash" in current_user:
+        del current_user["password_hash"]
+
+    is_completed, missing = check_profile_completion(current_user)
+    current_user["is_profile_completed"] = is_completed
+    current_user["profile_completed"] = is_completed
+    current_user["requires_profile_completion"] = not is_completed
+    current_user["missing_fields"] = missing
+    current_user["registration_complete"] = is_completed
     return current_user
+
 
 @router.put("/me")
 async def update_my_profile(
@@ -31,24 +73,42 @@ async def update_my_profile(
     address: Optional[str] = Form(None),
     parent_phone_number: Optional[str] = Form(None),
     profile_photo: Optional[UploadFile] = File(None),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_allow_incomplete)
 ):
-    """Update own profile."""
+    """
+    Update own profile. When all required fields (name, phone, dob, address) are present,
+    automatically marks registration_complete and profile_completed as True.
+    """
     update_data = {}
-    if name is not None: update_data["name"] = name.strip()
-    if phone_number is not None:
+    if name is not None and name.strip():
+        update_data["name"] = name.strip()
+
+    if phone_number is not None and str(phone_number).strip():
+        cleaned_phone = re.sub(r"\D", "", str(phone_number).strip()) if 're' in globals() else str(phone_number).strip()
         try:
-            update_data["phone_number"] = int(phone_number.strip())
+            update_data["phone_number"] = int(cleaned_phone)
         except Exception:
-            update_data["phone_number"] = phone_number.strip()
-    if date_of_birth is not None: update_data["date_of_birth"] = date_of_birth.strip()
-    if address is not None: update_data["address"] = address.strip()
-    if parent_phone_number is not None:
+            update_data["phone_number"] = cleaned_phone
+
+    if date_of_birth is not None and date_of_birth.strip():
+        dob_str = date_of_birth.strip()
+        parsed_dob = parse_date(dob_str)
+        if parsed_dob:
+            update_data["date_of_birth"] = parsed_dob.strftime("%Y-%m-%d")
+            update_data["age"] = calculate_age(parsed_dob)
+        else:
+            update_data["date_of_birth"] = dob_str
+
+    if address is not None and address.strip():
+        update_data["address"] = address.strip()
+
+    if parent_phone_number is not None and str(parent_phone_number).strip():
+        cleaned_p_phone = re.sub(r"\D", "", str(parent_phone_number).strip()) if 're' in globals() else str(parent_phone_number).strip()
         try:
-            update_data["parent_phone_number"] = int(parent_phone_number.strip())
+            update_data["parent_phone_number"] = int(cleaned_p_phone)
         except Exception:
-            update_data["parent_phone_number"] = parent_phone_number.strip()
-    
+            update_data["parent_phone_number"] = cleaned_p_phone
+
     if profile_photo:
         profile_content = await profile_photo.read()
         if len(profile_content) > 0:
@@ -64,21 +124,113 @@ async def update_my_profile(
                     status_code=500,
                     detail="Failed to upload profile photo to cloud storage. Please try again."
                 )
-                
+
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields provided for update")
-        
+
+    # Evaluate whether profile is now complete
+    merged_profile = {**current_user, **update_data}
+    is_completed, missing = check_profile_completion(merged_profile)
+    if is_completed:
+        update_data["registration_complete"] = True
+        update_data["is_profile_completed"] = True
+        update_data["profile_completed"] = True
+        update_data["first_time_login"] = False
+        if not current_user.get("profile_completed_at"):
+            update_data["profile_completed_at"] = datetime.now(timezone.utc)
+
     update_data["updated_at"] = datetime.now(timezone.utc)
-    
+
     await user_collection.update_one({"email": current_user["email"]}, {"$set": update_data})
-    
-    updated_user = await user_collection.find_one({"email": current_user["email"]}, {"_id": 0})
-    return {"message": "Profile updated successfully", "user": updated_user}
+
+    updated_user = await user_collection.find_one({"email": current_user["email"]}, {"_id": 0, "password_hash": 0})
+    is_now_completed, now_missing = check_profile_completion(updated_user)
+    updated_user["is_profile_completed"] = is_now_completed
+    updated_user["profile_completed"] = is_now_completed
+    updated_user["requires_profile_completion"] = not is_now_completed
+    updated_user["missing_fields"] = now_missing
+    updated_user["registration_complete"] = is_now_completed
+
+    return {
+        "message": "Profile updated successfully" if not is_now_completed else "Profile setup completed successfully",
+        "is_profile_completed": is_now_completed,
+        "requires_profile_completion": not is_now_completed,
+        "missing_fields": now_missing,
+        "user": updated_user
+    }
+
+
+@router.post("/complete")
+async def complete_profile_json(
+    req: ProfileUpdateReq,
+    current_user: dict = Depends(get_current_user_allow_incomplete),
+):
+    """JSON endpoint to complete or update own profile."""
+    update_data = {}
+    if req.name and req.name.strip():
+        update_data["name"] = req.name.strip()
+    if req.phone_number:
+        try:
+            update_data["phone_number"] = int(req.phone_number)
+        except Exception:
+            update_data["phone_number"] = req.phone_number
+    if req.date_of_birth and req.date_of_birth.strip():
+        parsed_dob = parse_date(req.date_of_birth.strip())
+        if parsed_dob:
+            update_data["date_of_birth"] = parsed_dob.strftime("%Y-%m-%d")
+            update_data["age"] = calculate_age(parsed_dob)
+        else:
+            update_data["date_of_birth"] = req.date_of_birth.strip()
+    if req.address and req.address.strip():
+        update_data["address"] = req.address.strip()
+    if req.parent_phone_number:
+        try:
+            update_data["parent_phone_number"] = int(req.parent_phone_number)
+        except Exception:
+            update_data["parent_phone_number"] = req.parent_phone_number
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields provided for profile completion")
+
+    merged = {**current_user, **update_data}
+    is_completed, missing = check_profile_completion(merged)
+    if is_completed:
+        update_data["registration_complete"] = True
+        update_data["is_profile_completed"] = True
+        update_data["profile_completed"] = True
+        update_data["first_time_login"] = False
+        if not current_user.get("profile_completed_at"):
+            update_data["profile_completed_at"] = datetime.now(timezone.utc)
+
+    update_data["updated_at"] = datetime.now(timezone.utc)
+    await user_collection.update_one({"email": current_user["email"]}, {"$set": update_data})
+
+    updated_user = await user_collection.find_one({"email": current_user["email"]}, {"_id": 0, "password_hash": 0})
+    is_now_completed, now_missing = check_profile_completion(updated_user)
+    updated_user["is_profile_completed"] = is_now_completed
+    updated_user["profile_completed"] = is_now_completed
+    updated_user["requires_profile_completion"] = not is_now_completed
+    updated_user["missing_fields"] = now_missing
+    updated_user["registration_complete"] = is_now_completed
+
+    return {
+        "message": "Profile setup completed successfully",
+        "is_profile_completed": is_now_completed,
+        "requires_profile_completion": not is_now_completed,
+        "missing_fields": now_missing,
+        "user": updated_user,
+    }
 
 @router.get("/dashboard")
-async def get_my_dashboard(current_user: dict = Depends(get_current_user)):
+async def get_my_dashboard(current_user: dict = Depends(get_current_user_allow_incomplete)):
     """Retrieve full dashboard data for the user."""
     email = current_user["email"]
+    is_completed, missing = check_profile_completion(current_user)
+    current_user["is_profile_completed"] = is_completed
+    current_user["profile_completed"] = is_completed
+    current_user["requires_profile_completion"] = not is_completed
+    current_user["missing_fields"] = missing
+    current_user["registration_complete"] = is_completed
     
     # 1. Fetch Registrations (Events & Courses)
     events = await registration_collection.find({"email": email, "activity_type": "event"}).to_list(length=100)
@@ -228,6 +380,10 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user)):
 
     return {
         "profile": current_user,
+        "is_profile_completed": is_completed,
+        "requires_profile_completion": not is_completed,
+        "missing_fields": missing,
+        "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else None,
         "my_events": events,
         "my_tickets": tickets,
         "my_competitions": competitions,

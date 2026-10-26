@@ -32,3 +32,13 @@ class Token(BaseModel):
 class GoogleLoginReq(BaseModel):
     id_token: str
     referral_code: Optional[str] = None
+
+class CompleteProfileReq(BaseModel):
+    name: Optional[str] = None
+    phone_number: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    address: Optional[str] = None
+    parent_phone_number: Optional[str] = None
+    profile_photo: Optional[str] = None
+    password: Optional[str] = None
+

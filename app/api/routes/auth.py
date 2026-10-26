@@ -1,16 +1,17 @@
+import random
+import string
+import logging
+import re
+from datetime import datetime, timedelta, timezone, date
+from typing import Optional, Tuple, List
 from app.services.firebase_auth_service import FirebaseAuthService
 from app.services.referral_service import ReferralService
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Header, status
-from app.schemas.user import EmailRequest, OTPVerifyRequest, UserLoginReq, Token, GoogleLoginReq
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Header, status, Depends
+from app.schemas.user import EmailRequest, OTPVerifyRequest, UserLoginReq, Token, GoogleLoginReq, CompleteProfileReq
 from app.services.email import send_otp_email
 from app.services.cloudinary_srv import upload_image
 from app.core.database import user_collection, otp_collection
 from app.core.security import create_access_token, decode_token, get_password_hash, verify_password
-import random
-import string
-import logging
-from datetime import datetime, timedelta, timezone, date
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -30,6 +31,21 @@ def parse_date(date_str: str) -> date:
         except ValueError:
             pass
     raise ValueError("Invalid date format")
+
+def check_profile_completion(user: dict) -> Tuple[bool, List[str]]:
+    """Checks if required profile fields (name, phone_number, date_of_birth, address) are filled."""
+    if not user:
+        return False, ["name", "phone_number", "date_of_birth", "address"]
+    missing = []
+    if not user.get("name") or not str(user.get("name")).strip():
+        missing.append("name")
+    if not user.get("phone_number") or not str(user.get("phone_number")).strip():
+        missing.append("phone_number")
+    if not user.get("date_of_birth") or not str(user.get("date_of_birth")).strip():
+        missing.append("date_of_birth")
+    if not user.get("address") or not str(user.get("address")).strip():
+        missing.append("address")
+    return len(missing) == 0, missing
 
 # ══════════════════════════════════════════════
 # NEW USER REGISTRATION (3 Steps)
@@ -171,6 +187,10 @@ async def register_step3(
         "kyc_doc_uri": kyc_doc_uri,
         "role": "USER",
         "registration_complete": True,
+        "is_profile_completed": True,
+        "profile_completed": True,
+        "first_time_login": False,
+        "profile_completed_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
     }
 
@@ -219,11 +239,21 @@ async def register_step3(
     # Return final access token for login
     access_token = create_access_token(data={"sub": email, "type": "user"})
 
+    safe_user = {**update_data}
+    if "password_hash" in safe_user:
+        del safe_user["password_hash"]
+
     response_data = {
         "message": "Registration complete",
         "access_token": access_token,
         "token_type": "bearer",
-        "user": update_data,
+        "registration_complete": True,
+        "is_profile_completed": True,
+        "profile_completed": True,
+        "requires_profile_completion": False,
+        "missing_fields": [],
+        "redirect_url": "/dashboard",
+        "user": safe_user,
     }
 
     # Include KYC verification result in response
@@ -251,11 +281,11 @@ async def user_login(req: UserLoginReq):
     if user.get("is_deleted"):
         raise HTTPException(status_code=403, detail="Account is disabled or deleted. Contact support.")
         
-    if not user.get("registration_complete"):
-        raise HTTPException(status_code=400, detail="Registration incomplete. Please register first.")
-        
     if "password_hash" not in user:
-        raise HTTPException(status_code=400, detail="Password not set for this account. Contact support.")
+        raise HTTPException(
+            status_code=400,
+            detail="Password not set for this account. If you signed in with Google, please use Google sign-in."
+        )
         
     if not verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
@@ -266,13 +296,48 @@ async def user_login(req: UserLoginReq):
     except Exception:
         pass
 
+    is_completed, missing = check_profile_completion(user)
+
+    # Sync completion flag in database
+    await user_collection.update_one(
+        {"email": req.email},
+        {"$set": {
+            "registration_complete": is_completed,
+            "is_profile_completed": is_completed,
+            "profile_completed": is_completed,
+            "updated_at": datetime.now(timezone.utc)
+        }}
+    )
+
     access_token = create_access_token(data={"sub": req.email, "type": "user"})
     return {
-        "message": "Login successful",
+        "message": "Login successful" if is_completed else "Login successful. Please complete your profile details.",
         "access_token": access_token,
         "token_type": "bearer",
         "user_email": req.email,
-        "role": user.get("role", "USER")
+        "role": user.get("role", "USER"),
+        "registration_complete": is_completed,
+        "is_profile_completed": is_completed,
+        "profile_completed": is_completed,
+        "requires_profile_completion": not is_completed,
+        "missing_fields": missing,
+        "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard",
+        "user": {
+            "email": req.email,
+            "name": user.get("name"),
+            "role": user.get("role", "USER"),
+            "phone_number": user.get("phone_number"),
+            "date_of_birth": user.get("date_of_birth"),
+            "address": user.get("address"),
+            "parent_phone_number": user.get("parent_phone_number"),
+            "profile_photo": user.get("profile_photo"),
+            "registration_complete": is_completed,
+            "is_profile_completed": is_completed,
+            "profile_completed": is_completed,
+            "requires_profile_completion": not is_completed,
+            "missing_fields": missing,
+            "first_time_login": not is_completed
+        }
     }
 
 
@@ -297,6 +362,7 @@ async def google_login(req: GoogleLoginReq):
     # 2. Check if user already exists
     existing_user = await user_collection.find_one({"email": email})
 
+    is_new_user = False
     if existing_user:
         # Check deletion status
         if existing_user.get("is_deleted"):
@@ -313,24 +379,39 @@ async def google_login(req: GoogleLoginReq):
                 detail="Google authentication is only permitted for regular User accounts. Staff and Admin accounts must log in with their credentials."
             )
 
-        # Update profile photo if missing and ensure registration is complete
-        update_fields = {"updated_at": datetime.now(timezone.utc), "email_verified": True}
-        if not existing_user.get("registration_complete"):
-            update_fields["registration_complete"] = True
+        is_completed, missing = check_profile_completion(existing_user)
+
+        # Update profile photo and verified status without overriding incomplete profile
+        update_fields = {
+            "updated_at": datetime.now(timezone.utc),
+            "email_verified": True,
+            "registration_complete": is_completed,
+            "is_profile_completed": is_completed,
+            "profile_completed": is_completed,
+        }
         if picture and not existing_user.get("profile_photo"):
             update_fields["profile_photo"] = picture
+        if not existing_user.get("name") and name:
+            update_fields["name"] = name
 
         await user_collection.update_one({"email": email}, {"$set": update_fields})
         user_doc = {**existing_user, **update_fields}
     else:
-        # 3. Auto-register new USER
+        # 3. Auto-register new USER without marking registration complete
+        # First-time Google sign-ins MUST complete their profile (phone, dob, address)
+        is_new_user = True
+        is_completed = False
+        missing = ["phone_number", "date_of_birth", "address"]
         new_user_data = {
             "email": email,
             "name": name,
             "profile_photo": picture,
             "role": "USER",
             "email_verified": True,
-            "registration_complete": True,
+            "registration_complete": False,
+            "is_profile_completed": False,
+            "profile_completed": False,
+            "first_time_login": True,
             "auth_provider": "GOOGLE",
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
@@ -357,23 +438,39 @@ async def google_login(req: GoogleLoginReq):
     access_token = create_access_token(data={"sub": email, "type": "user"})
 
     return {
-        "message": "Google login successful",
+        "message": "Google sign-in successful. Welcome to Eventora!" if is_new_user else "Google login successful",
         "access_token": access_token,
         "token_type": "bearer",
         "user_email": email,
         "role": "USER",
+        "is_new_user": is_new_user,
+        "registration_complete": is_completed,
+        "is_profile_completed": is_completed,
+        "profile_completed": is_completed,
+        "requires_profile_completion": not is_completed,
+        "missing_fields": missing,
+        "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard",
         "user": {
             "email": email,
             "name": user_doc.get("name", name),
             "role": "USER",
             "profile_photo": user_doc.get("profile_photo", picture),
-            "registration_complete": True
+            "phone_number": user_doc.get("phone_number"),
+            "date_of_birth": user_doc.get("date_of_birth"),
+            "address": user_doc.get("address"),
+            "parent_phone_number": user_doc.get("parent_phone_number"),
+            "registration_complete": is_completed,
+            "is_profile_completed": is_completed,
+            "profile_completed": is_completed,
+            "requires_profile_completion": not is_completed,
+            "missing_fields": missing,
+            "first_time_login": is_new_user
         }
     }
 
 
 # ══════════════════════════════════════════════
-# PROFILE
+# PROFILE & COMPLETION STATUS
 # ══════════════════════════════════════════════
 
 @router.get("/me")
@@ -388,4 +485,221 @@ async def get_user_profile(authorization: str = Header(...)):
         
     if user.get("is_deleted"):
         raise HTTPException(status_code=403, detail="Account is disabled or deleted. Contact support.")
+
+    is_completed, missing = check_profile_completion(user)
+    user["is_profile_completed"] = is_completed
+    user["profile_completed"] = is_completed
+    user["requires_profile_completion"] = not is_completed
+    user["missing_fields"] = missing
+    user["registration_complete"] = is_completed
+    user["redirect_url"] = "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard"
     return user
+
+
+@router.get("/status")
+async def get_auth_status(authorization: str = Header(...)):
+    """Check current authentication and profile completion status."""
+    token = authorization.replace("Bearer ", "").strip()
+    payload = decode_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user = await user_collection.find_one({"email": payload["sub"]})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.get("is_deleted"):
+        raise HTTPException(status_code=403, detail="Account is disabled or deleted.")
+
+    is_completed, missing = check_profile_completion(user)
+    return {
+        "authenticated": True,
+        "email": user.get("email"),
+        "role": user.get("role", "USER"),
+        "registration_complete": is_completed,
+        "is_profile_completed": is_completed,
+        "profile_completed": is_completed,
+        "requires_profile_completion": not is_completed,
+        "missing_fields": missing,
+        "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard"
+    }
+
+
+@router.post("/complete-profile")
+async def auth_complete_profile(
+    name: Optional[str] = Form(None),
+    phone_number: Optional[str] = Form(None),
+    date_of_birth: Optional[str] = Form(None),
+    address: Optional[str] = Form(None),
+    parent_phone_number: Optional[str] = Form(None),
+    password: Optional[str] = Form(None),
+    profile_photo: Optional[UploadFile] = File(None),
+    authorization: str = Header(...)
+):
+    """
+    Dedicated endpoint for completing initial user profile after Google sign-in or incomplete email registration.
+    Sets registration_complete, is_profile_completed, and profile_completed to True once required fields are provided.
+    """
+    token = authorization.replace("Bearer ", "").strip()
+    payload = decode_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    email = payload.get("sub")
+    user = await user_collection.find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    update_data = {}
+    if name is not None and name.strip():
+        update_data["name"] = name.strip()
+
+    if phone_number is not None and str(phone_number).strip():
+        cleaned_phone = re.sub(r"\D", "", str(phone_number).strip())
+        try:
+            update_data["phone_number"] = int(cleaned_phone)
+        except Exception:
+            update_data["phone_number"] = cleaned_phone
+
+    if date_of_birth is not None and date_of_birth.strip():
+        dob_str = date_of_birth.strip()
+        try:
+            parsed_dob = parse_date(dob_str)
+            update_data["date_of_birth"] = parsed_dob.strftime("%Y-%m-%d")
+            update_data["age"] = calculate_age(parsed_dob)
+        except Exception:
+            update_data["date_of_birth"] = dob_str
+
+    if address is not None and address.strip():
+        update_data["address"] = address.strip()
+
+    if parent_phone_number is not None and str(parent_phone_number).strip():
+        cleaned_p = re.sub(r"\D", "", str(parent_phone_number).strip())
+        try:
+            update_data["parent_phone_number"] = int(cleaned_p)
+        except Exception:
+            update_data["parent_phone_number"] = cleaned_p
+
+    if password is not None and password.strip():
+        if len(password.strip()) < 6:
+            raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+        update_data["password_hash"] = get_password_hash(password.strip())
+
+    if profile_photo:
+        p_bytes = await profile_photo.read()
+        if len(p_bytes) > 0:
+            url = upload_image(p_bytes, folder="eventora/profiles", filename=profile_photo.filename)
+            if url:
+                update_data["profile_photo"] = url
+            else:
+                raise HTTPException(status_code=500, detail="Failed to upload profile photo to cloud storage.")
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No profile fields provided")
+
+    merged = {**user, **update_data}
+    is_completed, missing = check_profile_completion(merged)
+    if is_completed:
+        update_data["registration_complete"] = True
+        update_data["is_profile_completed"] = True
+        update_data["profile_completed"] = True
+        update_data["first_time_login"] = False
+        if not user.get("profile_completed_at"):
+            update_data["profile_completed_at"] = datetime.now(timezone.utc)
+
+    update_data["updated_at"] = datetime.now(timezone.utc)
+    await user_collection.update_one({"email": email}, {"$set": update_data})
+
+    updated = await user_collection.find_one({"email": email}, {"_id": 0, "password_hash": 0})
+    is_now_completed, now_missing = check_profile_completion(updated)
+    updated["is_profile_completed"] = is_now_completed
+    updated["profile_completed"] = is_now_completed
+    updated["requires_profile_completion"] = not is_now_completed
+    updated["missing_fields"] = now_missing
+    updated["registration_complete"] = is_now_completed
+
+    return {
+        "message": "Profile setup completed successfully" if is_now_completed else "Profile updated successfully",
+        "is_profile_completed": is_now_completed,
+        "requires_profile_completion": not is_now_completed,
+        "missing_fields": now_missing,
+        "redirect_url": "/dashboard",
+        "user": updated
+    }
+
+
+@router.post("/complete-profile-json")
+async def auth_complete_profile_json(
+    req: CompleteProfileReq,
+    authorization: str = Header(...)
+):
+    """JSON version of profile completion endpoint."""
+    token = authorization.replace("Bearer ", "").strip()
+    payload = decode_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    email = payload.get("sub")
+    user = await user_collection.find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    update_data = {}
+    if req.name and req.name.strip():
+        update_data["name"] = req.name.strip()
+    if req.phone_number and str(req.phone_number).strip():
+        cleaned_phone = re.sub(r"\D", "", str(req.phone_number).strip())
+        try:
+            update_data["phone_number"] = int(cleaned_phone)
+        except Exception:
+            update_data["phone_number"] = cleaned_phone
+    if req.date_of_birth and req.date_of_birth.strip():
+        try:
+            parsed_dob = parse_date(req.date_of_birth.strip())
+            update_data["date_of_birth"] = parsed_dob.strftime("%Y-%m-%d")
+            update_data["age"] = calculate_age(parsed_dob)
+        except Exception:
+            update_data["date_of_birth"] = req.date_of_birth.strip()
+    if req.address and req.address.strip():
+        update_data["address"] = req.address.strip()
+    if req.parent_phone_number and str(req.parent_phone_number).strip():
+        cleaned_p = re.sub(r"\D", "", str(req.parent_phone_number).strip())
+        try:
+            update_data["parent_phone_number"] = int(cleaned_p)
+        except Exception:
+            update_data["parent_phone_number"] = cleaned_p
+    if req.password and req.password.strip():
+        if len(req.password.strip()) < 6:
+            raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+        update_data["password_hash"] = get_password_hash(req.password.strip())
+    if req.profile_photo and req.profile_photo.strip():
+        update_data["profile_photo"] = req.profile_photo.strip()
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No profile fields provided")
+
+    merged = {**user, **update_data}
+    is_completed, missing = check_profile_completion(merged)
+    if is_completed:
+        update_data["registration_complete"] = True
+        update_data["is_profile_completed"] = True
+        update_data["profile_completed"] = True
+        update_data["first_time_login"] = False
+        if not user.get("profile_completed_at"):
+            update_data["profile_completed_at"] = datetime.now(timezone.utc)
+
+    update_data["updated_at"] = datetime.now(timezone.utc)
+    await user_collection.update_one({"email": email}, {"$set": update_data})
+
+    updated = await user_collection.find_one({"email": email}, {"_id": 0, "password_hash": 0})
+    is_now_completed, now_missing = check_profile_completion(updated)
+    updated["is_profile_completed"] = is_now_completed
+    updated["profile_completed"] = is_now_completed
+    updated["requires_profile_completion"] = not is_now_completed
+    updated["missing_fields"] = now_missing
+    updated["registration_complete"] = is_now_completed
+
+    return {
+        "message": "Profile setup completed successfully" if is_now_completed else "Profile updated successfully",
+        "is_profile_completed": is_now_completed,
+        "requires_profile_completion": not is_now_completed,
+        "missing_fields": now_missing,
+        "redirect_url": "/dashboard",
+        "user": updated
+    }

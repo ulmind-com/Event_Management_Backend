@@ -640,7 +640,8 @@ async def judging_progress(comp_id: str, admin: dict = Depends(get_current_admin
         "total_coi_skips": total_skips,
         "expected_total_scores": expected_total,
         "overall_completion_pct": round(completed / expected_total * 100, 1) if expected_total > 0 else 0,
-        "judges": judge_details
+        "judges": judge_details,
+        "judge_details": judge_details
     }
 
 # ══════════════════════════════════════════════

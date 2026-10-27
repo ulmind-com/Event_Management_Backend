@@ -17,9 +17,9 @@ def _escape(text: Any) -> str:
     return html_lib.escape(str(text))
 
 
-def _get_sender(sender_title: str = "Eventora") -> str:
+def _get_sender(sender_title: str = "Upgrade Talents India") -> str:
     """Returns formatted RFC 5322 From address."""
-    mail_addr = settings.MAIL_ADDRESS or "onboarding@resend.dev"
+    mail_addr = settings.MAIL_ADDRESS or "noreply@samiransamanta.in"
     return f"{sender_title} <{mail_addr}>"
 
 
@@ -76,21 +76,18 @@ def _render_base_email(
           
           <!-- Top Brand Gradient Line -->
           <tr>
-            <td height="4" style="background: linear-gradient(90deg, #6366F1 0%, #A855F7 50%, #EC4899 100%); line-height: 4px; font-size: 4px;">&nbsp;</td>
+            <td height="4" style="background: linear-gradient(90deg, #F97316 0%, #A855F7 50%, #6366F1 100%); line-height: 4px; font-size: 4px;">&nbsp;</td>
           </tr>
           
-          <!-- Brand Header -->
+          <!-- Brand Header with Official Logo -->
           <tr>
-            <td style="padding: 32px 36px 20px 36px;">
+            <td style="padding: 26px 36px 20px 36px;">
               <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
                 <tr>
                   <td align="left" valign="middle">
-                    <div style="font-size: 24px; font-weight: 900; letter-spacing: -0.5px; color: #FFFFFF; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-                      EVENT<span style="color: #818CF8;">ORA</span>
-                    </div>
-                    <div style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 2.2px; color: #64748B; margin-top: 3px;">
-                      Premier Experience Platform
-                    </div>
+                    <a href="https://www.upgradetalentsindia.in" target="_blank" style="text-decoration: none; display: inline-block;">
+                      <img src="https://www.upgradetalentsindia.in/UTI%20Logo%20White%20Mode.png" alt="Upgrade Talents India" height="38" style="height: 38px; width: auto; max-width: 190px; object-fit: contain; display: block; border: 0;" />
+                    </a>
                   </td>
                   <td align="right" valign="middle">
                     <span style="display: inline-block; padding: 5px 12px; background-color: {badge_bg}; border: 1px solid {badge_border}; border-radius: 9999px; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: {badge_color};">
@@ -124,11 +121,11 @@ def _render_base_email(
                 If you did not initiate this request, you can safely ignore this email.
               </p>
               <p style="margin: 0 0 14px 0; font-size: 12px; color: #64748B;">
-                Need assistance? Reach us at <a href="mailto:support@eventora.com" style="color: #818CF8; text-decoration: none; font-weight: 600;">support@eventora.com</a>
+                Need assistance? Visit <a href="https://www.upgradetalentsindia.in/contact" style="color: #818CF8; text-decoration: none; font-weight: 600;">Upgrade Talents India Help & Support</a>
               </p>
               <div style="border-top: 1px solid #1E293B; margin: 16px auto; width: 60%; height: 1px; line-height: 1px; font-size: 1px;">&nbsp;</div>
               <p style="margin: 0; font-size: 11px; color: #475569; text-transform: uppercase; letter-spacing: 1.2px;">
-                &copy; 2026 Eventora Inc. &bull; Live Competitions, Passes & Certificates
+                &copy; 2026 Upgrade Talents India &bull; Live Competitions, Passes & Certificates
               </p>
             </td>
           </tr>
@@ -153,7 +150,7 @@ def _send_email_payload(
     subject: str,
     html: str,
     attachments: Optional[List[Dict[str, Any]]] = None,
-    sender_name: str = "Eventora"
+    sender_name: str = "Upgrade Talents India"
 ) -> bool:
     """Internal helper to dispatch emails via Resend SDK safely."""
     if not settings.RESEND_API_KEY:
@@ -200,7 +197,7 @@ def send_otp_email(
     """
     safe_otp = _escape(otp_code)
     greeting = f"Hello {_escape(user_name)}," if user_name else "Hello,"
-    reason = f"to complete your {purpose}" if purpose else "to verify your Eventora account and secure your access"
+    reason = f"to complete your {purpose}" if purpose else "to verify your Upgrade Talents India account and secure your access"
 
     content = f"""
       <h1 style="margin: 0 0 10px 0; font-size: 22px; font-weight: 800; color: #F8FAFC; letter-spacing: -0.4px;">
@@ -235,7 +232,7 @@ def send_otp_email(
         <tr>
           <td style="padding: 14px 18px;">
             <p style="margin: 0; font-size: 13px; color: #CBD5E1; line-height: 1.5;">
-              <strong style="color: #FFFFFF;">&#128274; Security Notice:</strong> Never share this code with anyone. Eventora staff or administrators will never ask for your verification code.
+              <strong style="color: #FFFFFF;">&#128274; Security Notice:</strong> Never share this code with anyone. Upgrade Talents India staff or administrators will never ask for your verification code.
             </p>
           </td>
         </tr>
@@ -247,7 +244,7 @@ def send_otp_email(
     """
 
     html = _render_base_email(
-        title="Eventora Verification Code",
+        title="Upgrade Talents India Verification Code",
         preheader=f"Your verification code is {otp_code} — valid for 10 minutes.",
         badge_text="SECURITY VERIFICATION",
         badge_color="#818CF8",
@@ -257,8 +254,8 @@ def send_otp_email(
         recipient_email=to_email
     )
 
-    subject = f"🔐 {otp_code} is your Eventora verification code"
-    return _send_email_payload(to_email=to_email, subject=subject, html=html, sender_name="Eventora Security")
+    subject = f"🔐 {otp_code} is your Upgrade Talents India verification code"
+    return _send_email_payload(to_email=to_email, subject=subject, html=html, sender_name="Upgrade Talents India Security")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -286,7 +283,7 @@ class EmailService:
             Welcome to the Stage, {safe_name}! &#127881;
           </h1>
           <p style="margin: 0 0 18px 0; font-size: 15px; color: #CBD5E1; line-height: 1.6;">
-            Your Eventora profile registration is complete. You now have full access to explore premier events, compete in live tournaments, and unlock exclusive rewards.
+            Your Upgrade Talents India profile registration is complete. You now have full access to explore premier events, compete in live tournaments, and unlock exclusive rewards.
           </p>
 
           <!-- Feature Cards -->
@@ -308,21 +305,21 @@ class EmailService:
             <tr>
               <td style="background-color: #172033; border: 1px solid #1E293B; border-radius: 12px; padding: 18px;">
                 <div style="font-size: 14px; font-weight: 700; color: #FFFFFF; margin-bottom: 6px;">&#129351; Verified PDF Certificates & Rewards</div>
-                <div style="font-size: 13px; color: #94A3B8; line-height: 1.5;">Earn tamper-evident certificates with verifiable QR codes and redeem Eventora coins.</div>
+                <div style="font-size: 13px; color: #94A3B8; line-height: 1.5;">Earn tamper-evident certificates with verifiable QR codes and redeem rewards.</div>
               </td>
             </tr>
           </table>
 
           <div style="text-align: center; margin: 30px 0 10px 0;">
-            <a href="https://eventora.com/dashboard" style="display: inline-block; background: linear-gradient(135deg, #6366F1 0%, #A855F7 100%); color: #FFFFFF; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
+            <a href="https://www.upgradetalentsindia.in/dashboard" style="display: inline-block; background: linear-gradient(135deg, #6366F1 0%, #A855F7 100%); color: #FFFFFF; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
               Go to My Dashboard &rarr;
             </a>
           </div>
         """
 
         html = _render_base_email(
-            title="Welcome to Eventora",
-            preheader=f"Hi {name}, your Eventora profile is fully activated. Discover events, passes and competitions.",
+            title="Welcome to Upgrade Talents India",
+            preheader=f"Hi {name}, your Upgrade Talents India profile is fully activated. Discover events, passes and competitions.",
             badge_text="ACCOUNT ACTIVATED",
             badge_color="#34D399",
             badge_bg="rgba(52, 211, 153, 0.15)",
@@ -330,12 +327,12 @@ class EmailService:
             content_html=content,
             recipient_email=email
         )
-        return _send_email_payload(to_email=email, subject=f"🎉 Welcome to Eventora, {name}!", html=html)
+        return _send_email_payload(to_email=email, subject=f"🎉 Welcome to Upgrade Talents India, {name}!", html=html)
 
     @staticmethod
     def send_judge_invitation(email: str, name: str) -> bool:
         """Sends official judge appointment invitation with clear login instructions."""
-        login_url = "https://eventora.com/login"
+        login_url = "https://www.upgradetalentsindia.in/judge/login"
         safe_name = _escape(name)
         safe_email = _escape(email)
 
@@ -347,7 +344,7 @@ class EmailService:
             Hello <strong>{safe_name}</strong>,
           </p>
           <p style="margin: 0 0 20px 0; font-size: 14px; color: #94A3B8; line-height: 1.6;">
-            Congratulations! You have been officially appointed as an accredited Judge for Eventora competitions. You now have access to review and score tournament submissions.
+            Congratulations! You have been officially appointed as an accredited Judge for <strong>Upgrade Talents India</strong> competitions. You now have access to review and score tournament submissions directly from the official portal.
           </p>
 
           <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #172033; border: 1px solid #1E293B; border-radius: 14px; padding: 22px; margin: 20px 0;">
@@ -357,10 +354,10 @@ class EmailService:
                   Quick Onboarding Guide:
                 </div>
                 <ol style="margin: 0; padding-left: 20px; font-size: 13px; color: #CBD5E1; line-height: 1.8;">
-                  <li>Click the button below to open the private Judges Login.</li>
+                  <li>Open the Judges Portal: <a href="https://www.upgradetalentsindia.in/judge/login" style="color: #818CF8; word-break: break-all;">https://www.upgradetalentsindia.in/judge/login</a></li>
                   <li>Enter your designated email address (<code style="color: #F8FAFC; background: #0F172A; padding: 2px 6px; border-radius: 4px;">{safe_email}</code>).</li>
                   <li>You will receive a secure OTP on this email for your initial sign-in.</li>
-                  <li>After logging in, set your permanent password for direct future logins.</li>
+                  <li>After logging in, you will be taken directly to your assigned competitions scoring dashboard.</li>
                 </ol>
               </td>
             </tr>
@@ -368,14 +365,17 @@ class EmailService:
 
           <div style="text-align: center; margin: 28px 0 10px 0;">
             <a href="{login_url}" style="display: inline-block; background: linear-gradient(135deg, #6366F1 0%, #A855F7 100%); color: #FFFFFF; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
-              Access Judges Panel &rarr;
+              Access Judges Portal &rarr;
             </a>
           </div>
+          <p style="text-align: center; margin: 12px 0 0 0; font-size: 12px; color: #64748B;">
+            Direct Portal Link: <a href="https://www.upgradetalentsindia.in/judge/login" style="color: #818CF8;">https://www.upgradetalentsindia.in/judge/login</a>
+          </p>
         """
 
         html = _render_base_email(
-            title="Eventora Judges Panel Appointment",
-            preheader=f"Hello {name}, you have been appointed to the Eventora Judges Panel.",
+            title="Upgrade Talents India — Judges Panel Appointment",
+            preheader=f"Hello {name}, you have been appointed to the Upgrade Talents India Judges Panel.",
             badge_text="OFFICIAL APPOINTMENT",
             badge_color="#A78BFA",
             badge_bg="rgba(167, 139, 250, 0.15)",
@@ -383,12 +383,12 @@ class EmailService:
             content_html=content,
             recipient_email=email
         )
-        return _send_email_payload(to_email=email, subject="⚖️ Official Appointment: Eventora Judges Panel", html=html)
+        return _send_email_payload(to_email=email, subject="⚖️ Official Appointment: Upgrade Talents India Judges Panel", html=html, sender_name="Upgrade Talents India")
 
     @staticmethod
     def send_volunteer_invitation(email: str, name: Optional[str] = None) -> bool:
         """Sends official volunteer ticket scanner invitation."""
-        login_url = "https://eventora.com/volunteer/login"
+        login_url = "https://www.upgradetalentsindia.in/volunteer/login"
         safe_email = _escape(email)
         greeting = f"Hello {_escape(name)}," if name else "Hello,"
 
@@ -400,7 +400,7 @@ class EmailService:
             {greeting}
           </p>
           <p style="margin: 0 0 20px 0; font-size: 14px; color: #94A3B8; line-height: 1.6;">
-            You have been assigned as an official <strong>Eventora Volunteer</strong>. Your role includes ticket verification, entry gate validation, and attendee support.
+            You have been assigned as an official <strong>Upgrade Talents India Volunteer</strong>. Your role includes ticket verification, entry gate validation, and attendee support.
           </p>
 
           <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #172033; border: 1px solid #1E293B; border-radius: 14px; padding: 22px; margin: 20px 0;">
@@ -410,7 +410,7 @@ class EmailService:
                   How to Access the Volunteer Portal:
                 </div>
                 <ol style="margin: 0; padding-left: 20px; font-size: 13px; color: #CBD5E1; line-height: 1.8;">
-                  <li>Visit the Volunteer Portal via the link below.</li>
+                  <li>Visit the Volunteer Portal: <a href="https://www.upgradetalentsindia.in/volunteer/login" style="color: #38BDF8; word-break: break-all;">https://www.upgradetalentsindia.in/volunteer/login</a></li>
                   <li>Enter your assigned email: <code style="color: #F8FAFC; background: #0F172A; padding: 2px 6px; border-radius: 4px;">{safe_email}</code>.</li>
                   <li>Verify using the instant OTP sent to your inbox.</li>
                   <li>Use the in-app scanner to validate attendee QR codes at entrance gates.</li>
@@ -424,11 +424,14 @@ class EmailService:
               Open Volunteer Scanner &rarr;
             </a>
           </div>
+          <p style="text-align: center; margin: 12px 0 0 0; font-size: 12px; color: #64748B;">
+            Direct Portal Link: <a href="https://www.upgradetalentsindia.in/volunteer/login" style="color: #38BDF8;">https://www.upgradetalentsindia.in/volunteer/login</a>
+          </p>
         """
 
         html = _render_base_email(
-            title="Eventora Volunteer Assignment",
-            preheader="You have been added as an official Eventora Volunteer for ticket scanning.",
+            title="Upgrade Talents India Volunteer Assignment",
+            preheader="You have been added as an official Upgrade Talents India Volunteer for ticket scanning.",
             badge_text="VOLUNTEER ACCESS",
             badge_color="#38BDF8",
             badge_bg="rgba(56, 189, 248, 0.15)",
@@ -436,7 +439,7 @@ class EmailService:
             content_html=content,
             recipient_email=email
         )
-        return _send_email_payload(to_email=email, subject="🎟️ Volunteer Access Granted: Eventora Ticket Scanner", html=html)
+        return _send_email_payload(to_email=email, subject="🎟️ Volunteer Access Granted: Upgrade Talents India Ticket Scanner", html=html, sender_name="Upgrade Talents India")
 
     @staticmethod
     def send_certificate_email(
@@ -482,7 +485,7 @@ class EmailService:
             Congratulations <strong>{safe_name}</strong>!
           </p>
           <p style="margin: 0 0 20px 0; font-size: 14px; color: #94A3B8; line-height: 1.6;">
-            Your official digital <strong>{safe_display} Certificate</strong> for <strong>{safe_activity}</strong> has been issued and permanently recorded on Eventora.
+            Your official digital <strong>{safe_display} Certificate</strong> for <strong>{safe_activity}</strong> has been issued and permanently recorded on Upgrade Talents India.
           </p>
 
           <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #172033; border: 1px solid #1E293B; border-radius: 14px; padding: 22px; margin: 20px 0; text-align: center;">
@@ -510,7 +513,7 @@ class EmailService:
         """
 
         html = _render_base_email(
-            title=f"Eventora {display_type} Certificate",
+            title=f"Upgrade Talents India {display_type} Certificate",
             preheader=f"Congratulations {name}! Your official certificate for {activity_title} is ready.",
             badge_text="OFFICIAL CERTIFICATE",
             badge_color="#F59E0B",
@@ -527,8 +530,8 @@ class EmailService:
                 "content": list(pdf_bytes)
             }]
 
-        subject = f"🏆 Congratulations! Your Eventora {display_type} Certificate is Ready"
-        return _send_email_payload(to_email=email, subject=subject, html=html, attachments=attachments)
+        subject = f"🏆 Congratulations! Your Upgrade Talents India {display_type} Certificate is Ready"
+        return _send_email_payload(to_email=email, subject=subject, html=html, attachments=attachments, sender_name="Upgrade Talents India")
 
     @staticmethod
     def send_vip_pass_confirmation(
@@ -581,7 +584,7 @@ class EmailService:
           </table>
 
           <div style="text-align: center; margin: 28px 0 10px 0;">
-            <a href="https://eventora.com/dashboard?tab=vip" style="display: inline-block; background: linear-gradient(135deg, #D97706 0%, #F59E0B 100%); color: #000000; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 800; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(245, 158, 11, 0.35);">
+            <a href="https://www.upgradetalentsindia.in/dashboard?tab=vip" style="display: inline-block; background: linear-gradient(135deg, #D97706 0%, #F59E0B 100%); color: #000000; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 800; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(245, 158, 11, 0.35);">
               View Digital VIP Pass &rarr;
             </a>
           </div>
@@ -601,7 +604,7 @@ class EmailService:
             content_html=content,
             recipient_email=email
         )
-        return _send_email_payload(to_email=email, subject=f"👑 VIP Pass Confirmed: {event_title}", html=html, sender_name="Eventora VIP")
+        return _send_email_payload(to_email=email, subject=f"👑 VIP Pass Confirmed: {event_title}", html=html, sender_name="Upgrade Talents India VIP")
 
     @staticmethod
     def send_merchandise_order_confirmation(
@@ -624,7 +627,7 @@ class EmailService:
             Dear <strong>{safe_name}</strong>,
           </p>
           <p style="margin: 0 0 20px 0; font-size: 14px; color: #94A3B8; line-height: 1.6;">
-            Thank you for purchasing official Eventora merchandise! Your payment has been verified and your order is currently being prepared.
+            Thank you for purchasing official Upgrade Talents India merchandise! Your payment has been verified and your order is currently being prepared.
           </p>
 
           <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #172033; border: 1px solid #1E293B; border-radius: 14px; padding: 22px; margin: 20px 0;">
@@ -656,7 +659,7 @@ class EmailService:
           </table>
 
           <div style="text-align: center; margin: 28px 0 10px 0;">
-            <a href="https://eventora.com/dashboard?tab=orders" style="display: inline-block; background: linear-gradient(135deg, #6366F1 0%, #A855F7 100%); color: #FFFFFF; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
+            <a href="https://www.upgradetalentsindia.in/dashboard?tab=orders" style="display: inline-block; background: linear-gradient(135deg, #6366F1 0%, #A855F7 100%); color: #FFFFFF; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
               Track My Order &rarr;
             </a>
           </div>
@@ -672,7 +675,7 @@ class EmailService:
             content_html=content,
             recipient_email=email
         )
-        return _send_email_payload(to_email=email, subject=f"🛍️ Order Confirmed: {order_number} - Eventora Official Merchandise", html=html)
+        return _send_email_payload(to_email=email, subject=f"🛍️ Order Confirmed: {order_number} - Upgrade Talents India Official Merchandise", html=html, sender_name="Upgrade Talents India")
 
     @staticmethod
     def send_merchandise_fulfillment_update(
@@ -736,7 +739,7 @@ class EmailService:
           </table>
 
           <div style="text-align: center; margin: 28px 0 10px 0;">
-            <a href="https://eventora.com/dashboard?tab=orders" style="display: inline-block; background: linear-gradient(135deg, #0284C7 0%, #38BDF8 100%); color: #FFFFFF; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);">
+            <a href="https://www.upgradetalentsindia.in/dashboard?tab=orders" style="display: inline-block; background: linear-gradient(135deg, #0284C7 0%, #38BDF8 100%); color: #FFFFFF; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);">
               View Live Tracking &rarr;
             </a>
           </div>
@@ -815,7 +818,7 @@ class EmailService:
           </table>
 
           <div style="text-align: center; margin: 28px 0 10px 0;">
-            <a href="https://eventora.com/dashboard?tab=tickets" style="display: inline-block; background: linear-gradient(135deg, #6366F1 0%, #A855F7 100%); color: #FFFFFF; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
+            <a href="https://www.upgradetalentsindia.in/dashboard?tab=tickets" style="display: inline-block; background: linear-gradient(135deg, #6366F1 0%, #A855F7 100%); color: #FFFFFF; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
               View My QR Pass &rarr;
             </a>
           </div>

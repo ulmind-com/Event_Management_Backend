@@ -1,4 +1,5 @@
 import re
+from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from app.core.admin_auth import get_current_admin
 from app.core.database import user_collection, judge_assignment_collection
@@ -95,9 +96,13 @@ async def assign_judge(req: JudgeAssignmentReq, admin: dict = Depends(get_curren
     if not judge:
         raise HTTPException(status_code=404, detail="Judge not found")
         
+    comp_matches = [clean_comp_id]
+    if ObjectId.is_valid(clean_comp_id):
+        comp_matches.append(ObjectId(clean_comp_id))
+
     existing_assignment = await judge_assignment_collection.find_one({
         "judge_email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"},
-        "competition_id": clean_comp_id
+        "competition_id": {"$in": comp_matches}
     })
     if existing_assignment:
         raise HTTPException(status_code=409, detail="Judge is already assigned to this competition.")
@@ -118,9 +123,13 @@ async def remove_judge_assignment(req: JudgeAssignmentReq, admin: dict = Depends
     clean_email = req.judge_email.strip()
     clean_comp_id = req.competition_id.strip()
     
-    res = await judge_assignment_collection.delete_one({
+    comp_matches = [clean_comp_id]
+    if ObjectId.is_valid(clean_comp_id):
+        comp_matches.append(ObjectId(clean_comp_id))
+
+    res = await judge_assignment_collection.delete_many({
         "judge_email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"},
-        "competition_id": clean_comp_id
+        "competition_id": {"$in": comp_matches}
     })
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Assignment not found")

@@ -605,30 +605,34 @@ async def judging_progress(comp_id: str, admin: dict = Depends(get_current_admin
         competition_submission_collection, coi_skip_collection
     )
     
-    total_judges = await judge_assignment_collection.count_documents({"competition_id": comp_id})
+    comp_matches = [str(comp_id)]
+    if ObjectId.is_valid(str(comp_id)):
+        comp_matches.append(ObjectId(str(comp_id)))
+
+    total_judges = await judge_assignment_collection.count_documents({"competition_id": {"$in": comp_matches}})
     total_subs = await competition_submission_collection.count_documents({
-        "competition_id": comp_id,
+        "competition_id": {"$in": comp_matches},
         "status": {"$in": ["SUBMITTED", "APPROVED"]}
     })
-    total_scores = await judge_score_collection.count_documents({"competition_id": comp_id})
-    locked_scores = await judge_score_collection.count_documents({"competition_id": comp_id, "is_locked": True})
-    total_skips = await coi_skip_collection.count_documents({"competition_id": comp_id})
+    total_scores = await judge_score_collection.count_documents({"competition_id": {"$in": comp_matches}})
+    locked_scores = await judge_score_collection.count_documents({"competition_id": {"$in": comp_matches}, "is_locked": True})
+    total_skips = await coi_skip_collection.count_documents({"competition_id": {"$in": comp_matches}})
     
     expected_total = total_judges * total_subs
     completed = total_scores + total_skips
     
     # Per-judge breakdown
-    judges = await judge_assignment_collection.find({"competition_id": comp_id}).to_list(100)
+    judges = await judge_assignment_collection.find({"competition_id": {"$in": comp_matches}}).to_list(100)
     judge_details = []
     for j in judges:
         email = j["judge_email"]
-        scored = await judge_score_collection.count_documents({"competition_id": comp_id, "judge_email": email})
-        skipped = await coi_skip_collection.count_documents({"competition_id": comp_id, "judge_email": email})
+        scored = await judge_score_collection.count_documents({"competition_id": {"$in": comp_matches}, "judge_email": email})
+        skipped = await coi_skip_collection.count_documents({"competition_id": {"$in": comp_matches}, "judge_email": email})
         judge_details.append({
             "judge_email": email,
             "scored": scored,
             "skipped": skipped,
-            "pending": total_subs - scored - skipped,
+            "pending": max(0, total_subs - scored - skipped),
             "completion_pct": round((scored + skipped) / total_subs * 100, 1) if total_subs > 0 else 0
         })
     

@@ -1,3 +1,4 @@
+import re
 from fastapi import APIRouter, Depends, HTTPException
 from bson import ObjectId
 from app.api.deps import get_current_user
@@ -37,9 +38,15 @@ async def get_current_judge(user: dict = Depends(get_current_user)):
 
 async def verify_judge_assignment(judge_email: str, competition_id: str):
     """Verifies that the judge is strictly assigned to this competition."""
+    clean_email = (judge_email or "").strip()
+    clean_cid = str(competition_id).strip()
+    comp_matches = [clean_cid]
+    if ObjectId.is_valid(clean_cid):
+        comp_matches.append(ObjectId(clean_cid))
+
     assignment = await judge_assignment_collection.find_one({
-        "judge_email": judge_email,
-        "competition_id": competition_id
+        "judge_email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"},
+        "competition_id": {"$in": comp_matches}
     })
     if not assignment:
         raise HTTPException(status_code=403, detail="You are not authorized to view or score this competition.")
@@ -62,9 +69,27 @@ async def verify_session_pin(judge_email: str, comp_id: str):
 @router.get("/")
 async def list_assigned_competitions(judge: dict = Depends(get_current_judge)):
     """Returns only competitions the judge is assigned to."""
-    assignments = await judge_assignment_collection.find({"judge_email": judge["email"]}).to_list(length=100)
-    comp_ids = [ObjectId(a["competition_id"]) for a in assignments]
-    comps = await competition_collection.find({"_id": {"$in": comp_ids}}).to_list(length=100)
+    clean_email = (judge.get("email") or "").strip()
+    assignments = await judge_assignment_collection.find({
+        "judge_email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"}
+    }).to_list(length=100)
+    
+    valid_ids = []
+    str_ids = []
+    for a in assignments:
+        cid = str(a.get("competition_id", "")).strip()
+        if cid:
+            str_ids.append(cid)
+            if ObjectId.is_valid(cid):
+                valid_ids.append(ObjectId(cid))
+                
+    comps = await competition_collection.find({
+        "$or": [
+            {"_id": {"$in": valid_ids}},
+            {"_id": {"$in": str_ids}},
+            {"id": {"$in": str_ids}}
+        ]
+    }).to_list(length=100)
     for c in comps:
         c["_id"] = str(c["_id"])
     return comps

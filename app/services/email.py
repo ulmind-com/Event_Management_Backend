@@ -39,7 +39,8 @@ def _render_base_email(
 ) -> str:
     """
     Renders an ultra-premium, dark-themed responsive email container
-    compatible with Gmail, Apple Mail, Outlook, and mobile clients.
+    matching the official Upgrade Talents India design system.
+    Compatible with Gmail, Apple Mail, Outlook, and mobile clients.
     """
     safe_title = _escape(title)
     safe_preheader = _escape(preheader)
@@ -60,23 +61,23 @@ def _render_base_email(
   </style>
   <![endif]-->
 </head>
-<body style="margin: 0; padding: 0; background-color: #070A12; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; color: #E2E8F0; width: 100% !important;">
+<body style="margin: 0; padding: 0; background-color: #08090C; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; color: #E2E8F0; width: 100% !important;">
   
   <!-- Preheader text (appears in inbox preview line) -->
-  <div style="display: none; font-size: 1px; color: #070A12; line-height: 1px; max-height: 0px; max-width: 0px; opacity: 0; overflow: hidden; mso-hide: all;">
+  <div style="display: none; font-size: 1px; color: #08090C; line-height: 1px; max-height: 0px; max-width: 0px; opacity: 0; overflow: hidden; mso-hide: all;">
     {safe_preheader} &zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
   </div>
 
-  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #070A12; padding: 36px 12px;">
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #08090C; padding: 36px 12px;">
     <tr>
       <td align="center" valign="top">
         
         <!-- Main Card Container (560px) -->
-        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 560px; background-color: #0F172A; border-radius: 20px; border: 1px solid #1E293B; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.85);">
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 560px; background-color: #0E1015; border-radius: 20px; border: 1px solid #1E2330; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.95);">
           
-          <!-- Top Brand Gradient Line -->
+          <!-- Top Brand Gradient Line (Lime to Blue) -->
           <tr>
-            <td height="4" style="background: linear-gradient(90deg, #F97316 0%, #A855F7 50%, #6366F1 100%); line-height: 4px; font-size: 4px;">&nbsp;</td>
+            <td height="4" style="background: linear-gradient(90deg, #BFFF2E 0%, #10B981 50%, #3B82F6 100%); line-height: 4px; font-size: 4px;">&nbsp;</td>
           </tr>
           
           <!-- Brand Header with Official Logo -->
@@ -86,11 +87,11 @@ def _render_base_email(
                 <tr>
                   <td align="left" valign="middle">
                     <a href="https://www.upgradetalentsindia.in" target="_blank" style="text-decoration: none; display: inline-block;">
-                      <img src="https://www.upgradetalentsindia.in/UTI%20Logo%20White%20Mode.png" alt="Upgrade Talents India" height="38" style="height: 38px; width: auto; max-width: 190px; object-fit: contain; display: block; border: 0;" />
+                      <img src="https://www.upgradetalentsindia.in/logo-white-mode.png" alt="Upgrade Talents India" height="38" style="height: 38px; width: auto; max-width: 195px; object-fit: contain; display: block; border: 0;" />
                     </a>
                   </td>
                   <td align="right" valign="middle">
-                    <span style="display: inline-block; padding: 5px 12px; background-color: {badge_bg}; border: 1px solid {badge_border}; border-radius: 9999px; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: {badge_color};">
+                    <span style="display: inline-block; padding: 6px 14px; background-color: {badge_bg}; border: 1px solid {badge_border}; border-radius: 9999px; font-size: 10px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: {badge_color};">
                       {badge_text}
                     </span>
                   </td>
@@ -102,7 +103,7 @@ def _render_base_email(
           <!-- Subtle Divider -->
           <tr>
             <td style="padding: 0 36px;">
-              <div style="border-top: 1px solid #1E293B; height: 1px; line-height: 1px; font-size: 1px;">&nbsp;</div>
+              <div style="border-top: 1px solid #1A1F2C; height: 1px; line-height: 1px; font-size: 1px;">&nbsp;</div>
             </td>
           </tr>
 
@@ -115,18 +116,21 @@ def _render_base_email(
 
           <!-- Footer Area -->
           <tr>
-            <td style="background-color: #0B0F19; border-top: 1px solid #1E293B; padding: 26px 36px; text-align: center;">
+            <td style="background-color: #090B10; border-top: 1px solid #1A1F2C; padding: 26px 36px; text-align: center;">
               <p style="margin: 0 0 10px 0; font-size: 12px; color: #64748B; line-height: 1.6;">
                 This message was securely transmitted to <span style="color: #94A3B8; font-family: Consolas, monospace;">{safe_email}</span>.<br>
                 If you did not initiate this request, you can safely ignore this email.
               </p>
               <p style="margin: 0 0 14px 0; font-size: 12px; color: #64748B;">
-                Need assistance? Visit <a href="https://www.upgradetalentsindia.in/contact" style="color: #818CF8; text-decoration: none; font-weight: 600;">Upgrade Talents India Help & Support</a>
+                Need assistance? Visit <a href="https://www.upgradetalentsindia.in/contact" style="color: #BFFF2E; text-decoration: none; font-weight: 700;">Upgrade Talents India Help &amp; Support</a>
               </p>
-              <div style="border-top: 1px solid #1E293B; margin: 16px auto; width: 60%; height: 1px; line-height: 1px; font-size: 1px;">&nbsp;</div>
+              <div style="border-top: 1px solid #1A1F2C; margin: 16px auto; width: 60%; height: 1px; line-height: 1px; font-size: 1px;">&nbsp;</div>
               <p style="margin: 0; font-size: 11px; color: #475569; text-transform: uppercase; letter-spacing: 1.2px;">
-                &copy; 2026 Upgrade Talents India &bull; Live Competitions, Passes & Certificates
+                &copy; 2026 UPGRADE TALENTS INDIA &bull; INDIA'S PREMIER TALENT PLATFORM
               </p>
+              <div style="margin-top: 6px;">
+                <a href="https://www.upgradetalentsindia.in" style="color: #64748B; text-decoration: none; font-size: 11px; letter-spacing: 0.5px;">www.upgradetalentsindia.in</a>
+              </div>
             </td>
           </tr>
 
@@ -213,11 +217,11 @@ def send_otp_email(
       <!-- High-Impact Stylized OTP Code Box -->
       <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 24px 0;">
         <tr>
-          <td align="center" style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(168, 85, 247, 0.15) 100%); border: 1.5px solid #6366F1; border-radius: 16px; padding: 26px 20px;">
-            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 2.5px; color: #A5B4FC; margin-bottom: 8px;">
+          <td align="center" style="background: linear-gradient(135deg, rgba(191, 255, 46, 0.08) 0%, rgba(16, 185, 129, 0.12) 100%); border: 1.5px solid #BFFF2E; border-radius: 16px; padding: 26px 20px;">
+            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 2.5px; color: #BFFF2E; margin-bottom: 8px;">
               Your One-Time Passcode
             </div>
-            <div style="font-family: 'SF Mono', Consolas, Menlo, Monaco, 'Courier New', monospace; font-size: 38px; font-weight: 900; letter-spacing: 12px; color: #FFFFFF; text-shadow: 0 0 20px rgba(99, 102, 241, 0.5); padding-left: 12px; margin: 10px 0 14px 0;">
+            <div style="font-family: 'SF Mono', Consolas, Menlo, Monaco, 'Courier New', monospace; font-size: 38px; font-weight: 900; letter-spacing: 12px; color: #FFFFFF; text-shadow: 0 0 20px rgba(191, 255, 46, 0.4); padding-left: 12px; margin: 10px 0 14px 0;">
               {safe_otp}
             </div>
             <span style="display: inline-block; background-color: rgba(245, 158, 11, 0.16); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 9999px; padding: 5px 14px; font-size: 12px; font-weight: 700; color: #FCD34D;">
@@ -228,7 +232,7 @@ def send_otp_email(
       </table>
 
       <!-- Security Notice Card -->
-      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #172033; border: 1px solid #23314E; border-left: 4px solid #6366F1; border-radius: 10px; margin: 24px 0;">
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #121622; border: 1px solid #1E2536; border-left: 4px solid #BFFF2E; border-radius: 10px; margin: 24px 0;">
         <tr>
           <td style="padding: 14px 18px;">
             <p style="margin: 0; font-size: 13px; color: #CBD5E1; line-height: 1.5;">
@@ -247,9 +251,9 @@ def send_otp_email(
         title="Upgrade Talents India Verification Code",
         preheader=f"Your verification code is {otp_code} — valid for 10 minutes.",
         badge_text="SECURITY VERIFICATION",
-        badge_color="#818CF8",
-        badge_bg="rgba(99, 102, 241, 0.15)",
-        badge_border="rgba(99, 102, 241, 0.35)",
+        badge_color="#BFFF2E",
+        badge_bg="rgba(191, 255, 46, 0.12)",
+        badge_border="rgba(191, 255, 46, 0.35)",
         content_html=content,
         recipient_email=to_email
     )
@@ -311,7 +315,7 @@ class EmailService:
           </table>
 
           <div style="text-align: center; margin: 30px 0 10px 0;">
-            <a href="https://www.upgradetalentsindia.in/dashboard" style="display: inline-block; background: linear-gradient(135deg, #6366F1 0%, #A855F7 100%); color: #FFFFFF; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
+            <a href="https://www.upgradetalentsindia.in/dashboard" style="display: inline-block; background-color: #BFFF2E; color: #000000; text-decoration: none; padding: 15px 36px; border-radius: 9999px; font-size: 14px; font-weight: 900; letter-spacing: 0.5px; box-shadow: 0 4px 20px rgba(191, 255, 46, 0.4); text-transform: uppercase;">
               Go to My Dashboard &rarr;
             </a>
           </div>
@@ -333,57 +337,72 @@ class EmailService:
     def send_judge_invitation(email: str, name: str) -> bool:
         """Sends official judge appointment invitation with clear login instructions."""
         login_url = "https://www.upgradetalentsindia.in/judge/login"
-        safe_name = _escape(name)
+        safe_name = _escape(name) or "Judge"
         safe_email = _escape(email)
 
         content = f"""
-          <h1 style="margin: 0 0 10px 0; font-size: 22px; font-weight: 800; color: #F8FAFC; letter-spacing: -0.4px;">
+          <h1 style="margin: 0 0 12px 0; font-size: 24px; font-weight: 900; color: #FFFFFF; letter-spacing: -0.5px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
             Official Appointment: Judges Panel &#9878;&#65039;
           </h1>
-          <p style="margin: 0 0 16px 0; font-size: 15px; color: #CBD5E1; line-height: 1.6;">
-            Hello <strong>{safe_name}</strong>,
+          <p style="margin: 0 0 16px 0; font-size: 15px; color: #F1F5F9; line-height: 1.6;">
+            Hello <strong style="color: #FFFFFF;">{safe_name}</strong>,
           </p>
-          <p style="margin: 0 0 20px 0; font-size: 14px; color: #94A3B8; line-height: 1.6;">
-            Congratulations! You have been officially appointed as an accredited Judge for <strong>Upgrade Talents India</strong> competitions. You now have access to review and score tournament submissions directly from the official portal.
+          <p style="margin: 0 0 24px 0; font-size: 14px; color: #94A3B8; line-height: 1.7;">
+            Congratulations! You have been officially appointed as an accredited Judge for <strong style="color: #FFFFFF;">Upgrade Talents India</strong> competitions. You now have exclusive access to review, evaluate, and score contestant submissions directly from the official portal.
           </p>
 
-          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #172033; border: 1px solid #1E293B; border-radius: 14px; padding: 22px; margin: 20px 0;">
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #121622; border: 1px solid #1E2536; border-radius: 16px; padding: 22px; margin: 24px 0;">
             <tr>
               <td>
-                <div style="font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; color: #A5B4FC; margin-bottom: 12px;">
+                <div style="font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #BFFF2E; margin-bottom: 14px;">
                   Quick Onboarding Guide:
                 </div>
-                <ol style="margin: 0; padding-left: 20px; font-size: 13px; color: #CBD5E1; line-height: 1.8;">
-                  <li>Open the Judges Portal: <a href="https://www.upgradetalentsindia.in/judge/login" style="color: #818CF8; word-break: break-all;">https://www.upgradetalentsindia.in/judge/login</a></li>
-                  <li>Enter your designated email address (<code style="color: #F8FAFC; background: #0F172A; padding: 2px 6px; border-radius: 4px;">{safe_email}</code>).</li>
-                  <li>You will receive a secure OTP on this email for your initial sign-in.</li>
-                  <li>After logging in, you will be taken directly to your assigned competitions scoring dashboard.</li>
+                <ol style="margin: 0; padding-left: 20px; font-size: 13.5px; color: #E2E8F0; line-height: 1.9;">
+                  <li>Open the Judges Portal: <a href="https://www.upgradetalentsindia.in/judge/login" style="color: #BFFF2E; font-weight: 700; text-decoration: none;">https://www.upgradetalentsindia.in/judge/login</a></li>
+                  <li>Enter your designated email: <code style="color: #BFFF2E; background: #080A10; border: 1px solid #232B3E; padding: 2px 7px; border-radius: 5px; font-family: monospace; font-size: 12.5px;">{safe_email}</code></li>
+                  <li>You will receive an instant one-time verification passcode (OTP) on your email for secure login.</li>
+                  <li>Access your assigned competitions dashboard to evaluate contestant audition entries and record your official scores.</li>
                 </ol>
               </td>
             </tr>
           </table>
 
-          <div style="text-align: center; margin: 28px 0 10px 0;">
-            <a href="{login_url}" style="display: inline-block; background: linear-gradient(135deg, #6366F1 0%, #A855F7 100%); color: #FFFFFF; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
+          <div style="text-align: center; margin: 32px 0 14px 0;">
+            <a href="{login_url}" style="display: inline-block; background-color: #BFFF2E; color: #000000; text-decoration: none; padding: 16px 42px; border-radius: 9999px; font-size: 15px; font-weight: 900; letter-spacing: 0.5px; box-shadow: 0 4px 20px rgba(191, 255, 46, 0.4); text-transform: uppercase;">
               Access Judges Portal &rarr;
             </a>
           </div>
           <p style="text-align: center; margin: 12px 0 0 0; font-size: 12px; color: #64748B;">
-            Direct Portal Link: <a href="https://www.upgradetalentsindia.in/judge/login" style="color: #818CF8;">https://www.upgradetalentsindia.in/judge/login</a>
+            Direct Portal Link: <a href="https://www.upgradetalentsindia.in/judge/login" style="color: #BFFF2E; font-family: monospace; word-break: break-all;">https://www.upgradetalentsindia.in/judge/login</a>
           </p>
+
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #121622; border: 1px solid #1E2536; border-left: 4px solid #BFFF2E; border-radius: 10px; margin: 24px 0;">
+            <tr>
+              <td style="padding: 14px 18px;">
+                <p style="margin: 0; font-size: 12.5px; color: #94A3B8; line-height: 1.5;">
+                  <strong style="color: #FFFFFF;">&#128274; Security Notice:</strong> Never share your verification passcode with anyone. Upgrade Talents India administrators will never ask for your authentication codes.
+                </p>
+              </td>
+            </tr>
+          </table>
         """
 
         html = _render_base_email(
             title="Upgrade Talents India — Judges Panel Appointment",
             preheader=f"Hello {name}, you have been appointed to the Upgrade Talents India Judges Panel.",
             badge_text="OFFICIAL APPOINTMENT",
-            badge_color="#A78BFA",
-            badge_bg="rgba(167, 139, 250, 0.15)",
-            badge_border="rgba(167, 139, 250, 0.35)",
+            badge_color="#BFFF2E",
+            badge_bg="rgba(191, 255, 46, 0.12)",
+            badge_border="rgba(191, 255, 46, 0.35)",
             content_html=content,
             recipient_email=email
         )
-        return _send_email_payload(to_email=email, subject="⚖️ Official Appointment: Upgrade Talents India Judges Panel", html=html, sender_name="Upgrade Talents India")
+        return _send_email_payload(
+            to_email=email,
+            subject="⚖️ Official Appointment: Upgrade Talents India Judges Panel",
+            html=html,
+            sender_name="Upgrade Talents India"
+        )
 
     @staticmethod
     def send_volunteer_invitation(email: str, name: Optional[str] = None) -> bool:

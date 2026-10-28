@@ -25,6 +25,24 @@ class ChangePasswordReq(BaseModel):
     new_password: str = Field(..., min_length=8)
     confirm_password: Optional[str] = None
 
+class ForgotPasswordReq(BaseModel):
+    email: EmailStr = Field(..., description="Registered user email address")
+
+class ForgotPasswordVerifyReq(BaseModel):
+    email: EmailStr = Field(..., description="Registered user email address")
+    otp: str = Field(..., min_length=6, max_length=6, description="6-digit verification code sent to email")
+
+class ResetPasswordWithTokenReq(BaseModel):
+    reset_token: str = Field(..., description="Temporary verification token received from verify-otp")
+    new_password: str = Field(..., min_length=8, description="New password (minimum 8 characters)")
+    confirm_password: str = Field(..., min_length=8, description="Confirmation of new password")
+
+class DirectResetPasswordReq(BaseModel):
+    email: EmailStr = Field(..., description="Registered user email address")
+    otp: str = Field(..., min_length=6, max_length=6, description="6-digit verification code sent to email")
+    new_password: str = Field(..., min_length=8, description="New password (minimum 8 characters)")
+    confirm_password: str = Field(..., min_length=8, description="Confirmation of new password")
+
 class Token(BaseModel):
     access_token: str
     token_type: str

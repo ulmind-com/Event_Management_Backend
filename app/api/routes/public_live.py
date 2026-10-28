@@ -26,6 +26,7 @@ from app.core.database import (
     competition_submission_collection,
     audience_vote_collection,
 )
+from app.services.competition_lifecycle import evaluate_competition_registration_status
 
 router = APIRouter()
 
@@ -128,13 +129,12 @@ def _add_competition_live_status(comp: dict, now: datetime) -> dict:
     else:
         comp["live_phase"] = "UNKNOWN"
 
-    # Registration window
-    if reg_start and reg_deadline:
-        comp["registration_open"] = reg_start <= now <= reg_deadline
-    elif reg_deadline:
-        comp["registration_open"] = now <= reg_deadline
-    else:
-        comp["registration_open"] = False
+    # Real-time registration lifecycle evaluation (date window, manual admin lock, capacity)
+    reg_eval = evaluate_competition_registration_status(comp, now=now)
+    comp["registration_open"] = reg_eval["can_register"]
+    comp["registration_status"] = reg_eval["registration_status"]
+    comp["can_register"] = reg_eval["can_register"]
+    comp["registration_reason"] = reg_eval["reason"]
 
     # Submission window
     if sub_deadline:

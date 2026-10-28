@@ -15,6 +15,10 @@ from app.core.database import (
 )
 from app.schemas.competition import CompetitionCreateReq, CompetitionUpdateReq
 from app.services.cloudinary_srv import upload_image
+from app.services.competition_lifecycle import (
+    evaluate_competition_registration_status,
+    safe_object_id,
+)
 from datetime import datetime, timezone
 
 router = APIRouter()
@@ -47,6 +51,9 @@ async def create_competition(req: CompetitionCreateReq, admin: dict = Depends(ge
     comp_dict["voting_status"] = "OPEN" if comp_dict.get("audience_voting_enabled") else "CLOSED"
     comp_dict["judging_status"] = "OPEN" if comp_dict.get("judge_scoring_enabled") else "CLOSED"
     comp_dict["result_status"] = "PENDING"
+    comp_dict["registration_status"] = comp_dict.get("registration_status") or "OPEN"
+    comp_dict["is_registration_open"] = True if comp_dict.get("is_registration_open") is not False else False
+    comp_dict["registered_count"] = int(comp_dict.get("registered_count") or 0)
     
     comp_dict["created_at"] = datetime.now(timezone.utc)
     comp_dict["updated_at"] = datetime.now(timezone.utc)
@@ -123,6 +130,9 @@ async def create_competition_with_media(
     comp_dict["voting_status"] = "OPEN" if comp_dict.get("audience_voting_enabled") else "CLOSED"
     comp_dict["judging_status"] = "OPEN" if comp_dict.get("judge_scoring_enabled") else "CLOSED"
     comp_dict["result_status"] = "PENDING"
+    comp_dict["registration_status"] = comp_dict.get("registration_status") or "OPEN"
+    comp_dict["is_registration_open"] = True if comp_dict.get("is_registration_open") is not False else False
+    comp_dict["registered_count"] = int(comp_dict.get("registered_count") or 0)
 
     comp_dict["created_at"] = datetime.now(timezone.utc)
     comp_dict["updated_at"] = datetime.now(timezone.utc)
@@ -249,6 +259,13 @@ async def update_competition(comp_id: str, req: CompetitionUpdateReq, admin: dic
         update_data["voting_status"] = "OPEN" if update_data["audience_voting_enabled"] else "CLOSED"
     if "judge_scoring_enabled" in update_data:
         update_data["judging_status"] = "OPEN" if update_data["judge_scoring_enabled"] else "CLOSED"
+    if "is_registration_open" in update_data:
+        if update_data["is_registration_open"] is False:
+            update_data["registration_status"] = "CLOSED"
+        elif "registration_status" not in update_data:
+            update_data["registration_status"] = "OPEN"
+    elif "registration_status" in update_data and update_data["registration_status"]:
+        update_data["is_registration_open"] = (update_data["registration_status"].strip().upper() == "OPEN")
         
     update_data["updated_at"] = datetime.now(timezone.utc)
     
@@ -733,6 +750,123 @@ async def export_participants_pdf(comp_id: str, admin: dict = Depends(get_curren
 # LIFECYCLE CONTROLS
 # ══════════════════════════════════════════════
 
+@router.post("/{comp_id}/registration/close")
+async def close_competition_registration(
+    comp_id: str,
+    reason: Optional[str] = Query(None, description="Optional administrative closure reason"),
+    admin: dict = Depends(get_current_admin),
+):
+    """
+    Administrative Control: Immediately closes registration for the competition.
+    No participant will be able to register through any channel once closed.
+    """
+    c_id = safe_object_id(comp_id)
+    if not c_id:
+        raise HTTPException(status_code=400, detail="Invalid competition ID")
+    comp = await competition_collection.find_one({"_id": c_id})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    now = datetime.now(timezone.utc)
+    closure_reason = reason or "Registration closed by administrator."
+    await competition_collection.update_one(
+        {"_id": c_id},
+        {"$set": {
+            "registration_status": "CLOSED",
+            "is_registration_open": False,
+            "registration_closed_at": now,
+            "registration_closed_by": admin.get("email"),
+            "registration_closure_reason": closure_reason,
+            "updated_at": now,
+        }}
+    )
+    return {
+        "message": "Competition registration has been closed successfully.",
+        "competition_id": str(c_id),
+        "is_registration_open": False,
+        "registration_status": "CLOSED",
+        "closure_reason": closure_reason,
+        "closed_at": now.isoformat(),
+    }
+
+
+@router.post("/{comp_id}/registration/open")
+async def open_competition_registration(
+    comp_id: str,
+    new_deadline: Optional[datetime] = Query(None, description="Optional new registration deadline"),
+    admin: dict = Depends(get_current_admin),
+):
+    """
+    Administrative Control: Re-opens registration for the competition.
+    Optionally extends or resets the registration deadline.
+    """
+    c_id = safe_object_id(comp_id)
+    if not c_id:
+        raise HTTPException(status_code=400, detail="Invalid competition ID")
+    comp = await competition_collection.find_one({"_id": c_id})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    now = datetime.now(timezone.utc)
+    update_set: Dict[str, Any] = {
+        "registration_status": "OPEN",
+        "is_registration_open": True,
+        "registration_opened_at": now,
+        "registration_opened_by": admin.get("email"),
+        "updated_at": now,
+    }
+    if new_deadline:
+        update_set["registration_deadline"] = new_deadline
+
+    await competition_collection.update_one({"_id": c_id}, {"$set": update_set})
+
+    updated_comp = await competition_collection.find_one({"_id": c_id})
+    status_info = evaluate_competition_registration_status(updated_comp)
+
+    return {
+        "message": "Competition registration has been opened successfully.",
+        "competition_id": str(c_id),
+        **status_info,
+    }
+
+
+@router.get("/{comp_id}/registration/status")
+async def get_competition_registration_admin_status(
+    comp_id: str,
+    admin: dict = Depends(get_current_admin),
+):
+    """
+    Administrative Inspection: Returns comprehensive real-time status of registration,
+    including open/close state, deadline, participant counts, and capacity limits.
+    """
+    c_id = safe_object_id(comp_id)
+    if not c_id:
+        raise HTTPException(status_code=400, detail="Invalid competition ID")
+    comp = await competition_collection.find_one({"_id": c_id})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    status_info = evaluate_competition_registration_status(comp)
+    total_confirmed = await competition_registration_collection.count_documents({
+        "competition_id": str(c_id),
+        "status": "CONFIRMED",
+    })
+    total_pending = await competition_registration_collection.count_documents({
+        "competition_id": str(c_id),
+        "status": "PENDING",
+    })
+    return {
+        "competition_id": str(c_id),
+        "title": comp.get("title"),
+        **status_info,
+        "metrics": {
+            "confirmed_registrations": total_confirmed,
+            "pending_registrations": total_pending,
+            "total_registered": total_confirmed + total_pending,
+        },
+    }
+
+
 @router.post("/{comp_id}/voting/close")
 async def close_audience_voting(comp_id: str, admin: dict = Depends(get_current_admin)):
     comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
@@ -840,6 +974,9 @@ async def competition_dashboard_overview(comp_id: str, admin: dict = Depends(get
     total_votes = await audience_vote_collection.count_documents({"competition_id": comp_id})
     total_scores = await judge_score_collection.count_documents({"competition_id": comp_id})
     
+    reg_lifecycle = evaluate_competition_registration_status(comp)
+    total_confirmed_regs = await competition_registration_collection.count_documents({"competition_id": comp_id, "status": "CONFIRMED"})
+
     return {
         "competition_id": comp_id,
         "title": comp.get("title"),
@@ -848,15 +985,20 @@ async def competition_dashboard_overview(comp_id: str, admin: dict = Depends(get
             "judge_scoring_enabled": comp.get("judge_scoring_enabled"),
         },
         "lifecycle": {
+            "registration_status": reg_lifecycle["registration_status"],
+            "is_registration_open": reg_lifecycle["is_registration_open"],
+            "can_register": reg_lifecycle["can_register"],
+            "registration_deadline": reg_lifecycle["registration_deadline"],
             "voting_status": comp.get("voting_status"),
             "judging_status": comp.get("judging_status"),
-            "result_status": comp.get("result_status")
+            "result_status": comp.get("result_status"),
         },
         "metrics": {
+            "total_registered": total_confirmed_regs,
             "total_participants": total_participants,
             "total_audience_votes": total_votes,
-            "total_judge_scores": total_scores
-        }
+            "total_judge_scores": total_scores,
+        },
     }
 
 

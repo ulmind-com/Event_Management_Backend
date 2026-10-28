@@ -7,8 +7,24 @@ from typing import Optional, Tuple, List
 from app.services.firebase_auth_service import FirebaseAuthService
 from app.services.referral_service import ReferralService
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Header, status, Depends
-from app.schemas.user import EmailRequest, OTPVerifyRequest, UserLoginReq, Token, GoogleLoginReq, CompleteProfileReq
-from app.services.email import send_otp_email
+from app.schemas.user import (
+    EmailRequest,
+    OTPVerifyRequest,
+    UserLoginReq,
+    Token,
+    GoogleLoginReq,
+    CompleteProfileReq,
+    ForgotPasswordReq,
+    ForgotPasswordVerifyReq,
+    ResetPasswordWithTokenReq,
+    DirectResetPasswordReq,
+)
+from app.services.email import (
+    send_otp_email,
+    send_password_reset_otp_email,
+    send_password_reset_success_email,
+    EmailService,
+)
 from app.services.cloudinary_srv import upload_image
 from app.core.database import user_collection, otp_collection
 from app.core.security import create_access_token, decode_token, get_password_hash, verify_password
@@ -338,6 +354,307 @@ async def user_login(req: UserLoginReq):
             "missing_fields": missing,
             "first_time_login": not is_completed
         }
+    }
+
+
+# ══════════════════════════════════════════════
+# USER FORGOT & RESET PASSWORD (USER ROLE ONLY)
+# ══════════════════════════════════════════════
+
+@router.post("/forgot-password")
+@router.post("/forgot-password/request")
+async def forgot_password_request(req: ForgotPasswordReq):
+    """
+    Step 1: Request password reset OTP.
+    Sends an ultra-secure 6-digit verification passcode to the user's registered email.
+    Strictly for standard USER accounts.
+    """
+    email = req.email.strip().lower()
+    user = await user_collection.find_one({"email": email})
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="No account found with this email address. Please register or verify the email entered."
+        )
+
+    if user.get("is_deleted"):
+        raise HTTPException(
+            status_code=403,
+            detail="Account is disabled or deleted. Please contact support."
+        )
+
+    # Security check: Ensure this is a regular user account
+    if (user.get("role") or "USER").upper() != "USER":
+        raise HTTPException(
+            status_code=403,
+            detail="Password reset on this portal is reserved for user accounts. Staff should use their administrative portal."
+        )
+
+    otp_code = generate_otp()
+    expire_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+    # Save reset OTP with dedicated purpose tag
+    await otp_collection.update_one(
+        {"email": email, "purpose": "password_reset"},
+        {"$set": {
+            "email": email,
+            "otp": otp_code,
+            "purpose": "password_reset",
+            "expireAt": expire_at,
+            "verified": False,
+            "attempts": 0,
+            "created_at": datetime.now(timezone.utc)
+        }},
+        upsert=True
+    )
+
+    user_name = user.get("name") or user.get("full_name") or email.split("@")[0]
+    email_sent = send_password_reset_otp_email(email, otp_code, user_name)
+
+    logger.info(f"Password reset OTP requested for user '{email}' (email_sent={email_sent})")
+
+    return {
+        "message": "Password reset code sent to your email. It will expire in 10 minutes.",
+        "email": email,
+        "expires_in_minutes": 10
+    }
+
+
+@router.post("/forgot-password/verify-otp")
+async def forgot_password_verify_otp(req: ForgotPasswordVerifyReq):
+    """
+    Step 2: Verify the 6-digit password reset OTP.
+    Returns a secure, short-lived reset token (valid for 15 minutes)
+    that must be presented to change the password.
+    """
+    email = req.email.strip().lower()
+    otp_code = req.otp.strip()
+
+    record = await otp_collection.find_one({"email": email, "purpose": "password_reset"})
+    if not record:
+        raise HTTPException(
+            status_code=400,
+            detail="No active password reset request found. Please request a new code."
+        )
+
+    # Check expiration
+    expire_at = record.get("expireAt")
+    if expire_at:
+        if expire_at.tzinfo is None:
+            expire_at = expire_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > expire_at:
+            await otp_collection.delete_one({"email": email, "purpose": "password_reset"})
+            raise HTTPException(
+                status_code=400,
+                detail="Reset code has expired. Please request a new code."
+            )
+
+    # Check brute force attempts
+    attempts = record.get("attempts", 0)
+    if attempts >= 5:
+        await otp_collection.delete_one({"email": email, "purpose": "password_reset"})
+        raise HTTPException(
+            status_code=400,
+            detail="Too many invalid attempts. For your security, this code has been revoked. Please request a new one."
+        )
+
+    if record.get("otp") != otp_code:
+        await otp_collection.update_one(
+            {"email": email, "purpose": "password_reset"},
+            {"$inc": {"attempts": 1}}
+        )
+        remaining = 4 - attempts
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid verification code. {remaining} attempt(s) remaining."
+        )
+
+    # Mark as verified
+    await otp_collection.update_one(
+        {"email": email, "purpose": "password_reset"},
+        {"$set": {"verified": True, "verified_at": datetime.now(timezone.utc)}}
+    )
+
+    # Generate temporary reset token
+    reset_token = create_access_token(
+        data={"sub": email, "type": "password_reset"},
+        expires_delta=timedelta(minutes=15)
+    )
+
+    return {
+        "message": "Verification code confirmed. You can now set your new password.",
+        "email": email,
+        "reset_token": reset_token,
+        "token_type": "bearer",
+        "expires_in_minutes": 15
+    }
+
+
+@router.post("/forgot-password/reset-password")
+async def forgot_password_reset(req: ResetPasswordWithTokenReq):
+    """
+    Step 3: Submit new password using the verified reset token.
+    Validates token, enforces password rules, hashes password with bcrypt,
+    and sends a security alert email.
+    """
+    if req.new_password != req.confirm_password:
+        raise HTTPException(status_code=400, detail="New password and confirm password do not match.")
+
+    if len(req.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters long.")
+
+    # Decode reset token
+    payload = decode_token(req.reset_token)
+    if not payload or payload.get("type") != "password_reset":
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired password reset token. Please restart the forgot password process."
+        )
+
+    email = payload.get("sub")
+    if not email:
+        raise HTTPException(status_code=401, detail="Malformed reset token.")
+
+    user = await user_collection.find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User account not found.")
+
+    if user.get("is_deleted"):
+        raise HTTPException(status_code=403, detail="Account is disabled or deleted.")
+
+    # Strictly enforce USER role only
+    if (user.get("role") or "USER").upper() != "USER":
+        raise HTTPException(
+            status_code=403,
+            detail="Password reset on this portal is reserved for user accounts. Staff should use their administrative portal."
+        )
+
+    # Verify that the OTP record was actually marked verified
+    otp_record = await otp_collection.find_one({"email": email, "purpose": "password_reset", "verified": True})
+    if not otp_record:
+        raise HTTPException(
+            status_code=400,
+            detail="Reset authorization has already been used or expired. Please request a new code."
+        )
+
+    # Hash new password
+    hashed_pwd = get_password_hash(req.new_password)
+    now = datetime.now(timezone.utc)
+
+    # Update user password in database
+    await user_collection.update_one(
+        {"email": email},
+        {"$set": {
+            "password_hash": hashed_pwd,
+            "password_changed_at": now,
+            "updated_at": now
+        }}
+    )
+
+    # Clean up OTP record so token cannot be re-used
+    await otp_collection.delete_one({"email": email, "purpose": "password_reset"})
+
+    # Send confirmation email
+    user_name = user.get("name") or user.get("full_name") or email.split("@")[0]
+    try:
+        send_password_reset_success_email(email, user_name)
+    except Exception as e:
+        logger.warning(f"Failed to send password reset confirmation email: {e}")
+
+    logger.info(f"Password successfully reset for user '{email}'")
+
+    return {
+        "message": "Password has been reset successfully. You can now log in with your new password.",
+        "email": email,
+        "success": True,
+        "redirect_url": "/login"
+    }
+
+
+@router.post("/forgot-password/confirm")
+async def forgot_password_direct_confirm(req: DirectResetPasswordReq):
+    """
+    Combined single-screen reset: verifies email + OTP and resets password in a single atomic request.
+    Ideal for modern single-page reset screens.
+    """
+    email = req.email.strip().lower()
+    otp_code = req.otp.strip()
+
+    if req.new_password != req.confirm_password:
+        raise HTTPException(status_code=400, detail="New password and confirm password do not match.")
+
+    if len(req.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters long.")
+
+    user = await user_collection.find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=404, detail="No account found with this email address.")
+
+    if user.get("is_deleted"):
+        raise HTTPException(status_code=403, detail="Account is disabled or deleted.")
+
+    # Strictly enforce USER role only
+    if (user.get("role") or "USER").upper() != "USER":
+        raise HTTPException(
+            status_code=403,
+            detail="Password reset on this portal is reserved for user accounts. Staff should use their administrative portal."
+        )
+
+    record = await otp_collection.find_one({"email": email, "purpose": "password_reset"})
+    if not record:
+        raise HTTPException(status_code=400, detail="No active password reset request found. Please request a new code.")
+
+    # Check expiration
+    expire_at = record.get("expireAt")
+    if expire_at:
+        if expire_at.tzinfo is None:
+            expire_at = expire_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > expire_at:
+            await otp_collection.delete_one({"email": email, "purpose": "password_reset"})
+            raise HTTPException(status_code=400, detail="Reset code has expired. Please request a new one.")
+
+    # Check attempts
+    attempts = record.get("attempts", 0)
+    if attempts >= 5:
+        await otp_collection.delete_one({"email": email, "purpose": "password_reset"})
+        raise HTTPException(status_code=400, detail="Too many invalid attempts. Code revoked. Please request a new one.")
+
+    if record.get("otp") != otp_code:
+        await otp_collection.update_one(
+            {"email": email, "purpose": "password_reset"},
+            {"$inc": {"attempts": 1}}
+        )
+        raise HTTPException(status_code=400, detail="Invalid verification code.")
+
+    # Hash new password
+    hashed_pwd = get_password_hash(req.new_password)
+    now = datetime.now(timezone.utc)
+
+    await user_collection.update_one(
+        {"email": email},
+        {"$set": {
+            "password_hash": hashed_pwd,
+            "password_changed_at": now,
+            "updated_at": now
+        }}
+    )
+
+    await otp_collection.delete_one({"email": email, "purpose": "password_reset"})
+
+    user_name = user.get("name") or user.get("full_name") or email.split("@")[0]
+    try:
+        send_password_reset_success_email(email, user_name)
+    except Exception as e:
+        logger.warning(f"Failed to send password reset confirmation email: {e}")
+
+    logger.info(f"Direct password reset successful for user '{email}'")
+
+    return {
+        "message": "Password has been reset successfully. You can now log in with your new password.",
+        "email": email,
+        "success": True,
+        "redirect_url": "/login"
     }
 
 

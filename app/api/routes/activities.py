@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from bson import ObjectId
 from app.core.database import event_collection, ticket_collection, competition_collection, course_collection, merchandise_collection
-
 from app.services.ticket import TicketService
+from app.services.competition_lifecycle import evaluate_competition_registration_status
 
 router = APIRouter()
 
@@ -88,6 +88,12 @@ async def get_competitions(skip: int = 0, limit: int = 10, search: Optional[str]
     if search:
         query["title"] = {"$regex": search, "$options": "i"}
     competitions = await competition_collection.find(query).skip(skip).limit(limit).to_list(length=limit)
+    for comp in competitions:
+        reg_eval = evaluate_competition_registration_status(comp)
+        comp["registration_status"] = reg_eval["registration_status"]
+        comp["is_registration_open"] = reg_eval["is_registration_open"]
+        comp["can_register"] = reg_eval["can_register"]
+        comp["registration_reason"] = reg_eval["reason"]
     return clean_ids(competitions)
 
 @router.get("/competitions/{comp_id}")
@@ -100,6 +106,11 @@ async def get_competition_activity(comp_id: str):
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
     comp["_id"] = str(comp["_id"])
+    reg_eval = evaluate_competition_registration_status(comp)
+    comp["registration_status"] = reg_eval["registration_status"]
+    comp["is_registration_open"] = reg_eval["is_registration_open"]
+    comp["can_register"] = reg_eval["can_register"]
+    comp["registration_reason"] = reg_eval["reason"]
     return comp
 
 @router.get("/courses")

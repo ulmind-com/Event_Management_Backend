@@ -7,6 +7,7 @@ from app.api.deps import get_current_user
 from app.core.database import registration_collection, event_collection, competition_collection, course_collection
 from app.schemas.action import RegistrationReq
 from datetime import datetime, timezone
+from app.services.competition_lifecycle import assert_registration_allowed
 
 router = APIRouter()
 
@@ -163,7 +164,11 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
             raise HTTPException(status_code=400, detail="Activity is full")
 
 
-    # Check capacity/deadlines (simplified logic for now)
+    # STRICT REGISTRATION DEADLINE & STATUS ENFORCEMENT FOR COMPETITIONS
+    if req.activity_type == "competition":
+        assert_registration_allowed(activity, now=now)
+
+    # Check capacity/deadlines (simplified logic for events)
     if "deadline" in activity:
         deadline = datetime.fromisoformat(activity["deadline"])
         if datetime.now(timezone.utc) > deadline:

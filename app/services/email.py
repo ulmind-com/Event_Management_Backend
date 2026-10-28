@@ -314,6 +314,137 @@ def send_otp_email(
     return _send_email_payload(to_email=to_email, subject=subject, html=html, sender_name="Upgrade Talents India Security")
 
 
+def send_password_reset_otp_email(
+    to_email: str,
+    otp_code: str,
+    user_name: Optional[str] = None
+) -> bool:
+    """
+    Sends an ultra-secure, branded Password Reset OTP email.
+    """
+    safe_otp = _escape(otp_code)
+    greeting = f"Hello {_escape(user_name)}," if user_name else "Hello,"
+
+    content = f"""
+      <h1 style="margin: 0 0 10px 0; font-size: 22px; font-weight: 800; color: #F8FAFC; letter-spacing: -0.4px;">
+        Reset Your Password
+      </h1>
+      <p style="margin: 0 0 6px 0; font-size: 15px; color: #CBD5E1; line-height: 1.6;">
+        {greeting}
+      </p>
+      <p style="margin: 0 0 24px 0; font-size: 14px; color: #94A3B8; line-height: 1.6;">
+        We received a request to reset the password for your Upgrade Talents India account. Use the one-time passcode below to verify your identity:
+      </p>
+
+      <!-- High-Impact Stylized OTP Code Box -->
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 24px 0;">
+        <tr>
+          <td align="center" style="background: linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, rgba(245, 158, 11, 0.12) 100%); border: 1.5px solid #F59E0B; border-radius: 16px; padding: 26px 20px;">
+            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 2.5px; color: #F59E0B; margin-bottom: 8px;">
+              Password Reset Passcode
+            </div>
+            <div style="font-family: 'SF Mono', Consolas, Menlo, Monaco, 'Courier New', monospace; font-size: 38px; font-weight: 900; letter-spacing: 12px; color: #FFFFFF; text-shadow: 0 0 20px rgba(245, 158, 11, 0.4); padding-left: 12px; margin: 10px 0 14px 0;">
+              {safe_otp}
+            </div>
+            <span style="display: inline-block; background-color: rgba(239, 68, 68, 0.16); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 9999px; padding: 5px 14px; font-size: 12px; font-weight: 700; color: #FCA5A5;">
+              &#9201; Expires in 10 minutes
+            </span>
+          </td>
+        </tr>
+      </table>
+
+      <!-- Security Notice Card -->
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #121622; border: 1px solid #1E2536; border-left: 4px solid #EF4444; border-radius: 10px; margin: 24px 0;">
+        <tr>
+          <td style="padding: 14px 18px;">
+            <p style="margin: 0; font-size: 13px; color: #CBD5E1; line-height: 1.5;">
+              <strong style="color: #EF4444;">&#128274; Security Warning:</strong> If you did NOT request this password reset, please ignore this email. Your current password remains secure and will not change unless this code is verified.
+            </p>
+          </td>
+        </tr>
+      </table>
+
+      <p style="margin: 20px 0 0 0; font-size: 13px; color: #64748B; line-height: 1.6;">
+        For your security, never forward or share this passcode with anyone.
+      </p>
+    """
+
+    html = _render_base_email(
+        title="Reset Your Password",
+        preheader=f"Your password reset passcode is {otp_code} — expires in 10 minutes.",
+        badge_text="PASSWORD RESET",
+        badge_color="#F59E0B",
+        badge_bg="rgba(245, 158, 11, 0.12)",
+        badge_border="rgba(245, 158, 11, 0.35)",
+        content_html=content,
+        recipient_email=to_email
+    )
+
+    subject = f"🔒 {otp_code} is your password reset code - Upgrade Talents India"
+    return _send_email_payload(to_email=to_email, subject=subject, html=html, sender_name="Upgrade Talents India Security")
+
+
+def send_password_reset_success_email(
+    to_email: str,
+    user_name: Optional[str] = None
+) -> bool:
+    """
+    Sends a confirmation email after password has been successfully reset.
+    """
+    greeting = f"Hello {_escape(user_name)}," if user_name else "Hello,"
+    now_str = datetime.now(timezone.utc).strftime("%d %b %Y at %H:%M UTC")
+
+    content = f"""
+      <h1 style="margin: 0 0 10px 0; font-size: 22px; font-weight: 800; color: #F8FAFC; letter-spacing: -0.4px;">
+        Password Reset Successful
+      </h1>
+      <p style="margin: 0 0 6px 0; font-size: 15px; color: #CBD5E1; line-height: 1.6;">
+        {greeting}
+      </p>
+      <p style="margin: 0 0 20px 0; font-size: 14px; color: #94A3B8; line-height: 1.6;">
+        The password for your Upgrade Talents India account was successfully changed on <strong>{now_str}</strong>.
+      </p>
+
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #121622; border: 1px solid #1E2536; border-radius: 12px; padding: 20px; margin: 20px 0;">
+        <tr>
+          <td>
+            <p style="margin: 0 0 8px 0; font-size: 14px; color: #F8FAFC; font-weight: 600;">
+              &#9989; Your account is ready
+            </p>
+            <p style="margin: 0; font-size: 13px; color: #94A3B8; line-height: 1.5;">
+              You can now log in to your account using your email address and new password.
+            </p>
+          </td>
+        </tr>
+      </table>
+
+      <!-- Security Notice Card -->
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #121622; border: 1px solid #1E2536; border-left: 4px solid #F59E0B; border-radius: 10px; margin: 20px 0;">
+        <tr>
+          <td style="padding: 14px 18px;">
+            <p style="margin: 0; font-size: 13px; color: #CBD5E1; line-height: 1.5;">
+              <strong style="color: #F59E0B;">Didn't make this change?</strong> If you did not authorize this password reset, please contact our support team immediately to secure your account.
+            </p>
+          </td>
+        </tr>
+      </table>
+    """
+
+    html = _render_base_email(
+        title="Password Reset Successful",
+        preheader="Your Upgrade Talents India account password was changed.",
+        badge_text="SECURITY NOTICE",
+        badge_color="#10B981",
+        badge_bg="rgba(16, 185, 129, 0.12)",
+        badge_border="rgba(16, 185, 129, 0.35)",
+        content_html=content,
+        recipient_email=to_email
+    )
+
+    subject = "✅ Security Alert: Password Changed - Upgrade Talents India"
+    return _send_email_payload(to_email=to_email, subject=subject, html=html, sender_name="Upgrade Talents India Security")
+
+
 # ═══════════════════════════════════════════════════════════════════
 # EMAIL SERVICE CLASS
 # ═══════════════════════════════════════════════════════════════════
@@ -329,6 +460,16 @@ class EmailService:
     def send_otp_email(to_email: str, otp_code: str, user_name: Optional[str] = None) -> bool:
         """Alias for send_otp_email."""
         return send_otp_email(to_email=to_email, otp_code=otp_code, user_name=user_name)
+
+    @staticmethod
+    def send_password_reset_otp_email(to_email: str, otp_code: str, user_name: Optional[str] = None) -> bool:
+        """Sends password reset OTP email."""
+        return send_password_reset_otp_email(to_email=to_email, otp_code=otp_code, user_name=user_name)
+
+    @staticmethod
+    def send_password_reset_success_email(to_email: str, user_name: Optional[str] = None) -> bool:
+        """Sends password reset success confirmation email."""
+        return send_password_reset_success_email(to_email=to_email, user_name=user_name)
 
     @staticmethod
     def send_welcome_email(email: str, name: str) -> bool:

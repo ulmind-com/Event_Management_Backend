@@ -19,6 +19,10 @@ import json
 
 from app.services.audio_validator import AudioValidator, VIDEO_EXTENSIONS
 from app.services.cloudinary_srv import upload_image
+from app.services.competition_lifecycle import (
+    assert_registration_allowed,
+    evaluate_competition_registration_status,
+)
 
 router = APIRouter()
 
@@ -74,7 +78,7 @@ class CompetitionRegisterReq(BaseModel):
 
 @router.get("/v1/competitions/{comp_id}")
 async def get_competition_by_id(comp_id: str):
-    """Fetch single competition details."""
+    """Fetch single competition details with real-time registration status."""
     c_id = safe_object_id(comp_id)
     if not c_id:
         raise HTTPException(status_code=400, detail="Invalid competition ID format.")
@@ -82,7 +86,35 @@ async def get_competition_by_id(comp_id: str):
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
     comp["_id"] = str(comp["_id"])
+    
+    # Enrich with real-time dynamic registration lifecycle status
+    lifecycle_status = evaluate_competition_registration_status(comp)
+    comp["registration_status"] = lifecycle_status["registration_status"]
+    comp["is_registration_open"] = lifecycle_status["is_registration_open"]
+    comp["can_register"] = lifecycle_status["can_register"]
+    comp["registration_reason"] = lifecycle_status["reason"]
     return comp
+
+
+@router.get("/v1/competitions/{comp_id}/registration-status")
+async def get_competition_registration_status(comp_id: str):
+    """
+    Public/User endpoint: Returns authoritative real-time registration status,
+    open/close window dates, capacity limits, and whether registration is allowed right now.
+    """
+    c_id = safe_object_id(comp_id)
+    if not c_id:
+        raise HTTPException(status_code=400, detail="Invalid competition ID format.")
+    comp = await competition_collection.find_one({"_id": c_id})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    status_info = evaluate_competition_registration_status(comp)
+    return {
+        "competition_id": str(comp["_id"]),
+        "title": comp.get("title"),
+        **status_info,
+    }
 
 @router.get("/v1/competitions/{comp_id}/eligibility")
 async def check_eligibility(comp_id: str, user: dict = Depends(get_current_user)):
@@ -98,8 +130,25 @@ async def check_eligibility(comp_id: str, user: dict = Depends(get_current_user)
     min_age = comp.get("min_age")
     max_age = comp.get("max_age")
 
+    # First check if competition registration is currently open
+    reg_lifecycle = evaluate_competition_registration_status(comp)
+    if not reg_lifecycle["can_register"]:
+        return {
+            "eligible": False,
+            "status": "REGISTRATION_CLOSED",
+            "reason": reg_lifecycle["reason"],
+            "registration_status": reg_lifecycle["registration_status"],
+            "can_register": False,
+        }
+
     if min_age is None and max_age is None:
-        return {"eligible": True, "status": "ELIGIBLE", "reason": "User is eligible."}
+        return {
+            "eligible": True,
+            "status": "ELIGIBLE",
+            "reason": "User is eligible.",
+            "registration_status": reg_lifecycle["registration_status"],
+            "can_register": True,
+        }
 
     dob = user.get("date_of_birth")
     age = calculate_age(dob)
@@ -114,14 +163,34 @@ async def check_eligibility(comp_id: str, user: dict = Depends(get_current_user)
             "eligible": False,
             "status": "PROFILE_INCOMPLETE",
             "reason": "Date of birth or age is required in your profile for eligibility verification.",
+            "registration_status": reg_lifecycle["registration_status"],
+            "can_register": True,
         }
 
     if min_age is not None and age < min_age:
-        return {"eligible": False, "status": "NOT_ELIGIBLE", "reason": f"Minimum age requirement is {min_age}."}
+        return {
+            "eligible": False,
+            "status": "NOT_ELIGIBLE",
+            "reason": f"Minimum age requirement is {min_age}.",
+            "registration_status": reg_lifecycle["registration_status"],
+            "can_register": False,
+        }
     if max_age is not None and age > max_age:
-        return {"eligible": False, "status": "NOT_ELIGIBLE", "reason": f"Maximum age requirement is {max_age}."}
+        return {
+            "eligible": False,
+            "status": "NOT_ELIGIBLE",
+            "reason": f"Maximum age requirement is {max_age}.",
+            "registration_status": reg_lifecycle["registration_status"],
+            "can_register": False,
+        }
 
-    return {"eligible": True, "status": "ELIGIBLE", "reason": "User is eligible."}
+    return {
+        "eligible": True,
+        "status": "ELIGIBLE",
+        "reason": "User is eligible.",
+        "registration_status": reg_lifecycle["registration_status"],
+        "can_register": True,
+    }
 
 @router.get("/v1/competitions/{comp_id}/my-registration")
 async def get_my_competition_registration_status(
@@ -213,36 +282,8 @@ async def register_competition(
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
 
-    now = datetime.now(timezone.utc)
-    rd = comp.get("registration_deadline")
-    if isinstance(rd, str):
-        try:
-            rd = datetime.fromisoformat(rd.replace("Z", "+00:00"))
-        except Exception:
-            rd = None
-    if isinstance(rd, datetime):
-        if rd.tzinfo is None:
-            rd = rd.replace(tzinfo=timezone.utc)
-        if now > rd:
-            raise HTTPException(status_code=400, detail="Registration deadline for this competition has passed.")
-
-    rs = comp.get("registration_start_date")
-    if isinstance(rs, str):
-        try:
-            rs = datetime.fromisoformat(rs.replace("Z", "+00:00"))
-        except Exception:
-            rs = None
-    if isinstance(rs, datetime):
-        if rs.tzinfo is None:
-            rs = rs.replace(tzinfo=timezone.utc)
-        if now < rs:
-            raise HTTPException(status_code=400, detail="Registration for this competition has not opened yet.")
-
-    reg_status = (comp.get("registration_status") or "").upper()
-    if reg_status == "CLOSED" and not (rs and rd and rs <= now <= rd):
-        raise HTTPException(status_code=400, detail="Registration for this competition is closed.")
-    if reg_status == "UPCOMING" and not (rs and now >= rs):
-        raise HTTPException(status_code=400, detail="Registration for this competition has not opened yet.")
+    # Real-time registration deadline, capacity, and lifecycle enforcement
+    assert_registration_allowed(comp)
 
     # Check eligibility
     eligibility = await check_eligibility(comp_id, user)

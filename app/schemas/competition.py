@@ -70,6 +70,8 @@ class CompetitionCreateReq(BaseModel):
     max_participants: Optional[int] = None
     
     is_published: bool = False
+    is_registration_open: Optional[bool] = True
+    registration_status: Optional[str] = "OPEN"
     audience_voting_enabled: bool = False
     judge_scoring_enabled: bool = False
     audience_vote_weight: float = 0.0
@@ -109,6 +111,8 @@ class CompetitionUpdateReq(BaseModel):
     max_participants: Optional[int] = None
     
     is_published: Optional[bool] = None
+    is_registration_open: Optional[bool] = None
+    registration_status: Optional[str] = None
     audience_voting_enabled: Optional[bool] = None
     judge_scoring_enabled: Optional[bool] = None
     audience_vote_weight: Optional[float] = None

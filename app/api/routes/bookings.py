@@ -12,27 +12,33 @@ import uuid
 router = APIRouter()
 
 async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, ticket_type: str, user_email: str, quantity: int, names: list, payment_method: str = "ONLINE", payment_status: str = "PENDING"):
-    """Background task to generate digital tickets once confirmed."""
+    """Background task to generate digital admission pass once confirmed with multi-person quantity."""
     docs = []
-    for i in range(quantity):
-        ticket_ref = f"TKT-{uuid.uuid4().hex[:8].upper()}"
-        qr_token = TicketService.generate_qr_token(ticket_ref, booking_ref)
-        holder_name = names[i] if names and i < len(names) else "Guest"
-        
-        docs.append({
-            "ticket_ref": ticket_ref,
-            "booking_id": booking_id,
-            "event_id": event_id,
-            "ticket_type": ticket_type,
-            "holder_email": user_email,
-            "holder_name": holder_name,
-            "is_checked_in": False,
-            "check_in_time": None,
-            "qr_token": qr_token,
-            "payment_method": payment_method,
-            "payment_status": payment_status,
-            "issued_at": datetime.now(timezone.utc)
-        })
+    ticket_ref = f"TKT-{uuid.uuid4().hex[:8].upper()}"
+    qr_token = TicketService.generate_qr_token(ticket_ref, booking_ref)
+    holder_names_list = [n for n in (names or []) if n]
+    primary_name = holder_names_list[0] if holder_names_list else "Attendee"
+    holder_display = primary_name + (f" (+{quantity - 1} Guests)" if quantity > 1 else "")
+    
+    docs.append({
+        "ticket_ref": ticket_ref,
+        "booking_id": booking_id,
+        "booking_ref": booking_ref,
+        "event_id": event_id,
+        "ticket_type": ticket_type,
+        "holder_email": user_email,
+        "holder_name": holder_display,
+        "holder_names": holder_names_list if holder_names_list else [primary_name],
+        "quantity": quantity,
+        "admitted_count": 0,
+        "is_checked_in": False,
+        "check_in_time": None,
+        "status": "ACTIVE",
+        "qr_token": qr_token,
+        "payment_method": payment_method,
+        "payment_status": payment_status,
+        "issued_at": datetime.now(timezone.utc)
+    })
     if docs:
         await issued_ticket_collection.insert_many(docs)
 
@@ -283,6 +289,34 @@ async def get_my_bookings(current_user: dict = Depends(get_current_user)):
     bookings = await booking_collection.find({"user_email": current_user["email"]}).sort("booked_at", -1).to_list(length=100)
     for b in bookings:
         b["_id"] = str(b["_id"])
+        if b.get("event_id") and ObjectId.is_valid(b["event_id"]):
+            try:
+                ev = await event_collection.find_one({"_id": ObjectId(b["event_id"])})
+                if ev:
+                    b["event_title"] = ev.get("title")
+                    b["event_date"] = ev.get("date")
+                    b["event_time"] = ev.get("time")
+                    b["event_venue"] = ev.get("venue")
+                    b["event_cover"] = ev.get("cover_image")
+            except Exception:
+                pass
+        try:
+            tix = await issued_ticket_collection.find({
+                "$or": [
+                    {"booking_id": str(b["_id"])},
+                    {"booking_ref": b.get("booking_reference")}
+                ]
+            }).to_list(length=20)
+            b["tickets"] = [{
+                "ticket_ref": t.get("ticket_ref"),
+                "quantity": int(t.get("quantity", b.get("quantity", 1))),
+                "admitted_count": int(t.get("admitted_count", b.get("quantity", 1) if t.get("is_checked_in") else 0)),
+                "is_checked_in": bool(t.get("is_checked_in")),
+                "status": t.get("status", "USED" if t.get("is_checked_in") else "ACTIVE"),
+                "check_in_time": t.get("check_in_time")
+            } for t in tix]
+        except Exception:
+            b["tickets"] = []
     return bookings
 
 @router.post("/{booking_id}/cancel")
@@ -326,9 +360,24 @@ async def cancel_my_booking(booking_id: str, current_user: dict = Depends(get_cu
 
 @router.get("/my-tickets")
 async def get_my_tickets(current_user: dict = Depends(get_current_user)):
-    tickets = await issued_ticket_collection.find({"holder_email": current_user["email"]}).to_list(length=100)
+    tickets = await issued_ticket_collection.find({"holder_email": current_user["email"]}).sort("issued_at", -1).to_list(length=100)
     for t in tickets:
         t["_id"] = str(t["_id"])
+        
+        # Normalize quantity and admissions
+        qty = int(t.get("quantity") or 1)
+        admitted = int(t.get("admitted_count", 0))
+        if t.get("is_checked_in") and admitted == 0:
+            admitted = qty
+        is_used = bool(t.get("is_checked_in")) or (admitted >= qty)
+        
+        t["quantity"] = qty
+        t["admitted_count"] = admitted
+        t["remaining_count"] = max(0, qty - admitted)
+        t["is_checked_in"] = is_used
+        t["is_fully_used"] = is_used
+        t["status"] = "USED" if is_used else ("PARTIALLY_USED" if admitted > 0 else "ACTIVE")
+
         if t.get("event_id"):
             try:
                 e = await event_collection.find_one({"_id": ObjectId(t["event_id"])})
@@ -346,6 +395,10 @@ async def get_my_tickets(current_user: dict = Depends(get_current_user)):
                 b = await booking_collection.find_one({"_id": ObjectId(t["booking_id"])})
                 if b:
                     t["price"] = b.get("unit_price") or b.get("total_amount")
+                    t["booking_ref"] = b.get("booking_reference")
+                    t["total_booking_amount"] = b.get("total_amount")
+                    t["payment_method"] = b.get("payment_method", t.get("payment_method", "ONLINE"))
+                    t["payment_status"] = b.get("payment_status", t.get("payment_status", "PENDING"))
             except Exception:
                 pass
     return tickets

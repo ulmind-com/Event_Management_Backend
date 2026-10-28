@@ -260,4 +260,76 @@ async def get_admin_user_wallet_and_coins(user_id: str, admin: dict = Depends(ge
         raise HTTPException(status_code=404, detail="User not found")
     return wallet_info
 
+@router.get("/{user_id}/tickets")
+@router.get("/{user_id}/ticket-bookings")
+async def get_admin_user_tickets_and_bookings(user_id: str, admin: dict = Depends(get_current_admin)):
+    """
+    Super Admin inspects user's complete event ticket bookings and admission passes history.
+    Provides total bookings, total tickets bought, total spent, and detailed gate check-in status.
+    """
+    from app.core.database import booking_collection, issued_ticket_collection, event_collection
+
+    user = await UserActivityService.get_user_doc(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    email = user.get("email")
+
+    bookings = await booking_collection.find({"user_email": email}).sort("booked_at", -1).to_list(length=200)
+    tickets = await issued_ticket_collection.find({"holder_email": email}).sort("issued_at", -1).to_list(length=200)
+
+    total_tickets_bought = 0
+    total_spent = 0.0
+    confirmed_count = 0
+
+    for b in bookings:
+        b["_id"] = str(b["_id"])
+        qty = int(b.get("quantity", 1))
+        total_tickets_bought += qty
+
+        if b.get("booking_status") == "CONFIRMED" or b.get("payment_status") == "PAID":
+            confirmed_count += 1
+            total_spent += float(b.get("total_amount", 0.0))
+
+        if b.get("event_id") and ObjectId.is_valid(b["event_id"]):
+            try:
+                ev = await event_collection.find_one({"_id": ObjectId(b["event_id"])})
+                if ev:
+                    b["event_title"] = ev.get("title")
+                    b["event_date"] = ev.get("date")
+                    b["event_time"] = ev.get("time")
+                    b["event_venue"] = ev.get("venue")
+            except Exception:
+                pass
+
+        # Associated tickets for this booking
+        b_tix = [
+            t for t in tickets
+            if str(t.get("booking_id")) == str(b["_id"]) or t.get("booking_ref") == b.get("booking_reference")
+        ]
+        b["tickets"] = [{
+            "ticket_ref": t.get("ticket_ref"),
+            "quantity": int(t.get("quantity", qty)),
+            "admitted_count": int(t.get("admitted_count", 0)),
+            "is_checked_in": bool(t.get("is_checked_in")),
+            "status": t.get("status", "USED" if t.get("is_checked_in") else "ACTIVE"),
+            "check_in_time": t.get("check_in_time"),
+            "scanned_by": t.get("scanned_by"),
+        } for t in b_tix]
+
+    for t in tickets:
+        t["_id"] = str(t["_id"])
+
+    return {
+        "user_id": user_id,
+        "email": email,
+        "user_name": user.get("name") or user.get("full_name") or "User",
+        "total_bookings": len(bookings),
+        "total_tickets_bought": total_tickets_bought,
+        "total_spent": round(total_spent, 2),
+        "confirmed_bookings": confirmed_count,
+        "cancelled_bookings": sum(1 for b in bookings if b.get("booking_status") == "CANCELLED"),
+        "bookings": bookings,
+        "tickets": tickets
+    }
+
 

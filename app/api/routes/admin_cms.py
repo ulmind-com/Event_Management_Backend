@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from pydantic import BaseModel
 import re
 from typing import Optional, List, Dict, Any
 from bson import ObjectId
 from app.core.admin_auth import get_current_admin
+from app.services.cloudinary_srv import upload_image
 from app.core.database import (
     website_settings_collection, event_collection, live_event_collection,
     ticket_collection, banner_collection, testimonial_collection,
@@ -202,14 +203,49 @@ async def toggle_live_event_publish(le_id: str, data: PublishToggle, admin=Depen
 # ════════════════════════════════════════
 # BANNERS
 # ════════════════════════════════════════
+# BANNERS (Hero Slider & Sponsors)
+# ════════════════════════════════════════
+@router.post("/banners/upload-image", tags=["admin-banners"])
+async def upload_banner_image(
+    file: UploadFile = File(...),
+    ratio: Optional[str] = Query("16:9", description="Banner aspect ratio: '16:9' (desktop) or '9:16' (mobile)"),
+    admin: dict = Depends(get_current_admin)
+):
+    """Uploads banner image to Cloudinary (separated into web 16:9 or mobile 9:16 folder)."""
+    contents = await file.read()
+    if not contents or len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    folder = "eventora/banners/mobile" if ratio == "9:16" else "eventora/banners/desktop"
+    url = upload_image(contents, folder=folder, filename=file.filename)
+    if not url:
+        raise HTTPException(status_code=500, detail="Failed to upload banner image to storage.")
+    return {"url": url, "ratio": ratio, "filename": file.filename}
+
 @router.get("/banners", tags=["admin-banners"])
 async def list_banners(admin=Depends(get_current_admin)):
-    docs = await banner_collection.find({"is_deleted": {"$ne": True}}).sort("display_order", 1).to_list(length=50)
+    docs = await banner_collection.find({"is_deleted": {"$ne": True}}).sort("display_order", 1).to_list(length=100)
+    for d in docs:
+        if not d.get("image_url_desktop"):
+            d["image_url_desktop"] = d.get("image_url")
+        if not d.get("image_url") and d.get("image_url_desktop"):
+            d["image_url"] = d.get("image_url_desktop")
+        if not d.get("image_url_mobile") and d.get("mobile_image_url"):
+            d["image_url_mobile"] = d.get("mobile_image_url")
     return clean_list(docs)
 
 @router.post("/banners", tags=["admin-banners"])
 async def create_banner(data: BannerCreate, admin=Depends(get_current_admin)):
     doc = data.model_dump()
+    # Normalize desktop image
+    desktop_img = doc.get("image_url_desktop") or doc.get("image_url")
+    if desktop_img:
+        doc["image_url"] = desktop_img
+        doc["image_url_desktop"] = desktop_img
+    # Normalize mobile image
+    mobile_img = doc.get("image_url_mobile") or doc.get("mobile_image_url")
+    if mobile_img:
+        doc["image_url_mobile"] = mobile_img
+        doc["mobile_image_url"] = mobile_img
     doc["created_at"] = datetime.now(timezone.utc)
     result = await banner_collection.insert_one(doc)
     await log_admin_action(admin["email"], "create", "banner", str(result.inserted_id))
@@ -219,6 +255,14 @@ async def create_banner(data: BannerCreate, admin=Depends(get_current_admin)):
 @router.put("/banners/{banner_id}", tags=["admin-banners"])
 async def update_banner(banner_id: str, data: BannerUpdate, admin=Depends(get_current_admin)):
     update = {k: v for k, v in data.model_dump().items() if v is not None}
+    desktop_img = update.get("image_url_desktop") or update.get("image_url")
+    if desktop_img:
+        update["image_url"] = desktop_img
+        update["image_url_desktop"] = desktop_img
+    mobile_img = update.get("image_url_mobile") or update.get("mobile_image_url")
+    if mobile_img:
+        update["image_url_mobile"] = mobile_img
+        update["mobile_image_url"] = mobile_img
     update["updated_at"] = datetime.now(timezone.utc)
     result = await banner_collection.update_one({"_id": oid(banner_id), "is_deleted": {"$ne": True}}, {"$set": update})
     if result.matched_count == 0:

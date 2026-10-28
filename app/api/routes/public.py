@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query
 from typing import Optional
 from datetime import datetime, timezone
 from app.core.database import (
@@ -49,7 +49,14 @@ async def get_homepage():
     # Sponsored Banners (published + visible + not deleted + date-valid)
     banners = await banner_collection.find({
         "is_published": True, "is_visible": True, "is_deleted": {"$ne": True}
-    }).sort("display_order", 1).to_list(length=20)
+    }).sort("display_order", 1).to_list(length=30)
+    for b in banners:
+        if not b.get("image_url_desktop"):
+            b["image_url_desktop"] = b.get("image_url")
+        if not b.get("image_url") and b.get("image_url_desktop"):
+            b["image_url"] = b.get("image_url_desktop")
+        if not b.get("image_url_mobile") and b.get("mobile_image_url"):
+            b["image_url_mobile"] = b.get("mobile_image_url")
     clean_list(banners)
 
     # Testimonials (approved + published)
@@ -140,7 +147,14 @@ async def get_live_events():
 
 @router.get("/banners", tags=["public"])
 async def get_public_banners():
-    docs = await banner_collection.find({"is_published": True, "is_visible": True, "is_deleted": {"$ne": True}}).sort("display_order", 1).to_list(length=20)
+    docs = await banner_collection.find({"is_published": True, "is_visible": True, "is_deleted": {"$ne": True}}).sort("display_order", 1).to_list(length=30)
+    for b in docs:
+        if not b.get("image_url_desktop"):
+            b["image_url_desktop"] = b.get("image_url")
+        if not b.get("image_url") and b.get("image_url_desktop"):
+            b["image_url"] = b.get("image_url_desktop")
+        if not b.get("image_url_mobile") and b.get("mobile_image_url"):
+            b["image_url_mobile"] = b.get("mobile_image_url")
     return clean_list(docs)
 
 @router.get("/testimonials", tags=["public"])

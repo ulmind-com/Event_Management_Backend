@@ -116,7 +116,10 @@ class LiveEventUpdate(BaseModel):
 # ── Banners ──
 class BannerCreate(BaseModel):
     title: str
-    image_url: str
+    image_url: str  # desktop image (16:9)
+    image_url_desktop: Optional[str] = None
+    image_url_mobile: Optional[str] = None  # mobile image (9:16)
+    mobile_image_url: Optional[str] = None
     description: Optional[str] = None
     sponsor_name: Optional[str] = None
     target_url: Optional[str] = None
@@ -132,9 +135,19 @@ class BannerCreate(BaseModel):
     def validate_image_url(cls, v):
         return check_no_fake_cloudinary(v)
 
+    @field_validator("image_url_desktop", "image_url_mobile", "mobile_image_url", mode="before")
+    @classmethod
+    def validate_optional_image_urls(cls, v):
+        if not v:
+            return v
+        return check_no_fake_cloudinary(v)
+
 class BannerUpdate(BaseModel):
     title: Optional[str] = None
     image_url: Optional[str] = None
+    image_url_desktop: Optional[str] = None
+    image_url_mobile: Optional[str] = None
+    mobile_image_url: Optional[str] = None
     description: Optional[str] = None
     sponsor_name: Optional[str] = None
     target_url: Optional[str] = None
@@ -148,6 +161,15 @@ class BannerUpdate(BaseModel):
     @field_validator("image_url", mode="before")
     @classmethod
     def validate_image_url(cls, v):
+        if not v:
+            return v
+        return check_no_fake_cloudinary(v)
+
+    @field_validator("image_url_desktop", "image_url_mobile", "mobile_image_url", mode="before")
+    @classmethod
+    def validate_optional_image_urls(cls, v):
+        if not v:
+            return v
         return check_no_fake_cloudinary(v)
 
 # ── Testimonials ──

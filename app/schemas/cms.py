@@ -1,5 +1,5 @@
 from pydantic import BaseModel, HttpUrl, field_validator
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 def check_no_fake_cloudinary(v: Optional[str]) -> Optional[str]:

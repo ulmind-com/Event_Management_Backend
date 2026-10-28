@@ -20,6 +20,49 @@ def clean_list(docs):
         d["_id"] = str(d["_id"])
     return docs
 
+DEFAULT_FEATURED_TILES = [
+    {
+        "id": "tile-competition",
+        "title": "Competition",
+        "subtitle": "National Championship",
+        "action_text": "Learn more",
+        "image_url": "https://images.unsplash.com/photo-1547153760-18fc86324498?q=80&w=1200&auto=format&fit=crop",
+        "target_url": "/competitions",
+        "icon_name": "Trophy",
+        "display_order": 1,
+    },
+    {
+        "id": "tile-event",
+        "title": "Event",
+        "subtitle": "Live Stage Shows",
+        "action_text": "Learn more",
+        "image_url": "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=1200&auto=format&fit=crop",
+        "target_url": "/events",
+        "icon_name": "CalendarDays",
+        "display_order": 2,
+    },
+    {
+        "id": "tile-shop",
+        "title": "Shop",
+        "subtitle": "Official Streetwear & Merch",
+        "action_text": "Learn more",
+        "image_url": "https://images.unsplash.com/photo-1509631179647-0177331693ae?q=80&w=1200&auto=format&fit=crop",
+        "target_url": "/shop",
+        "icon_name": "ShoppingBag",
+        "display_order": 3,
+    },
+    {
+        "id": "tile-course",
+        "title": "Course",
+        "subtitle": "Masterclasses & Workshops",
+        "action_text": "Learn more",
+        "image_url": "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?q=80&w=1200&auto=format&fit=crop",
+        "target_url": "/courses",
+        "icon_name": "GraduationCap",
+        "display_order": 4,
+    },
+]
+
 # ── Full Homepage (all sections in one response) ──
 @router.get("/homepage", tags=["public"])
 async def get_homepage():
@@ -102,6 +145,11 @@ async def get_homepage():
     links = await important_link_collection.find({"is_enabled": True}).sort("display_order", 1).to_list(length=50)
     clean_list(links)
 
+    # Featured Category Tiles (4 tiles)
+    featured_tiles = (settings or {}).get("featured_tiles")
+    if not featured_tiles or not isinstance(featured_tiles, list) or len(featured_tiles) == 0:
+        featured_tiles = DEFAULT_FEATURED_TILES
+
     return {
         "brand": {
             "name": settings.get("brand_name") if settings else None,
@@ -121,9 +169,16 @@ async def get_homepage():
         "app_promotion": app_promo,
         "contact": contact,
         "important_links": links,
+        "featured_tiles": featured_tiles,
     }
 
 # ── Individual Section Endpoints ──
+@router.get("/featured-tiles", tags=["public"])
+async def get_public_featured_tiles():
+    settings = await website_settings_collection.find_one({"_type": "settings"}, {"_id": 0, "featured_tiles": 1})
+    tiles = (settings or {}).get("featured_tiles")
+    return tiles if tiles and isinstance(tiles, list) and len(tiles) > 0 else DEFAULT_FEATURED_TILES
+
 @router.get("/website-settings", tags=["public"])
 async def get_public_settings():
     doc = await website_settings_collection.find_one({"_type": "settings"}, {"_id": 0, "_type": 0})

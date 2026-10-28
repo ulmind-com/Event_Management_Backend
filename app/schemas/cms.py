@@ -37,6 +37,7 @@ class WebsiteSettingsUpdate(BaseModel):
     privacy_policy_url: Optional[str] = None
     terms_url: Optional[str] = None
     social_media: Optional[SocialMediaLinks] = None
+    featured_tiles: Optional[List[Dict[str, Any]]] = None
 
     @field_validator("logo_url", "favicon_url", mode="before")
     @classmethod

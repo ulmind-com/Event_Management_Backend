@@ -52,7 +52,7 @@ async def get_website_settings(admin=Depends(get_current_admin)):
     return clean(doc) if doc else {}
 
 @router.put("/website-settings", tags=["admin-settings"])
-async def update_website_settings(data: WebsiteSettingsUpdate, VotingPowerSettings, admin=Depends(get_current_admin)):
+async def update_website_settings(data: WebsiteSettingsUpdate, admin=Depends(get_current_admin)):
     update = {k: v for k, v in data.model_dump().items() if v is not None}
     if "social_media" in update and update["social_media"]:
         update["social_media"] = {k: v for k, v in update["social_media"].items() if v is not None}
@@ -63,6 +63,65 @@ async def update_website_settings(data: WebsiteSettingsUpdate, VotingPowerSettin
     await log_admin_action(admin["email"], "update", "website_settings")
     doc = await website_settings_collection.find_one({"_type": "settings"})
     return clean(doc)
+
+DEFAULT_FEATURED_TILES = [
+    {
+        "id": "tile-competition",
+        "title": "Competition",
+        "subtitle": "National Championship",
+        "action_text": "Learn more",
+        "image_url": "https://images.unsplash.com/photo-1547153760-18fc86324498?q=80&w=1200&auto=format&fit=crop",
+        "target_url": "/competitions",
+        "icon_name": "Trophy",
+        "display_order": 1,
+    },
+    {
+        "id": "tile-event",
+        "title": "Event",
+        "subtitle": "Live Stage Shows",
+        "action_text": "Learn more",
+        "image_url": "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=1200&auto=format&fit=crop",
+        "target_url": "/events",
+        "icon_name": "CalendarDays",
+        "display_order": 2,
+    },
+    {
+        "id": "tile-shop",
+        "title": "Shop",
+        "subtitle": "Official Streetwear & Merch",
+        "action_text": "Learn more",
+        "image_url": "https://images.unsplash.com/photo-1509631179647-0177331693ae?q=80&w=1200&auto=format&fit=crop",
+        "target_url": "/shop",
+        "icon_name": "ShoppingBag",
+        "display_order": 3,
+    },
+    {
+        "id": "tile-course",
+        "title": "Course",
+        "subtitle": "Masterclasses & Workshops",
+        "action_text": "Learn more",
+        "image_url": "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?q=80&w=1200&auto=format&fit=crop",
+        "target_url": "/courses",
+        "icon_name": "GraduationCap",
+        "display_order": 4,
+    },
+]
+
+@router.get("/featured-tiles", tags=["admin-cms"])
+async def get_admin_featured_tiles(admin=Depends(get_current_admin)):
+    settings = await website_settings_collection.find_one({"_type": "settings"})
+    tiles = (settings or {}).get("featured_tiles")
+    return tiles if tiles and isinstance(tiles, list) and len(tiles) > 0 else DEFAULT_FEATURED_TILES
+
+@router.put("/featured-tiles", tags=["admin-cms"])
+async def update_admin_featured_tiles(tiles: List[Dict[str, Any]], admin=Depends(get_current_admin)):
+    await website_settings_collection.update_one(
+        {"_type": "settings"},
+        {"$set": {"featured_tiles": tiles, "updated_at": datetime.now(timezone.utc)}},
+        upsert=True
+    )
+    await log_admin_action(admin["email"], "update", "featured_tiles")
+    return {"message": "Featured category tiles updated successfully", "tiles": tiles}
 
 # ════════════════════════════════════════
 # EVENTS

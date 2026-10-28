@@ -1,18 +1,21 @@
 import re
+import logging
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from app.core.admin_auth import get_current_admin
-from app.core.database import user_collection, judge_assignment_collection
+from app.core.database import user_collection, judge_assignment_collection, competition_collection
 from app.schemas.judge import JudgeCreateReq, JudgeUpdateReq, JudgeAssignmentReq
 from app.services.email import EmailService
 from datetime import datetime, timezone
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 @router.post("/")
-async def create_judge(req: JudgeCreateReq, admin: dict = Depends(get_current_admin)):
-    """Creates a new judge and stores them in the users collection with role JUDGE."""
+async def create_judge(req: JudgeCreateReq, bg_tasks: BackgroundTasks, admin: dict = Depends(get_current_admin)):
+    """Creates a new judge and stores them in the users collection with role JUDGE, sending welcome email."""
     clean_email = req.email.strip().lower()
     existing = await user_collection.find_one({"email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"}})
     if existing:
@@ -30,6 +33,7 @@ async def create_judge(req: JudgeCreateReq, admin: dict = Depends(get_current_ad
     doc["created_at"] = datetime.now(timezone.utc)
     
     await user_collection.insert_one(doc)
+    bg_tasks.add_task(EmailService.send_judge_invitation, clean_email, req.full_name)
     return {"message": "Judge created successfully", "email": clean_email}
 
 @router.get("/")
@@ -69,7 +73,7 @@ async def get_judge_assignments(email: str, admin: dict = Depends(get_current_ad
 
 @router.post("/{email}/send-invitation")
 async def send_invitation(email: str, bg_tasks: BackgroundTasks, admin: dict = Depends(get_current_admin)):
-    """Sends a welcome email instructing the judge to log in via OTP."""
+    """Sends a welcome/appointment email instructing the judge to log in via OTP/password."""
     clean_email = email.strip()
     judge = await user_collection.find_one({
         "email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"},
@@ -80,12 +84,34 @@ async def send_invitation(email: str, bg_tasks: BackgroundTasks, admin: dict = D
         
     judge_email = judge.get("email") or clean_email
     judge_name = judge.get("full_name") or judge.get("name") or "Judge"
-    bg_tasks.add_task(EmailService.send_judge_invitation, judge_email, judge_name)
+
+    # Enumerate assigned competitions to personalize invitation
+    assignments = await judge_assignment_collection.find({
+        "judge_email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"}
+    }).to_list(length=50)
+
+    comp_titles = []
+    for a in assignments:
+        cid = str(a.get("competition_id", "")).strip()
+        comp = None
+        if ObjectId.is_valid(cid):
+            comp = await competition_collection.find_one({"_id": ObjectId(cid)})
+        if not comp:
+            comp = await competition_collection.find_one({"_id": cid})
+        if not comp:
+            comp = await competition_collection.find_one({"id": cid})
+        if comp and (comp.get("title") or comp.get("name")):
+            title = comp.get("title") or comp.get("name")
+            if title not in comp_titles:
+                comp_titles.append(title)
+
+    comp_display = ", ".join(comp_titles) if comp_titles else None
+    bg_tasks.add_task(EmailService.send_judge_invitation, judge_email, judge_name, comp_display)
     return {"message": "Invitation sent successfully."}
 
 @router.post("/assignments")
-async def assign_judge(req: JudgeAssignmentReq, admin: dict = Depends(get_current_admin)):
-    """Assigns an active judge to a competition."""
+async def assign_judge(req: JudgeAssignmentReq, bg_tasks: BackgroundTasks, admin: dict = Depends(get_current_admin)):
+    """Assigns an active judge to a competition and immediately dispatches appointment email."""
     clean_email = req.judge_email.strip()
     clean_comp_id = req.competition_id.strip()
     
@@ -115,7 +141,42 @@ async def assign_judge(req: JudgeAssignmentReq, admin: dict = Depends(get_curren
     }
     
     await judge_assignment_collection.insert_one(doc)
-    return {"message": "Judge assigned successfully"}
+
+    # Fetch competition details for personalized appointment email
+    comp = None
+    if ObjectId.is_valid(clean_comp_id):
+        comp = await competition_collection.find_one({"_id": ObjectId(clean_comp_id)})
+    if not comp:
+        comp = await competition_collection.find_one({"_id": clean_comp_id})
+    if not comp:
+        comp = await competition_collection.find_one({"id": clean_comp_id})
+
+    comp_name = (comp.get("title") or comp.get("name")) if comp else None
+    judge_name = judge.get("full_name") or judge.get("name") or "Judge"
+    judge_email = judge.get("email") or clean_email
+
+    # Dispatches official appointment email immediately upon assignment
+    bg_tasks.add_task(EmailService.send_judge_invitation, judge_email, judge_name, comp_name)
+
+    return {"message": "Judge assigned successfully", "competition": comp_name}
+    
+@router.delete("/assignments")
+async def remove_judge_assignment(req: JudgeAssignmentReq, admin: dict = Depends(get_current_admin)):
+    """Removes a judge from a competition."""
+    clean_email = req.judge_email.strip()
+    clean_comp_id = req.competition_id.strip()
+    
+    comp_matches = [clean_comp_id]
+    if ObjectId.is_valid(clean_comp_id):
+        comp_matches.append(ObjectId(clean_comp_id))
+
+    res = await judge_assignment_collection.delete_many({
+        "judge_email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"},
+        "competition_id": {"$in": comp_matches}
+    })
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    return {"message": "Assignment removed successfully"}
     
 @router.delete("/assignments")
 async def remove_judge_assignment(req: JudgeAssignmentReq, admin: dict = Depends(get_current_admin)):

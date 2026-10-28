@@ -334,41 +334,119 @@ class EmailService:
         return _send_email_payload(to_email=email, subject=f"🎉 Welcome to Upgrade Talents India, {name}!", html=html)
 
     @staticmethod
-    def send_judge_invitation(email: str, name: str) -> bool:
+    def send_judge_invitation(email: str, name: str, competition_name: Optional[str] = None) -> bool:
         """Sends official judge appointment invitation with clear login instructions."""
         login_url = "https://www.upgradetalentsindia.in/judge/login"
         safe_name = _escape(name) or "Judge"
         safe_email = _escape(email)
+        safe_comp = _escape(competition_name) if competition_name else None
+
+        comp_badge_html = f"""
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background: linear-gradient(135deg, rgba(191, 255, 46, 0.08) 0%, rgba(16, 185, 129, 0.08) 100%); border: 1.5px solid rgba(191, 255, 46, 0.4); border-radius: 16px; padding: 22px; margin: 22px 0;">
+            <tr>
+              <td>
+                <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #BFFF2E; margin-bottom: 6px;">
+                  ASSIGNED COMPETITION
+                </div>
+                <div style="font-size: 20px; font-weight: 900; color: #FFFFFF; letter-spacing: -0.3px; margin-bottom: 8px;">
+                  &#127942; {safe_comp}
+                </div>
+                <div style="font-size: 13.5px; color: #CBD5E1; line-height: 1.6;">
+                  Your official judging seat is active. You have full authorization to evaluate contestant performances, assign criterion scores, and track the live leaderboard for this competition.
+                </div>
+              </td>
+            </tr>
+          </table>
+        """ if safe_comp else f"""
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background: linear-gradient(135deg, rgba(191, 255, 46, 0.08) 0%, rgba(16, 185, 129, 0.08) 100%); border: 1.5px solid rgba(191, 255, 46, 0.4); border-radius: 16px; padding: 22px; margin: 22px 0;">
+            <tr>
+              <td>
+                <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #BFFF2E; margin-bottom: 6px;">
+                  PANEL ACCREDITATION
+                </div>
+                <div style="font-size: 19px; font-weight: 800; color: #FFFFFF; letter-spacing: -0.3px; margin-bottom: 8px;">
+                  Accredited Competition Judge
+                </div>
+                <div style="font-size: 13.5px; color: #CBD5E1; line-height: 1.6;">
+                  Your credentials have been authenticated. You can now access your private judge dashboard to view assigned talent competitions and record official scores.
+                </div>
+              </td>
+            </tr>
+          </table>
+        """
 
         content = f"""
           <h1 style="margin: 0 0 12px 0; font-size: 24px; font-weight: 900; color: #FFFFFF; letter-spacing: -0.5px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
             Official Appointment: Judges Panel &#9878;&#65039;
           </h1>
           <p style="margin: 0 0 16px 0; font-size: 15px; color: #F1F5F9; line-height: 1.6;">
-            Hello <strong style="color: #FFFFFF;">{safe_name}</strong>,
+            Dear <strong style="color: #FFFFFF;">{safe_name}</strong>,
           </p>
-          <p style="margin: 0 0 24px 0; font-size: 14px; color: #94A3B8; line-height: 1.7;">
-            Congratulations! You have been officially appointed as an accredited Judge for <strong style="color: #FFFFFF;">Upgrade Talents India</strong> competitions. You now have exclusive access to review, evaluate, and score contestant submissions directly from the official portal.
+          <p style="margin: 0 0 20px 0; font-size: 14.5px; color: #94A3B8; line-height: 1.7;">
+            Congratulations! You have been officially appointed as an accredited Judge for <strong style="color: #FFFFFF;">Upgrade Talents India</strong>. We are honored to welcome your expertise and artistic judgment to our official evaluation board.
           </p>
+
+          {comp_badge_html}
 
           <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #121622; border: 1px solid #1E2536; border-radius: 16px; padding: 22px; margin: 24px 0;">
             <tr>
               <td>
-                <div style="font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #BFFF2E; margin-bottom: 14px;">
-                  Quick Onboarding Guide:
+                <div style="font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #BFFF2E; margin-bottom: 16px;">
+                  Official Onboarding Protocol:
                 </div>
-                <ol style="margin: 0; padding-left: 20px; font-size: 13.5px; color: #E2E8F0; line-height: 1.9;">
-                  <li>Open the Judges Portal: <a href="https://www.upgradetalentsindia.in/judge/login" style="color: #BFFF2E; font-weight: 700; text-decoration: none;">https://www.upgradetalentsindia.in/judge/login</a></li>
-                  <li>Enter your designated email: <code style="color: #BFFF2E; background: #080A10; border: 1px solid #232B3E; padding: 2px 7px; border-radius: 5px; font-family: monospace; font-size: 12.5px;">{safe_email}</code></li>
-                  <li>You will receive an instant one-time verification passcode (OTP) on your email for secure login.</li>
-                  <li>Access your assigned competitions dashboard to evaluate contestant audition entries and record your official scores.</li>
-                </ol>
+                
+                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                  <tr>
+                    <td valign="top" width="28" style="padding-top: 2px;">
+                      <span style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: rgba(191, 255, 46, 0.15); border: 1px solid #BFFF2E; color: #BFFF2E; font-size: 11px; font-weight: 800; line-height: 22px; text-align: center;">1</span>
+                    </td>
+                    <td style="padding-bottom: 14px; padding-left: 8px;">
+                      <strong style="color: #FFFFFF; font-size: 14px;">Open Official Judges Portal:</strong>
+                      <div style="color: #94A3B8; font-size: 13px; margin-top: 3px;">
+                        Navigate to <a href="https://www.upgradetalentsindia.in/judge/login" style="color: #BFFF2E; font-weight: 700; text-decoration: none;">https://www.upgradetalentsindia.in/judge/login</a>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td valign="top" width="28" style="padding-top: 2px;">
+                      <span style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: rgba(191, 255, 46, 0.15); border: 1px solid #BFFF2E; color: #BFFF2E; font-size: 11px; font-weight: 800; line-height: 22px; text-align: center;">2</span>
+                    </td>
+                    <td style="padding-bottom: 14px; padding-left: 8px;">
+                      <strong style="color: #FFFFFF; font-size: 14px;">Instant OTP Verification:</strong>
+                      <div style="color: #94A3B8; font-size: 13px; margin-top: 3px;">
+                        Enter your accredited email: <code style="color: #BFFF2E; background: #080A10; border: 1px solid #232B3E; padding: 2px 7px; border-radius: 5px; font-family: monospace; font-size: 12.5px;">{safe_email}</code>. You will receive a high-security one-time passcode (OTP) on your email.
+                      </div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td valign="top" width="28" style="padding-top: 2px;">
+                      <span style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: rgba(191, 255, 46, 0.15); border: 1px solid #BFFF2E; color: #BFFF2E; font-size: 11px; font-weight: 800; line-height: 22px; text-align: center;">3</span>
+                    </td>
+                    <td style="padding-bottom: 14px; padding-left: 8px;">
+                      <strong style="color: #FFFFFF; font-size: 14px;">Set Permanent Password:</strong>
+                      <div style="color: #94A3B8; font-size: 13px; margin-top: 3px;">
+                        Once verified, you can set your own secret password in your profile so you can log in quickly with either password or OTP in the future.
+                      </div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td valign="top" width="28" style="padding-top: 2px;">
+                      <span style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: rgba(191, 255, 46, 0.15); border: 1px solid #BFFF2E; color: #BFFF2E; font-size: 11px; font-weight: 800; line-height: 22px; text-align: center;">4</span>
+                    </td>
+                    <td style="padding-left: 8px;">
+                      <strong style="color: #FFFFFF; font-size: 14px;">Evaluate &amp; Track Live Leaderboard:</strong>
+                      <div style="color: #94A3B8; font-size: 13px; margin-top: 3px;">
+                        Review participant entries, score criteria out of 100, and watch real-time 1st, 2nd, and 3rd rank standings dynamically update.
+                      </div>
+                    </td>
+                  </tr>
+                </table>
               </td>
             </tr>
           </table>
 
-          <div style="text-align: center; margin: 32px 0 14px 0;">
-            <a href="{login_url}" style="display: inline-block; background-color: #BFFF2E; color: #000000; text-decoration: none; padding: 16px 42px; border-radius: 9999px; font-size: 15px; font-weight: 900; letter-spacing: 0.5px; box-shadow: 0 4px 20px rgba(191, 255, 46, 0.4); text-transform: uppercase;">
+          <div style="text-align: center; margin: 34px 0 14px 0;">
+            <a href="{login_url}" style="display: inline-block; background-color: #BFFF2E; color: #000000; text-decoration: none; padding: 16px 44px; border-radius: 9999px; font-size: 15px; font-weight: 900; letter-spacing: 0.5px; box-shadow: 0 4px 22px rgba(191, 255, 46, 0.45); text-transform: uppercase;">
               Access Judges Portal &rarr;
             </a>
           </div>
@@ -376,20 +454,22 @@ class EmailService:
             Direct Portal Link: <a href="https://www.upgradetalentsindia.in/judge/login" style="color: #BFFF2E; font-family: monospace; word-break: break-all;">https://www.upgradetalentsindia.in/judge/login</a>
           </p>
 
-          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #121622; border: 1px solid #1E2536; border-left: 4px solid #BFFF2E; border-radius: 10px; margin: 24px 0;">
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #121622; border: 1px solid #1E2536; border-left: 4px solid #BFFF2E; border-radius: 10px; margin: 26px 0 10px 0;">
             <tr>
               <td style="padding: 14px 18px;">
                 <p style="margin: 0; font-size: 12.5px; color: #94A3B8; line-height: 1.5;">
-                  <strong style="color: #FFFFFF;">&#128274; Security Notice:</strong> Never share your verification passcode with anyone. Upgrade Talents India administrators will never ask for your authentication codes.
+                  <strong style="color: #FFFFFF;">&#128274; Confidential &amp; Encrypted:</strong> This invitation is designated strictly for <strong style="color: #FFFFFF;">{safe_email}</strong>. Scoring submissions are cryptographically tracked. Never disclose your authentication passcode.
                 </p>
               </td>
             </tr>
           </table>
         """
 
+        preheader_text = f"Official appointment as accredited Judge for {competition_name}" if competition_name else f"Hello {name}, you have been appointed to the Upgrade Talents India Judges Panel."
+
         html = _render_base_email(
             title="Upgrade Talents India — Judges Panel Appointment",
-            preheader=f"Hello {name}, you have been appointed to the Upgrade Talents India Judges Panel.",
+            preheader=preheader_text,
             badge_text="OFFICIAL APPOINTMENT",
             badge_color="#BFFF2E",
             badge_bg="rgba(191, 255, 46, 0.12)",
@@ -397,9 +477,12 @@ class EmailService:
             content_html=content,
             recipient_email=email
         )
+
+        subject = f"⚖️ Official Appointment: Judge for {competition_name} | Upgrade Talents India" if competition_name else "⚖️ Official Appointment: Upgrade Talents India Judges Panel"
+
         return _send_email_payload(
             to_email=email,
-            subject="⚖️ Official Appointment: Upgrade Talents India Judges Panel",
+            subject=subject,
             html=html,
             sender_name="Upgrade Talents India"
         )

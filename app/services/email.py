@@ -38,9 +38,10 @@ def _render_base_email(
     recipient_email: str
 ) -> str:
     """
-    Renders an ultra-premium, dark-themed responsive email container
-    matching the official Upgrade Talents India design system.
-    Compatible with Gmail, Apple Mail, Outlook, and mobile clients.
+    Renders an adaptive Light/Dark luxury email container.
+    Matches the recipient's system color mode automatically:
+    - In Light Mode: crisp white card, soft off-white canvas, dark logo, and high contrast typography.
+    - In Dark Mode: dark obsidian background, elevated card, white logo, and glowing lime/emerald accents.
     """
     safe_title = _escape(title)
     safe_preheader = _escape(preheader)
@@ -52,46 +53,97 @@ def _render_base_email(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <meta name="color-scheme" content="dark only">
-  <meta name="supported-color-schemes" content="dark only">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
   <title>{safe_title}</title>
   <!--[if mso]>
   <style type="text/css">
     body, table, td, p, a {{ font-family: -apple-system, BlinkMacSystemFont, Arial, sans-serif !important; }}
   </style>
   <![endif]-->
+  <style type="text/css">
+    :root {{
+      color-scheme: light dark;
+      supported-color-schemes: light dark;
+    }}
+    
+    /* Dark Mode Overrides for Clients Supporting prefers-color-scheme */
+    @media (prefers-color-scheme: dark) {{
+      body, .email-body {{ background-color: #08090C !important; color: #E2E8F0 !important; }}
+      .card-container {{ background-color: #0E1015 !important; border-color: #1E2330 !important; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.95) !important; }}
+      .divider {{ border-color: #1A1F2C !important; }}
+      .text-title {{ color: #FFFFFF !important; }}
+      .text-body {{ color: #CBD5E1 !important; }}
+      .text-muted {{ color: #94A3B8 !important; }}
+      .text-highlight {{ color: #FFFFFF !important; }}
+      .box-highlight {{ background-color: #121622 !important; border-color: #1E2536 !important; }}
+      .comp-box {{ background: linear-gradient(135deg, rgba(191, 255, 46, 0.08) 0%, rgba(16, 185, 129, 0.08) 100%) !important; border-color: rgba(191, 255, 46, 0.4) !important; }}
+      .comp-title {{ color: #FFFFFF !important; }}
+      .comp-desc {{ color: #CBD5E1 !important; }}
+      .comp-label {{ color: #BFFF2E !important; }}
+      .panel-box {{ background-color: #121622 !important; border-color: #1E2536 !important; }}
+      .step-title {{ color: #FFFFFF !important; }}
+      .step-desc {{ color: #94A3B8 !important; }}
+      .step-num {{ background: rgba(191, 255, 46, 0.15) !important; border-color: #BFFF2E !important; color: #BFFF2E !important; }}
+      .code-tag {{ background: #080A10 !important; border-color: #232B3E !important; color: #BFFF2E !important; }}
+      .notice-box {{ background-color: #121622 !important; border-color: #1E2536 !important; border-left-color: #BFFF2E !important; }}
+      .notice-text {{ color: #94A3B8 !important; }}
+      .notice-strong {{ color: #FFFFFF !important; }}
+      .footer-wrap {{ background-color: #090B10 !important; border-color: #1A1F2C !important; }}
+      .footer-text {{ color: #64748B !important; }}
+      .footer-sub {{ color: #475569 !important; }}
+      .logo-light {{ display: none !important; }}
+      .logo-dark {{ display: block !important; }}
+      .badge-tag {{ background-color: rgba(191, 255, 46, 0.15) !important; border-color: rgba(191, 255, 46, 0.4) !important; color: #BFFF2E !important; }}
+      .otp-card {{ background: linear-gradient(135deg, rgba(191, 255, 46, 0.08) 0%, rgba(16, 185, 129, 0.12) 100%) !important; border-color: #BFFF2E !important; }}
+      .otp-code {{ color: #FFFFFF !important; text-shadow: 0 0 20px rgba(191, 255, 46, 0.4) !important; }}
+    }}
+
+    /* Outlook Web App (OWA) Dark Mode */
+    [data-ogsc] .email-body {{ background-color: #08090C !important; }}
+    [data-ogsc] .card-container {{ background-color: #0E1015 !important; border-color: #1E2330 !important; }}
+    [data-ogsc] .text-title {{ color: #FFFFFF !important; }}
+    [data-ogsc] .text-body {{ color: #CBD5E1 !important; }}
+    [data-ogsc] .logo-light {{ display: none !important; }}
+    [data-ogsc] .logo-dark {{ display: block !important; }}
+  </style>
 </head>
-<body style="margin: 0; padding: 0; background-color: #08090C; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; color: #E2E8F0; width: 100% !important;">
+<body class="email-body" style="margin: 0; padding: 0; background-color: #F1F5F9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; color: #334155; width: 100% !important;">
   
   <!-- Preheader text (appears in inbox preview line) -->
-  <div style="display: none; font-size: 1px; color: #08090C; line-height: 1px; max-height: 0px; max-width: 0px; opacity: 0; overflow: hidden; mso-hide: all;">
+  <div style="display: none; font-size: 1px; color: #F1F5F9; line-height: 1px; max-height: 0px; max-width: 0px; opacity: 0; overflow: hidden; mso-hide: all;">
     {safe_preheader} &zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
   </div>
 
-  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #08090C; padding: 36px 12px;">
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="email-body" style="background-color: #F1F5F9; padding: 36px 12px;">
     <tr>
       <td align="center" valign="top">
         
         <!-- Main Card Container (560px) -->
-        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 560px; background-color: #0E1015; border-radius: 20px; border: 1px solid #1E2330; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.95);">
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="card-container" style="max-width: 560px; background-color: #FFFFFF; border-radius: 20px; border: 1px solid #E2E8F0; overflow: hidden; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);">
           
-          <!-- Top Brand Gradient Line (Lime to Blue) -->
+          <!-- Top Brand Gradient Line -->
           <tr>
-            <td height="4" style="background: linear-gradient(90deg, #BFFF2E 0%, #10B981 50%, #3B82F6 100%); line-height: 4px; font-size: 4px;">&nbsp;</td>
+            <td height="4" style="background: linear-gradient(90deg, #10B981 0%, #3B82F6 50%, #BFFF2E 100%); line-height: 4px; font-size: 4px;">&nbsp;</td>
           </tr>
           
-          <!-- Brand Header with Official Logo -->
+          <!-- Brand Header with Dual Adaptive Logo -->
           <tr>
-            <td style="padding: 26px 36px 20px 36px;">
+            <td style="padding: 24px 34px 18px 34px;">
               <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
                 <tr>
                   <td align="left" valign="middle">
                     <a href="https://www.upgradetalentsindia.in" target="_blank" style="text-decoration: none; display: inline-block;">
-                      <img src="https://www.upgradetalentsindia.in/logo-white-mode.png" alt="Upgrade Talents India" height="38" style="height: 38px; width: auto; max-width: 195px; object-fit: contain; display: block; border: 0;" />
+                      <!-- Default Light Mode Logo (Dark Text on White) -->
+                      <img class="logo-light" src="https://www.upgradetalentsindia.in/logo-dark-mode.png" alt="Upgrade Talents India" height="36" style="height: 36px; width: auto; max-width: 195px; object-fit: contain; display: block; border: 0;" />
+                      <!-- Dark Mode Logo (White Text on Dark) -->
+                      <!--[if !mso]><!-->
+                      <img class="logo-dark" src="https://www.upgradetalentsindia.in/logo-white-mode.png" alt="Upgrade Talents India" height="36" style="height: 36px; width: auto; max-width: 195px; object-fit: contain; display: none; border: 0; mso-hide: all;" />
+                      <!--<![endif]-->
                     </a>
                   </td>
                   <td align="right" valign="middle">
-                    <span style="display: inline-block; padding: 6px 14px; background-color: {badge_bg}; border: 1px solid {badge_border}; border-radius: 9999px; font-size: 10px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: {badge_color};">
+                    <span class="badge-tag" style="display: inline-block; padding: 6px 14px; background-color: {badge_bg}; border: 1px solid {badge_border}; border-radius: 9999px; font-size: 10px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: {badge_color};">
                       {badge_text}
                     </span>
                   </td>
@@ -102,34 +154,34 @@ def _render_base_email(
 
           <!-- Subtle Divider -->
           <tr>
-            <td style="padding: 0 36px;">
-              <div style="border-top: 1px solid #1A1F2C; height: 1px; line-height: 1px; font-size: 1px;">&nbsp;</div>
+            <td style="padding: 0 34px;">
+              <div class="divider" style="border-top: 1px solid #E2E8F0; height: 1px; line-height: 1px; font-size: 1px;">&nbsp;</div>
             </td>
           </tr>
 
           <!-- Main Content Body -->
           <tr>
-            <td style="padding: 28px 36px 36px 36px;">
+            <td style="padding: 26px 34px 34px 34px;">
               {content_html}
             </td>
           </tr>
 
           <!-- Footer Area -->
           <tr>
-            <td style="background-color: #090B10; border-top: 1px solid #1A1F2C; padding: 26px 36px; text-align: center;">
-              <p style="margin: 0 0 10px 0; font-size: 12px; color: #64748B; line-height: 1.6;">
-                This message was securely transmitted to <span style="color: #94A3B8; font-family: Consolas, monospace;">{safe_email}</span>.<br>
+            <td class="footer-wrap" style="background-color: #F8FAFC; border-top: 1px solid #E2E8F0; padding: 24px 34px; text-align: center;">
+              <p class="footer-text" style="margin: 0 0 10px 0; font-size: 12px; color: #64748B; line-height: 1.6;">
+                This message was securely transmitted to <span class="footer-text" style="color: #334155; font-family: Consolas, monospace; font-weight: 600;">{safe_email}</span>.<br>
                 If you did not initiate this request, you can safely ignore this email.
               </p>
-              <p style="margin: 0 0 14px 0; font-size: 12px; color: #64748B;">
-                Need assistance? Visit <a href="https://www.upgradetalentsindia.in/contact" style="color: #BFFF2E; text-decoration: none; font-weight: 700;">Upgrade Talents India Help &amp; Support</a>
+              <p class="footer-text" style="margin: 0 0 14px 0; font-size: 12px; color: #64748B;">
+                Need assistance? Visit <a href="https://www.upgradetalentsindia.in/contact" style="color: #059669; text-decoration: none; font-weight: 700;">Upgrade Talents India Help &amp; Support</a>
               </p>
-              <div style="border-top: 1px solid #1A1F2C; margin: 16px auto; width: 60%; height: 1px; line-height: 1px; font-size: 1px;">&nbsp;</div>
-              <p style="margin: 0; font-size: 11px; color: #475569; text-transform: uppercase; letter-spacing: 1.2px;">
+              <div class="divider" style="border-top: 1px solid #E2E8F0; margin: 16px auto; width: 60%; height: 1px; line-height: 1px; font-size: 1px;">&nbsp;</div>
+              <p class="footer-sub" style="margin: 0; font-size: 11px; color: #94A3B8; text-transform: uppercase; letter-spacing: 1.2px;">
                 &copy; 2026 UPGRADE TALENTS INDIA &bull; INDIA'S PREMIER TALENT PLATFORM
               </p>
               <div style="margin-top: 6px;">
-                <a href="https://www.upgradetalentsindia.in" style="color: #64748B; text-decoration: none; font-size: 11px; letter-spacing: 0.5px;">www.upgradetalentsindia.in</a>
+                <a href="https://www.upgradetalentsindia.in" class="footer-text" style="color: #64748B; text-decoration: none; font-size: 11px; letter-spacing: 0.5px;">www.upgradetalentsindia.in</a>
               </div>
             </td>
           </tr>
@@ -204,27 +256,27 @@ def send_otp_email(
     reason = f"to complete your {purpose}" if purpose else "to verify your Upgrade Talents India account and secure your access"
 
     content = f"""
-      <h1 style="margin: 0 0 10px 0; font-size: 22px; font-weight: 800; color: #F8FAFC; letter-spacing: -0.4px;">
+      <h1 class="text-title" style="margin: 0 0 10px 0; font-size: 22px; font-weight: 800; color: #0F172A; letter-spacing: -0.4px;">
         Verify Your Account
       </h1>
-      <p style="margin: 0 0 6px 0; font-size: 15px; color: #CBD5E1; line-height: 1.6;">
+      <p class="text-body" style="margin: 0 0 6px 0; font-size: 15px; color: #334155; line-height: 1.6;">
         {greeting}
       </p>
-      <p style="margin: 0 0 24px 0; font-size: 14px; color: #94A3B8; line-height: 1.6;">
+      <p class="text-body" style="margin: 0 0 24px 0; font-size: 14px; color: #475569; line-height: 1.6;">
         Please enter the one-time verification passcode below {reason}.
       </p>
 
       <!-- High-Impact Stylized OTP Code Box -->
       <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 24px 0;">
         <tr>
-          <td align="center" style="background: linear-gradient(135deg, rgba(191, 255, 46, 0.08) 0%, rgba(16, 185, 129, 0.12) 100%); border: 1.5px solid #BFFF2E; border-radius: 16px; padding: 26px 20px;">
-            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 2.5px; color: #BFFF2E; margin-bottom: 8px;">
+          <td align="center" class="otp-card" style="background: linear-gradient(135deg, #ECFDF5 0%, #F0FDF4 100%); border: 1.5px solid #10B981; border-radius: 16px; padding: 26px 20px;">
+            <div class="comp-label" style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 2.5px; color: #047857; margin-bottom: 8px;">
               Your One-Time Passcode
             </div>
-            <div style="font-family: 'SF Mono', Consolas, Menlo, Monaco, 'Courier New', monospace; font-size: 38px; font-weight: 900; letter-spacing: 12px; color: #FFFFFF; text-shadow: 0 0 20px rgba(191, 255, 46, 0.4); padding-left: 12px; margin: 10px 0 14px 0;">
+            <div class="otp-code" style="font-family: 'SF Mono', Consolas, Menlo, Monaco, 'Courier New', monospace; font-size: 38px; font-weight: 900; letter-spacing: 12px; color: #0F172A; padding-left: 12px; margin: 10px 0 14px 0;">
               {safe_otp}
             </div>
-            <span style="display: inline-block; background-color: rgba(245, 158, 11, 0.16); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 9999px; padding: 5px 14px; font-size: 12px; font-weight: 700; color: #FCD34D;">
+            <span style="display: inline-block; background-color: #FEF3C7; border: 1px solid #FDE68A; border-radius: 9999px; padding: 5px 14px; font-size: 12px; font-weight: 700; color: #92400E;">
               &#9201; Valid for 10 minutes only
             </span>
           </td>
@@ -232,17 +284,17 @@ def send_otp_email(
       </table>
 
       <!-- Security Notice Card -->
-      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #121622; border: 1px solid #1E2536; border-left: 4px solid #BFFF2E; border-radius: 10px; margin: 24px 0;">
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="notice-box" style="background-color: #FFFBEB; border: 1px solid #FDE68A; border-left: 4px solid #F59E0B; border-radius: 10px; margin: 24px 0;">
         <tr>
           <td style="padding: 14px 18px;">
-            <p style="margin: 0; font-size: 13px; color: #CBD5E1; line-height: 1.5;">
-              <strong style="color: #FFFFFF;">&#128274; Security Notice:</strong> Never share this code with anyone. Upgrade Talents India staff or administrators will never ask for your verification code.
+            <p class="notice-text" style="margin: 0; font-size: 13px; color: #92400E; line-height: 1.5;">
+              <strong class="notice-strong" style="color: #78350F;">&#128274; Security Notice:</strong> Never share this code with anyone. Upgrade Talents India staff or administrators will never ask for your verification code.
             </p>
           </td>
         </tr>
       </table>
 
-      <p style="margin: 20px 0 0 0; font-size: 13px; color: #64748B; line-height: 1.6;">
+      <p class="text-muted" style="margin: 20px 0 0 0; font-size: 13px; color: #64748B; line-height: 1.6;">
         If you didn't request this verification code, please ignore this email or review your account security.
       </p>
     """
@@ -251,9 +303,9 @@ def send_otp_email(
         title="Upgrade Talents India Verification Code",
         preheader=f"Your verification code is {otp_code} — valid for 10 minutes.",
         badge_text="SECURITY VERIFICATION",
-        badge_color="#BFFF2E",
-        badge_bg="rgba(191, 255, 46, 0.12)",
-        badge_border="rgba(191, 255, 46, 0.35)",
+        badge_color="#047857",
+        badge_bg="#ECFDF5",
+        badge_border="#A7F3D0",
         content_html=content,
         recipient_email=to_email
     )
@@ -335,39 +387,39 @@ class EmailService:
 
     @staticmethod
     def send_judge_invitation(email: str, name: str, competition_name: Optional[str] = None) -> bool:
-        """Sends official judge appointment invitation with clear login instructions."""
+        """Sends official judge appointment invitation with adaptive light/dark mode styling."""
         login_url = "https://www.upgradetalentsindia.in/judge/login"
         safe_name = _escape(name) or "Judge"
         safe_email = _escape(email)
         safe_comp = _escape(competition_name) if competition_name else None
 
         comp_badge_html = f"""
-          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background: linear-gradient(135deg, rgba(191, 255, 46, 0.08) 0%, rgba(16, 185, 129, 0.08) 100%); border: 1.5px solid rgba(191, 255, 46, 0.4); border-radius: 16px; padding: 22px; margin: 22px 0;">
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="comp-box" style="background: linear-gradient(135deg, #ECFDF5 0%, #F0FDF4 100%); border: 1.5px solid #86EFAC; border-radius: 16px; padding: 22px; margin: 22px 0;">
             <tr>
               <td>
-                <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #BFFF2E; margin-bottom: 6px;">
+                <div class="comp-label" style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #047857; margin-bottom: 6px;">
                   ASSIGNED COMPETITION
                 </div>
-                <div style="font-size: 20px; font-weight: 900; color: #FFFFFF; letter-spacing: -0.3px; margin-bottom: 8px;">
+                <div class="comp-title" style="font-size: 20px; font-weight: 900; color: #064E3B; letter-spacing: -0.3px; margin-bottom: 8px;">
                   &#127942; {safe_comp}
                 </div>
-                <div style="font-size: 13.5px; color: #CBD5E1; line-height: 1.6;">
+                <div class="comp-desc" style="font-size: 13.5px; color: #166534; line-height: 1.6;">
                   Your official judging seat is active. You have full authorization to evaluate contestant performances, assign criterion scores, and track the live leaderboard for this competition.
                 </div>
               </td>
             </tr>
           </table>
         """ if safe_comp else f"""
-          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background: linear-gradient(135deg, rgba(191, 255, 46, 0.08) 0%, rgba(16, 185, 129, 0.08) 100%); border: 1.5px solid rgba(191, 255, 46, 0.4); border-radius: 16px; padding: 22px; margin: 22px 0;">
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="comp-box" style="background: linear-gradient(135deg, #ECFDF5 0%, #F0FDF4 100%); border: 1.5px solid #86EFAC; border-radius: 16px; padding: 22px; margin: 22px 0;">
             <tr>
               <td>
-                <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #BFFF2E; margin-bottom: 6px;">
+                <div class="comp-label" style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #047857; margin-bottom: 6px;">
                   PANEL ACCREDITATION
                 </div>
-                <div style="font-size: 19px; font-weight: 800; color: #FFFFFF; letter-spacing: -0.3px; margin-bottom: 8px;">
+                <div class="comp-title" style="font-size: 19px; font-weight: 800; color: #064E3B; letter-spacing: -0.3px; margin-bottom: 8px;">
                   Accredited Competition Judge
                 </div>
-                <div style="font-size: 13.5px; color: #CBD5E1; line-height: 1.6;">
+                <div class="comp-desc" style="font-size: 13.5px; color: #166534; line-height: 1.6;">
                   Your credentials have been authenticated. You can now access your private judge dashboard to view assigned talent competitions and record official scores.
                 </div>
               </td>
@@ -376,66 +428,66 @@ class EmailService:
         """
 
         content = f"""
-          <h1 style="margin: 0 0 12px 0; font-size: 24px; font-weight: 900; color: #FFFFFF; letter-spacing: -0.5px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+          <h1 class="text-title" style="margin: 0 0 12px 0; font-size: 24px; font-weight: 900; color: #0F172A; letter-spacing: -0.5px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
             Official Appointment: Judges Panel &#9878;&#65039;
           </h1>
-          <p style="margin: 0 0 16px 0; font-size: 15px; color: #F1F5F9; line-height: 1.6;">
-            Dear <strong style="color: #FFFFFF;">{safe_name}</strong>,
+          <p class="text-body" style="margin: 0 0 16px 0; font-size: 15px; color: #334155; line-height: 1.6;">
+            Dear <strong class="text-highlight" style="color: #0F172A;">{safe_name}</strong>,
           </p>
-          <p style="margin: 0 0 20px 0; font-size: 14.5px; color: #94A3B8; line-height: 1.7;">
-            Congratulations! You have been officially appointed as an accredited Judge for <strong style="color: #FFFFFF;">Upgrade Talents India</strong>. We are honored to welcome your expertise and artistic judgment to our official evaluation board.
+          <p class="text-body" style="margin: 0 0 20px 0; font-size: 14.5px; color: #475569; line-height: 1.7;">
+            Congratulations! You have been officially appointed as an accredited Judge for <strong class="text-highlight" style="color: #0F172A;">Upgrade Talents India</strong>. We are honored to welcome your expertise and artistic judgment to our official evaluation board.
           </p>
 
           {comp_badge_html}
 
-          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #121622; border: 1px solid #1E2536; border-radius: 16px; padding: 22px; margin: 24px 0;">
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="panel-box" style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 16px; padding: 22px; margin: 24px 0;">
             <tr>
               <td>
-                <div style="font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #BFFF2E; margin-bottom: 16px;">
+                <div class="comp-label" style="font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #047857; margin-bottom: 16px;">
                   Official Onboarding Protocol:
                 </div>
                 
                 <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
                   <tr>
                     <td valign="top" width="28" style="padding-top: 2px;">
-                      <span style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: rgba(191, 255, 46, 0.15); border: 1px solid #BFFF2E; color: #BFFF2E; font-size: 11px; font-weight: 800; line-height: 22px; text-align: center;">1</span>
+                      <span class="step-num" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: #DCFCE7; border: 1px solid #86EFAC; color: #047857; font-size: 11px; font-weight: 800; line-height: 22px; text-align: center;">1</span>
                     </td>
                     <td style="padding-bottom: 14px; padding-left: 8px;">
-                      <strong style="color: #FFFFFF; font-size: 14px;">Open Official Judges Portal:</strong>
-                      <div style="color: #94A3B8; font-size: 13px; margin-top: 3px;">
-                        Navigate to <a href="https://www.upgradetalentsindia.in/judge/login" style="color: #BFFF2E; font-weight: 700; text-decoration: none;">https://www.upgradetalentsindia.in/judge/login</a>
+                      <strong class="step-title" style="color: #0F172A; font-size: 14px;">Open Official Judges Portal:</strong>
+                      <div class="step-desc" style="color: #475569; font-size: 13px; margin-top: 3px;">
+                        Navigate to <a href="https://www.upgradetalentsindia.in/judge/login" style="color: #059669; font-weight: 700; text-decoration: none;">https://www.upgradetalentsindia.in/judge/login</a>
                       </div>
                     </td>
                   </tr>
                   <tr>
                     <td valign="top" width="28" style="padding-top: 2px;">
-                      <span style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: rgba(191, 255, 46, 0.15); border: 1px solid #BFFF2E; color: #BFFF2E; font-size: 11px; font-weight: 800; line-height: 22px; text-align: center;">2</span>
+                      <span class="step-num" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: #DCFCE7; border: 1px solid #86EFAC; color: #047857; font-size: 11px; font-weight: 800; line-height: 22px; text-align: center;">2</span>
                     </td>
                     <td style="padding-bottom: 14px; padding-left: 8px;">
-                      <strong style="color: #FFFFFF; font-size: 14px;">Instant OTP Verification:</strong>
-                      <div style="color: #94A3B8; font-size: 13px; margin-top: 3px;">
-                        Enter your accredited email: <code style="color: #BFFF2E; background: #080A10; border: 1px solid #232B3E; padding: 2px 7px; border-radius: 5px; font-family: monospace; font-size: 12.5px;">{safe_email}</code>. You will receive a high-security one-time passcode (OTP) on your email.
+                      <strong class="step-title" style="color: #0F172A; font-size: 14px;">Instant OTP Verification:</strong>
+                      <div class="step-desc" style="color: #475569; font-size: 13px; margin-top: 3px;">
+                        Enter your accredited email: <code class="code-tag" style="color: #047857; background: #FFFFFF; border: 1px solid #CBD5E1; padding: 2px 7px; border-radius: 5px; font-family: monospace; font-size: 12.5px; font-weight: 700;">{safe_email}</code>. You will receive a high-security one-time passcode (OTP) on your email.
                       </div>
                     </td>
                   </tr>
                   <tr>
                     <td valign="top" width="28" style="padding-top: 2px;">
-                      <span style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: rgba(191, 255, 46, 0.15); border: 1px solid #BFFF2E; color: #BFFF2E; font-size: 11px; font-weight: 800; line-height: 22px; text-align: center;">3</span>
+                      <span class="step-num" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: #DCFCE7; border: 1px solid #86EFAC; color: #047857; font-size: 11px; font-weight: 800; line-height: 22px; text-align: center;">3</span>
                     </td>
                     <td style="padding-bottom: 14px; padding-left: 8px;">
-                      <strong style="color: #FFFFFF; font-size: 14px;">Set Permanent Password:</strong>
-                      <div style="color: #94A3B8; font-size: 13px; margin-top: 3px;">
+                      <strong class="step-title" style="color: #0F172A; font-size: 14px;">Set Permanent Password:</strong>
+                      <div class="step-desc" style="color: #475569; font-size: 13px; margin-top: 3px;">
                         Once verified, you can set your own secret password in your profile so you can log in quickly with either password or OTP in the future.
                       </div>
                     </td>
                   </tr>
                   <tr>
                     <td valign="top" width="28" style="padding-top: 2px;">
-                      <span style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: rgba(191, 255, 46, 0.15); border: 1px solid #BFFF2E; color: #BFFF2E; font-size: 11px; font-weight: 800; line-height: 22px; text-align: center;">4</span>
+                      <span class="step-num" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: #DCFCE7; border: 1px solid #86EFAC; color: #047857; font-size: 11px; font-weight: 800; line-height: 22px; text-align: center;">4</span>
                     </td>
                     <td style="padding-left: 8px;">
-                      <strong style="color: #FFFFFF; font-size: 14px;">Evaluate &amp; Track Live Leaderboard:</strong>
-                      <div style="color: #94A3B8; font-size: 13px; margin-top: 3px;">
+                      <strong class="step-title" style="color: #0F172A; font-size: 14px;">Evaluate &amp; Track Live Leaderboard:</strong>
+                      <div class="step-desc" style="color: #475569; font-size: 13px; margin-top: 3px;">
                         Review participant entries, score criteria out of 100, and watch real-time 1st, 2nd, and 3rd rank standings dynamically update.
                       </div>
                     </td>
@@ -446,19 +498,19 @@ class EmailService:
           </table>
 
           <div style="text-align: center; margin: 34px 0 14px 0;">
-            <a href="{login_url}" style="display: inline-block; background-color: #BFFF2E; color: #000000; text-decoration: none; padding: 16px 44px; border-radius: 9999px; font-size: 15px; font-weight: 900; letter-spacing: 0.5px; box-shadow: 0 4px 22px rgba(191, 255, 46, 0.45); text-transform: uppercase;">
+            <a href="{login_url}" style="display: inline-block; background-color: #059669; color: #FFFFFF; text-decoration: none; padding: 16px 44px; border-radius: 9999px; font-size: 15px; font-weight: 800; letter-spacing: 0.5px; box-shadow: 0 4px 18px rgba(5, 150, 105, 0.35); text-transform: uppercase;">
               Access Judges Portal &rarr;
             </a>
           </div>
-          <p style="text-align: center; margin: 12px 0 0 0; font-size: 12px; color: #64748B;">
-            Direct Portal Link: <a href="https://www.upgradetalentsindia.in/judge/login" style="color: #BFFF2E; font-family: monospace; word-break: break-all;">https://www.upgradetalentsindia.in/judge/login</a>
+          <p class="text-muted" style="text-align: center; margin: 12px 0 0 0; font-size: 12px; color: #64748B;">
+            Direct Portal Link: <a href="https://www.upgradetalentsindia.in/judge/login" style="color: #059669; font-family: monospace; word-break: break-all; font-weight: 600;">https://www.upgradetalentsindia.in/judge/login</a>
           </p>
 
-          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #121622; border: 1px solid #1E2536; border-left: 4px solid #BFFF2E; border-radius: 10px; margin: 26px 0 10px 0;">
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="notice-box" style="background-color: #FFFBEB; border: 1px solid #FDE68A; border-left: 4px solid #F59E0B; border-radius: 10px; margin: 26px 0 10px 0;">
             <tr>
               <td style="padding: 14px 18px;">
-                <p style="margin: 0; font-size: 12.5px; color: #94A3B8; line-height: 1.5;">
-                  <strong style="color: #FFFFFF;">&#128274; Confidential &amp; Encrypted:</strong> This invitation is designated strictly for <strong style="color: #FFFFFF;">{safe_email}</strong>. Scoring submissions are cryptographically tracked. Never disclose your authentication passcode.
+                <p class="notice-text" style="margin: 0; font-size: 12.5px; color: #92400E; line-height: 1.5;">
+                  <strong class="notice-strong" style="color: #78350F;">&#128274; Confidential &amp; Encrypted:</strong> This invitation is designated strictly for <strong class="notice-strong" style="color: #78350F;">{safe_email}</strong>. Scoring submissions are cryptographically tracked. Never disclose your authentication passcode.
                 </p>
               </td>
             </tr>
@@ -471,9 +523,9 @@ class EmailService:
             title="Upgrade Talents India — Judges Panel Appointment",
             preheader=preheader_text,
             badge_text="OFFICIAL APPOINTMENT",
-            badge_color="#BFFF2E",
-            badge_bg="rgba(191, 255, 46, 0.12)",
-            badge_border="rgba(191, 255, 46, 0.35)",
+            badge_color="#047857",
+            badge_bg="#ECFDF5",
+            badge_border="#A7F3D0",
             content_html=content,
             recipient_email=email
         )

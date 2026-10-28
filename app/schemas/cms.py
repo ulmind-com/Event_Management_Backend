@@ -38,9 +38,12 @@ class WebsiteSettingsUpdate(BaseModel):
     terms_url: Optional[str] = None
     social_media: Optional[SocialMediaLinks] = None
     featured_tiles: Optional[List[Dict[str, Any]]] = None
+    homepage_stats: Optional[List[Dict[str, Any]]] = None
     competitions_section_title: Optional[str] = None
     competitions_section_label: Optional[str] = None
     competitions_section_link: Optional[str] = None
+    live_stage_title: Optional[str] = None
+    live_stage_label: Optional[str] = None
 
     @field_validator("logo_url", "favicon_url", mode="before")
     @classmethod

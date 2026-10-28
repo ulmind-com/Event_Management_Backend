@@ -164,6 +164,16 @@ async def get_homepage():
     if not featured_tiles or not isinstance(featured_tiles, list) or len(featured_tiles) == 0:
         featured_tiles = DEFAULT_FEATURED_TILES
 
+    # Homepage Stats (4 counter items)
+    stats_list = (settings or {}).get("homepage_stats")
+    if not stats_list or not isinstance(stats_list, list) or len(stats_list) == 0:
+        stats_list = [
+            {"label": "Live events", "value": 12, "suffix": "+", "icon": "calendar"},
+            {"label": "Dancers on stage", "value": 25000, "suffix": "+", "icon": "users"},
+            {"label": "Masterclasses", "value": 40, "suffix": "+", "icon": "graduation"},
+            {"label": "Cities covered", "value": 28, "suffix": "", "icon": "trophy"},
+        ]
+
     return {
         "brand": {
             "name": settings.get("brand_name") if settings else None,
@@ -184,6 +194,14 @@ async def get_homepage():
             "label": "What's next",
             "view_all_url": "/competitions",
         },
+        "live_stage_section": {
+            "title": settings.get("live_stage_title") or "Live Stage" if settings else "Live Stage",
+            "label": settings.get("live_stage_label") or "Streaming right now" if settings else "Streaming right now",
+        } if settings else {
+            "title": "Live Stage",
+            "label": "Streaming right now",
+        },
+        "homepage_stats": stats_list,
         "live_events": live_events,
         "sponsored_banners": banners,
         "testimonials": testimonials,

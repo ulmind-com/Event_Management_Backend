@@ -123,6 +123,29 @@ async def update_admin_featured_tiles(tiles: List[Dict[str, Any]], admin=Depends
     await log_admin_action(admin["email"], "update", "featured_tiles")
     return {"message": "Featured category tiles updated successfully", "tiles": tiles}
 
+DEFAULT_HOMEPAGE_STATS = [
+    {"label": "Live events", "value": 12, "suffix": "+", "icon": "calendar"},
+    {"label": "Dancers on stage", "value": 25000, "suffix": "+", "icon": "users"},
+    {"label": "Masterclasses", "value": 40, "suffix": "+", "icon": "graduation"},
+    {"label": "Cities covered", "value": 28, "suffix": "", "icon": "trophy"},
+]
+
+@router.get("/homepage-stats", tags=["admin-cms"])
+async def get_admin_homepage_stats(admin=Depends(get_current_admin)):
+    settings = await website_settings_collection.find_one({"_type": "settings"})
+    stats = (settings or {}).get("homepage_stats")
+    return stats if stats and isinstance(stats, list) and len(stats) > 0 else DEFAULT_HOMEPAGE_STATS
+
+@router.put("/homepage-stats", tags=["admin-cms"])
+async def update_admin_homepage_stats(stats: List[Dict[str, Any]], admin=Depends(get_current_admin)):
+    await website_settings_collection.update_one(
+        {"_type": "settings"},
+        {"$set": {"homepage_stats": stats, "updated_at": datetime.now(timezone.utc)}},
+        upsert=True
+    )
+    await log_admin_action(admin["email"], "update", "homepage_stats")
+    return {"message": "Homepage stats updated successfully", "stats": stats}
+
 # ════════════════════════════════════════
 # EVENTS
 # ════════════════════════════════════════

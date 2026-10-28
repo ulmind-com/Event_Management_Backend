@@ -865,6 +865,7 @@ async def list_competition_participants(
     comp_id: str,
     status: Optional[str] = None,
     payment_status: Optional[str] = None,
+    payment_method: Optional[str] = None,
     search: Optional[str] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
@@ -872,7 +873,7 @@ async def list_competition_participants(
 ):
     """
     Super Admin inspects all registered participants for a competition,
-    including registration details, payment verification, and file/link submissions.
+    including registration details, payment verification (Cash vs Online), and file/link submissions.
     """
     try:
         c_oid = ObjectId(comp_id)
@@ -884,17 +885,32 @@ async def list_competition_participants(
         raise HTTPException(status_code=404, detail="Competition not found")
 
     query: Dict[str, Any] = {"competition_id": str(comp_id)}
-    if status:
+    if status and status != "ALL":
         query["status"] = status
-    if payment_status:
+    if payment_status and payment_status != "ALL":
         query["payment_status"] = payment_status
+
+    if payment_method and payment_method != "ALL":
+        pm = payment_method.upper()
+        if pm == "CASH":
+            query["$or"] = [{"payment_method": "CASH"}, {"cash_payment": True}]
+        elif pm == "ONLINE":
+            query["cash_payment"] = {"$ne": True}
+            query["payment_method"] = {"$nin": ["CASH", "OFFLINE"]}
+        elif pm == "FREE":
+            query["$or"] = [{"fee": 0.0}, {"fee": 0}, {"payment_status": "NOT_REQUIRED"}]
+
     if search:
         s_reg = {"$regex": re.escape(search), "$options": "i"}
-        query["$or"] = [
+        search_or = [
             {"user_email": s_reg},
             {"registration_reference": s_reg},
             {"user_name": s_reg},
         ]
+        if "$or" in query:
+            query["$and"] = [{"$or": query.pop("$or")}, {"$or": search_or}]
+        else:
+            query["$or"] = search_or
 
     total = await competition_registration_collection.count_documents(query)
     raw_regs = await competition_registration_collection.find(query).sort("registered_at", -1).skip(skip).limit(limit).to_list(length=limit)
@@ -924,8 +940,46 @@ async def list_competition_participants(
     all_regs = await competition_registration_collection.find({"competition_id": str(comp_id)}).to_list(length=5000)
     confirmed_count = sum(1 for r in all_regs if r.get("status") == "CONFIRMED" or r.get("payment_status") in ("PAID", "NOT_REQUIRED"))
     pending_count = sum(1 for r in all_regs if r.get("status") == "PENDING" and r.get("payment_status") != "PAID")
-    total_fees = sum(float(r.get("fee", 0.0)) for r in all_regs if r.get("status") == "CONFIRMED" or r.get("payment_status") == "PAID")
     total_submissions = await competition_submission_collection.count_documents({"competition_id": str(comp_id)})
+
+    online_total = 0
+    online_paid = 0
+    online_pending = 0
+    online_fees_collected = 0.0
+
+    cash_total = 0
+    cash_collected = 0
+    cash_pending = 0
+    cash_fees_collected = 0.0
+    cash_fees_pending = 0.0
+
+    free_total = 0
+
+    for r in all_regs:
+        f = float(r.get("fee", 0.0))
+        is_c = bool(r.get("cash_payment") or str(r.get("payment_method", "")).upper() in ["CASH", "OFFLINE"])
+        p_stat = str(r.get("payment_status", "")).upper()
+        c_stat = str(r.get("cash_status", "")).upper()
+
+        if f == 0.0 or p_stat == "NOT_REQUIRED":
+            free_total += 1
+        elif is_c:
+            cash_total += 1
+            if p_stat == "PAID" or c_stat in ["PAID", "COLLECTED"]:
+                cash_collected += 1
+                cash_fees_collected += f
+            else:
+                cash_pending += 1
+                cash_fees_pending += f
+        else:
+            online_total += 1
+            if p_stat == "PAID":
+                online_paid += 1
+                online_fees_collected += f
+            else:
+                online_pending += 1
+
+    total_fees = online_fees_collected + cash_fees_collected
 
     participants_res = []
     for r in raw_regs:
@@ -933,6 +987,29 @@ async def list_competition_participants(
         email = r.get("user_email", "")
         usr = users_map.get(email, {})
         sub = submissions_map.get(email)
+
+        fee_val = float(r.get("fee", 0.0))
+        is_cash = bool(r.get("cash_payment") or str(r.get("payment_method", "")).upper() in ["CASH", "OFFLINE"])
+        raw_p_status = str(r.get("payment_status", "PAID")).upper()
+        raw_c_status = str(r.get("cash_status", "")).upper()
+
+        if fee_val == 0.0 or raw_p_status == "NOT_REQUIRED":
+            method = "FREE"
+            p_status = "NOT_REQUIRED"
+            c_status = ""
+        elif is_cash:
+            method = "CASH"
+            # If cash has been collected/paid
+            if raw_c_status in ["PAID", "COLLECTED"] or raw_p_status == "PAID":
+                p_status = "PAID"
+                c_status = "COLLECTED"
+            else:
+                p_status = "PENDING"
+                c_status = "PENDING"
+        else:
+            method = "ONLINE"
+            p_status = raw_p_status
+            c_status = ""
 
         participants_res.append({
             "_id": r_id,
@@ -943,11 +1020,13 @@ async def list_competition_participants(
             "user_name": usr.get("name") or r.get("user_name") or "Participant",
             "user_phone": usr.get("phone_number") or usr.get("phone") or r.get("user_phone") or "",
             "status": r.get("status", "CONFIRMED"),
-            "payment_status": r.get("payment_status", "PAID"),
-            "payment_method": r.get("payment_method", "ONLINE"),
-            "cash_payment": bool(r.get("cash_payment", False)),
-            "cash_status": r.get("cash_status", ""),
-            "fee": float(r.get("fee", 0.0)),
+            "payment_status": p_status,
+            "payment_method": method,
+            "cash_payment": is_cash,
+            "cash_status": c_status,
+            "cash_collected_at": r.get("cash_collected_at"),
+            "cash_collected_by": r.get("cash_collected_by"),
+            "fee": fee_val,
             "registered_at": r.get("registered_at"),
             "rules_accepted": bool(r.get("rules_accepted", True)),
             "submission": sub
@@ -962,8 +1041,103 @@ async def list_competition_participants(
         "pending_payment_count": pending_count,
         "submissions_count": total_submissions,
         "total_fees_collected": total_fees,
+        "online_total": online_total,
+        "online_paid": online_paid,
+        "online_pending": online_pending,
+        "online_fees_collected": online_fees_collected,
+        "cash_total": cash_total,
+        "cash_collected": cash_collected,
+        "cash_pending": cash_pending,
+        "cash_fees_collected": cash_fees_collected,
+        "cash_fees_pending": cash_fees_pending,
+        "free_total": free_total,
         "skip": skip,
         "limit": limit,
         "participants": participants_res
+    }
+
+
+@router.patch("/{comp_id}/participants/{reg_id}/confirm-cash")
+async def confirm_participant_cash(
+    comp_id: str,
+    reg_id: str,
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Super Admin confirms receipt of cash payment at venue for a participant.
+    Marks cash_status as 'COLLECTED', payment_status as 'PAID', and status as 'CONFIRMED'.
+    """
+    try:
+        r_oid = ObjectId(reg_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid registration ID")
+
+    reg = await competition_registration_collection.find_one({"_id": r_oid, "competition_id": str(comp_id)})
+    if not reg:
+        raise HTTPException(status_code=404, detail="Participant registration not found")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await competition_registration_collection.update_one(
+        {"_id": r_oid},
+        {
+            "$set": {
+                "cash_payment": True,
+                "payment_method": "CASH",
+                "cash_status": "COLLECTED",
+                "payment_status": "PAID",
+                "status": "CONFIRMED",
+                "cash_collected_at": now_iso,
+                "cash_collected_by": admin.get("email") or admin.get("name") or "admin",
+                "updated_at": now_iso
+            }
+        }
+    )
+    return {
+        "success": True,
+        "message": "Cash payment verified and collected successfully at venue.",
+        "registration_id": reg_id,
+        "payment_status": "PAID",
+        "cash_status": "COLLECTED",
+        "cash_collected_at": now_iso
+    }
+
+
+@router.patch("/{comp_id}/participants/{reg_id}/revert-cash")
+async def revert_participant_cash(
+    comp_id: str,
+    reg_id: str,
+    admin: dict = Depends(get_current_admin)
+):
+    """Reverts cash payment status back to PENDING."""
+    try:
+        r_oid = ObjectId(reg_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid registration ID")
+
+    reg = await competition_registration_collection.find_one({"_id": r_oid, "competition_id": str(comp_id)})
+    if not reg:
+        raise HTTPException(status_code=404, detail="Participant registration not found")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await competition_registration_collection.update_one(
+        {"_id": r_oid},
+        {
+            "$set": {
+                "cash_status": "PENDING",
+                "payment_status": "PENDING",
+                "updated_at": now_iso
+            },
+            "$unset": {
+                "cash_collected_at": "",
+                "cash_collected_by": ""
+            }
+        }
+    )
+    return {
+        "success": True,
+        "message": "Cash payment status reverted to PENDING.",
+        "registration_id": reg_id,
+        "payment_status": "PENDING",
+        "cash_status": "PENDING"
     }
 

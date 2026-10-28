@@ -146,6 +146,37 @@ async def update_admin_homepage_stats(stats: List[Dict[str, Any]], admin=Depends
     await log_admin_action(admin["email"], "update", "homepage_stats")
     return {"message": "Homepage stats updated successfully", "stats": stats}
 
+DEFAULT_GALLERY_SECTION = {
+    "title": "A stage worth watching",
+    "label": "In motion",
+    "description": "Every performance, workshop and showdown — captured and brought to life. Scroll through the moments that make Upgrade Talents unforgettable.",
+    "view_all_url": "/gallery",
+    "images": [
+        {"id": "img-1", "image_url": "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?q=80&w=800&auto=format&fit=crop", "caption": "Solo Performance"},
+        {"id": "img-2", "image_url": "https://images.unsplash.com/photo-1547153760-18fc86324498?q=80&w=800&auto=format&fit=crop", "caption": "Live Showdown"},
+        {"id": "img-3", "image_url": "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=800&auto=format&fit=crop", "caption": "Street Battle"},
+        {"id": "img-4", "image_url": "https://images.unsplash.com/photo-1469488865564-c2de10f69f96?q=80&w=800&auto=format&fit=crop", "caption": "Group Choreography"},
+        {"id": "img-5", "image_url": "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=800&auto=format&fit=crop", "caption": "Audience Energy"},
+        {"id": "img-6", "image_url": "https://images.unsplash.com/photo-1514306191717-452ec28c7814?q=80&w=800&auto=format&fit=crop", "caption": "Grand Finale Stage"},
+    ],
+}
+
+@router.get("/gallery-section", tags=["admin-cms"])
+async def get_admin_gallery_section(admin=Depends(get_current_admin)):
+    settings = await website_settings_collection.find_one({"_type": "settings"})
+    gallery = (settings or {}).get("gallery_section")
+    return gallery if gallery and isinstance(gallery, dict) else DEFAULT_GALLERY_SECTION
+
+@router.put("/gallery-section", tags=["admin-cms"])
+async def update_admin_gallery_section(payload: Dict[str, Any], admin=Depends(get_current_admin)):
+    await website_settings_collection.update_one(
+        {"_type": "settings"},
+        {"$set": {"gallery_section": payload, "updated_at": datetime.now(timezone.utc)}},
+        upsert=True
+    )
+    await log_admin_action(admin["email"], "update", "gallery_section")
+    return {"message": "Gallery section updated successfully", "gallery_section": payload}
+
 # ════════════════════════════════════════
 # EVENTS
 # ════════════════════════════════════════

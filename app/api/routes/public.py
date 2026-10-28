@@ -174,6 +174,9 @@ async def get_homepage():
             {"label": "Cities covered", "value": 28, "suffix": "", "icon": "trophy"},
         ]
 
+    # Gallery Section
+    gallery_section = (settings or {}).get("gallery_section")
+
     return {
         "brand": {
             "name": settings.get("brand_name") if settings else None,
@@ -212,6 +215,13 @@ async def get_homepage():
         "contact": contact,
         "important_links": links,
         "featured_tiles": featured_tiles,
+        "gallery_section": gallery_section if gallery_section and isinstance(gallery_section, dict) else {
+            "title": "A stage worth watching",
+            "label": "In motion",
+            "description": "Every performance, workshop and showdown — captured and brought to life. Scroll through the moments that make Upgrade Talents unforgettable.",
+            "view_all_url": "/gallery",
+            "images": [],
+        },
     }
 
 # ── Individual Section Endpoints ──

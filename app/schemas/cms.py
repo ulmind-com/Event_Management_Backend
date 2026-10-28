@@ -44,6 +44,7 @@ class WebsiteSettingsUpdate(BaseModel):
     competitions_section_link: Optional[str] = None
     live_stage_title: Optional[str] = None
     live_stage_label: Optional[str] = None
+    gallery_section: Optional[Dict[str, Any]] = None
 
     @field_validator("logo_url", "favicon_url", mode="before")
     @classmethod

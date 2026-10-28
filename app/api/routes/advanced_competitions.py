@@ -95,6 +95,12 @@ async def check_eligibility(comp_id: str, user: dict = Depends(get_current_user)
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
 
+    min_age = comp.get("min_age")
+    max_age = comp.get("max_age")
+
+    if min_age is None and max_age is None:
+        return {"eligible": True, "status": "ELIGIBLE", "reason": "User is eligible."}
+
     dob = user.get("date_of_birth")
     age = calculate_age(dob)
     if age < 0 and user.get("age") is not None:
@@ -109,9 +115,6 @@ async def check_eligibility(comp_id: str, user: dict = Depends(get_current_user)
             "status": "PROFILE_INCOMPLETE",
             "reason": "Date of birth or age is required in your profile for eligibility verification.",
         }
-
-    min_age = comp.get("min_age")
-    max_age = comp.get("max_age")
 
     if min_age is not None and age < min_age:
         return {"eligible": False, "status": "NOT_ELIGIBLE", "reason": f"Minimum age requirement is {min_age}."}
@@ -210,10 +213,35 @@ async def register_competition(
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
 
+    now = datetime.now(timezone.utc)
+    rd = comp.get("registration_deadline")
+    if isinstance(rd, str):
+        try:
+            rd = datetime.fromisoformat(rd.replace("Z", "+00:00"))
+        except Exception:
+            rd = None
+    if isinstance(rd, datetime):
+        if rd.tzinfo is None:
+            rd = rd.replace(tzinfo=timezone.utc)
+        if now > rd:
+            raise HTTPException(status_code=400, detail="Registration deadline for this competition has passed.")
+
+    rs = comp.get("registration_start_date")
+    if isinstance(rs, str):
+        try:
+            rs = datetime.fromisoformat(rs.replace("Z", "+00:00"))
+        except Exception:
+            rs = None
+    if isinstance(rs, datetime):
+        if rs.tzinfo is None:
+            rs = rs.replace(tzinfo=timezone.utc)
+        if now < rs:
+            raise HTTPException(status_code=400, detail="Registration for this competition has not opened yet.")
+
     reg_status = (comp.get("registration_status") or "").upper()
-    if reg_status == "CLOSED":
+    if reg_status == "CLOSED" and not (rs and rd and rs <= now <= rd):
         raise HTTPException(status_code=400, detail="Registration for this competition is closed.")
-    if reg_status == "UPCOMING":
+    if reg_status == "UPCOMING" and not (rs and now >= rs):
         raise HTTPException(status_code=400, detail="Registration for this competition has not opened yet.")
 
     # Check eligibility

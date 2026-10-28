@@ -5,7 +5,7 @@ from app.core.database import (
     website_settings_collection, event_collection, live_event_collection,
     ticket_collection, banner_collection, testimonial_collection,
     course_collection, contest_promotion_collection, app_promotion_collection,
-    important_link_collection,
+    important_link_collection, competition_collection,
 )
 
 router = APIRouter()
@@ -145,6 +145,20 @@ async def get_homepage():
     links = await important_link_collection.find({"is_enabled": True}).sort("display_order", 1).to_list(length=50)
     clean_list(links)
 
+    # Upcoming Competitions (published + not deleted)
+    competitions = await competition_collection.find({
+        "is_published": True, "is_deleted": {"$ne": True}
+    }).sort([("display_order", 1), ("start_date", 1), ("created_at", -1)]).to_list(length=20)
+    for c in competitions:
+        c["_id"] = str(c["_id"])
+        if not c.get("card_image_url") and c.get("image_url"):
+            c["card_image_url"] = c.get("image_url")
+        if not c.get("image_url") and c.get("card_image_url"):
+            c["image_url"] = c.get("card_image_url")
+        if not c.get("banner_image_url") and c.get("banner_url"):
+            c["banner_image_url"] = c.get("banner_url")
+    clean_list(competitions)
+
     # Featured Category Tiles (4 tiles)
     featured_tiles = (settings or {}).get("featured_tiles")
     if not featured_tiles or not isinstance(featured_tiles, list) or len(featured_tiles) == 0:
@@ -160,6 +174,16 @@ async def get_homepage():
             "description": settings.get("homepage_description") if settings else None,
         } if settings else {},
         "upcoming_events": events,
+        "upcoming_competitions": competitions,
+        "competitions_section": {
+            "title": settings.get("competitions_section_title") or "Upcoming Competitions" if settings else "Upcoming Competitions",
+            "label": settings.get("competitions_section_label") or "What's next" if settings else "What's next",
+            "view_all_url": settings.get("competitions_section_link") or "/competitions" if settings else "/competitions",
+        } if settings else {
+            "title": "Upcoming Competitions",
+            "label": "What's next",
+            "view_all_url": "/competitions",
+        },
         "live_events": live_events,
         "sponsored_banners": banners,
         "testimonials": testimonials,
@@ -173,6 +197,22 @@ async def get_homepage():
     }
 
 # ── Individual Section Endpoints ──
+@router.get("/competitions/upcoming", tags=["public"])
+async def get_upcoming_competitions(skip: int = 0, limit: int = 20, search: Optional[str] = None):
+    q = {"is_published": True, "is_deleted": {"$ne": True}}
+    if search:
+        q["title"] = {"$regex": search, "$options": "i"}
+    docs = await competition_collection.find(q).sort([("display_order", 1), ("start_date", 1), ("created_at", -1)]).skip(skip).limit(limit).to_list(length=limit)
+    for c in docs:
+        c["_id"] = str(c["_id"])
+        if not c.get("card_image_url") and c.get("image_url"):
+            c["card_image_url"] = c.get("image_url")
+        if not c.get("image_url") and c.get("card_image_url"):
+            c["image_url"] = c.get("card_image_url")
+        if not c.get("banner_image_url") and c.get("banner_url"):
+            c["banner_image_url"] = c.get("banner_url")
+    return clean_list(docs)
+
 @router.get("/featured-tiles", tags=["public"])
 async def get_public_featured_tiles():
     settings = await website_settings_collection.find_one({"_type": "settings"}, {"_id": 0, "featured_tiles": 1})

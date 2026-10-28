@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "bcrypt>=5.0.0",
+    "certifi>=2024.0.0",
     "cloudinary>=1.46.3",
     "fastapi>=0.143.0",
     "firebase-admin>=7.7.0",

@@ -1,11 +1,14 @@
-import certifi
-from motor.motor_asyncio import AsyncIOMotorClient
-from app.core.config import settings
+try:
+    import certifi
+    ca_file = certifi.where()
+except Exception:
+    ca_file = None
 
-client = AsyncIOMotorClient(
-    settings.MONGODB_URI,
-    tlsCAFile=certifi.where()
-)
+client_kwargs = {}
+if ca_file:
+    client_kwargs["tlsCAFile"] = ca_file
+
+client = AsyncIOMotorClient(settings.MONGODB_URI, **client_kwargs)
 db = client.eventora_db
 
 # ── Existing Collections ──
@@ -51,12 +54,6 @@ audience_vote_collection = db["audience_votes"]
 leaderboard_result_collection = db["leaderboard_results"]
 
 judge_assignment_collection = db['judge_assignments']
-
-# ── Live Judging Session & Advanced Features ──
-judging_session_collection = db["judging_sessions"]
-draft_score_collection = db["draft_scores"]
-judge_feedback_collection = db["judge_feedbacks"]
-coi_skip_collection = db["coi_skips"]
 
 # ── Live Judging Session & Advanced Features ──
 judging_session_collection = db["judging_sessions"]

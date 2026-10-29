@@ -1,3 +1,5 @@
+
+
 import re
 import logging
 from bson import ObjectId
@@ -178,20 +180,4 @@ async def remove_judge_assignment(req: JudgeAssignmentReq, admin: dict = Depends
         raise HTTPException(status_code=404, detail="Assignment not found")
     return {"message": "Assignment removed successfully"}
     
-@router.delete("/assignments")
-async def remove_judge_assignment(req: JudgeAssignmentReq, admin: dict = Depends(get_current_admin)):
-    """Removes a judge from a competition."""
-    clean_email = req.judge_email.strip()
-    clean_comp_id = req.competition_id.strip()
-    
-    comp_matches = [clean_comp_id]
-    if ObjectId.is_valid(clean_comp_id):
-        comp_matches.append(ObjectId(clean_comp_id))
 
-    res = await judge_assignment_collection.delete_many({
-        "judge_email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"},
-        "competition_id": {"$in": comp_matches}
-    })
-    if res.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Assignment not found")
-    return {"message": "Assignment removed successfully"}

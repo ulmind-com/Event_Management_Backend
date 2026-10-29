@@ -5,6 +5,7 @@ from bson import ObjectId
 from app.core.database import event_collection, ticket_collection, competition_collection, course_collection, merchandise_collection
 from app.services.ticket import TicketService
 from app.services.competition_lifecycle import evaluate_competition_registration_status
+from app.services.competition_submission_config import enrich_competition_submission_config
 
 router = APIRouter()
 
@@ -94,6 +95,7 @@ async def get_competitions(skip: int = 0, limit: int = 10, search: Optional[str]
         comp["is_registration_open"] = reg_eval["is_registration_open"]
         comp["can_register"] = reg_eval["can_register"]
         comp["registration_reason"] = reg_eval["reason"]
+        enrich_competition_submission_config(comp)
     return clean_ids(competitions)
 
 @router.get("/competitions/{comp_id}")
@@ -111,6 +113,7 @@ async def get_competition_activity(comp_id: str):
     comp["is_registration_open"] = reg_eval["is_registration_open"]
     comp["can_register"] = reg_eval["can_register"]
     comp["registration_reason"] = reg_eval["reason"]
+    comp = enrich_competition_submission_config(comp)
     return comp
 
 @router.get("/courses")

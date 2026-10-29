@@ -23,6 +23,7 @@ from app.services.competition_lifecycle import (
     assert_registration_allowed,
     evaluate_competition_registration_status,
 )
+from app.services.competition_submission_config import enrich_competition_submission_config
 
 router = APIRouter()
 
@@ -78,7 +79,7 @@ class CompetitionRegisterReq(BaseModel):
 
 @router.get("/v1/competitions/{comp_id}")
 async def get_competition_by_id(comp_id: str):
-    """Fetch single competition details with real-time registration status."""
+    """Fetch single competition details with real-time registration status and configured submission fields."""
     c_id = safe_object_id(comp_id)
     if not c_id:
         raise HTTPException(status_code=400, detail="Invalid competition ID format.")
@@ -93,6 +94,9 @@ async def get_competition_by_id(comp_id: str):
     comp["is_registration_open"] = lifecycle_status["is_registration_open"]
     comp["can_register"] = lifecycle_status["can_register"]
     comp["registration_reason"] = lifecycle_status["reason"]
+
+    # Enrich with explicit submission field configuration
+    comp = enrich_competition_submission_config(comp)
     return comp
 
 
@@ -538,9 +542,17 @@ async def submit_files(
         if not legacy_reg:
             raise HTTPException(status_code=403, detail="Confirmed registration required to submit.")
 
-    # Dynamic Fields Check
+    # Dynamic Fields and Competition Submission Settings Check
+    comp = enrich_competition_submission_config(comp)
+    sub_cfg = comp.get("submission_format_config") or {}
+    allow_file = bool(comp.get("allow_file_upload", sub_cfg.get("allow_file_upload", True)))
+    allow_video = bool(comp.get("allow_video_link", sub_cfg.get("allow_video_link", False)))
+    allow_audio = bool(comp.get("allow_audio_upload", sub_cfg.get("allow_audio_upload", False)))
+    require_all = bool(sub_cfg.get("require_all_fields", False))
+
     fields = comp.get("dynamic_submission_fields", [])
-    expected_fields = [f["name"] for f in fields if f.get("required")]
+    valid_field_names = [f["name"] for f in fields if isinstance(f, dict) and f.get("name")]
+    expected_fields = [f["name"] for f in fields if isinstance(f, dict) and f.get("required") and f.get("name")]
 
     # Parse field_names (support both JSON array and comma-separated string)
     raw_fn = field_names.strip()
@@ -561,22 +573,47 @@ async def submit_files(
         pf.replace("Video, Audio", "Video/Audio").replace("video,audio", "video/audio")
         for pf in provided_fields
     ]
+    norm_valid_fields = [
+        vf.replace("Video, Audio", "Video/Audio").replace("video,audio", "video/audio")
+        for vf in valid_field_names
+    ]
 
-    missing = set(normalized_expected) - set(normalized_provided)
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Missing required fields: {missing}")
+    # Validate that every provided field matches an enabled competition field
+    if norm_valid_fields:
+        for pf, norm_pf in zip(provided_fields, normalized_provided):
+            match_found = (
+                pf in valid_field_names
+                or norm_pf in norm_valid_fields
+                or pf.lower() in [x.lower() for x in valid_field_names]
+                or norm_pf.lower() in [x.lower() for x in norm_valid_fields]
+            )
+            if not match_found:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Field '{pf}' is not enabled for this competition. Allowed fields: {valid_field_names}"
+                )
+
+    # Required field verification
+    if require_all:
+        missing = set(normalized_expected) - set(normalized_provided)
+        if missing:
+            raise HTTPException(status_code=400, detail=f"Missing required fields: {list(missing)}")
+    else:
+        # At least one of the enabled fields must be provided if expected fields exist
+        if normalized_expected and not set(normalized_provided).intersection(set(normalized_expected)):
+            raise HTTPException(status_code=400, detail=f"At least one valid submission field is required from: {expected_fields}")
 
     if len(files) != len(provided_fields):
         raise HTTPException(status_code=400, detail="Number of files does not match number of field names provided.")
 
-    # Process files: enforce strict MP3 audio validation for uploads & YouTube-only links for videos
+    # Process files: enforce strict validation against enabled competition submission formats
     uploaded_urls = {}
     for i, file_obj in enumerate(files):
         field_name = provided_fields[i]
         norm_field_name = normalized_provided[i]
 
         field_cfg = next(
-            (f for f in fields if f.get("name") in (field_name, norm_field_name)),
+            (f for f in fields if isinstance(f, dict) and f.get("name") in (field_name, norm_field_name)),
             {}
         )
         field_type = (field_cfg.get("type") or "").upper()
@@ -589,6 +626,11 @@ async def submit_files(
         # 1. Check if submission is a web link (YouTube video link)
         link_url = await AudioValidator.validate_and_extract_link(file_obj, field_name)
         if link_url:
+            if not allow_video:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Video link submissions are not allowed for this competition."
+                )
             is_yt = AudioValidator.is_valid_youtube_url(link_url)
             if is_yt:
                 # Valid YouTube link: stored directly in database!
@@ -622,11 +664,24 @@ async def submit_files(
                 detail=f"Direct video file uploads are not supported for '{field_name}'. Please provide a YouTube link instead."
             )
 
-        # 3. For Audio or Dual Video/Audio fields: MUST be strictly MP3 audio file!
-        if is_audio_field or is_dual_field:
+        # 3. Audio upload verification
+        is_audio_candidate = file_ext == ".mp3" or ct.startswith("audio/") or is_audio_field
+        if is_audio_field or (is_audio_candidate and not allow_file):
+            if not allow_audio:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Audio uploads are not allowed for this competition."
+                )
             await AudioValidator.validate_mp3_file(file_obj, field_name)
+        else:
+            # 4. General file upload verification
+            if not allow_file:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File uploads are not allowed for this competition."
+                )
 
-        # 4. Stream to Cloudinary (for MP3 audio files or other allowed attachments like images)
+        # 5. Stream to Cloudinary (for MP3 audio files or other allowed attachments like images/docs)
         await file_obj.seek(0)
         file_bytes = await file_obj.read()
         if not file_bytes:

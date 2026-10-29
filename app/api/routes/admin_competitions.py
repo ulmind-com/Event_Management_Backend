@@ -19,6 +19,10 @@ from app.services.competition_lifecycle import (
     evaluate_competition_registration_status,
     safe_object_id,
 )
+from app.services.competition_submission_config import (
+    normalize_submission_settings,
+    enrich_competition_submission_config,
+)
 from datetime import datetime, timezone
 
 router = APIRouter()
@@ -27,6 +31,9 @@ router = APIRouter()
 async def create_competition(req: CompetitionCreateReq, admin: dict = Depends(get_current_admin)):
     """Creates a new advanced competition with rules, criteria, dynamic fields, and card/banner images."""
     comp_dict = req.model_dump()
+
+    # Normalize submission fields according to enabled options (file, video link, audio mp3)
+    comp_dict = normalize_submission_settings(comp_dict, is_update=False)
 
     # Sync card and banner image aliases
     if comp_dict.get("card_image_url") and not comp_dict.get("image_url"):
@@ -137,6 +144,9 @@ async def create_competition_with_media(
     comp_dict["created_at"] = datetime.now(timezone.utc)
     comp_dict["updated_at"] = datetime.now(timezone.utc)
 
+    # Normalize submission fields according to enabled options (file, video link, audio mp3)
+    comp_dict = normalize_submission_settings(comp_dict, is_update=False)
+
     res = await competition_collection.insert_one(comp_dict)
     comp_dict["_id"] = str(res.inserted_id)
     return comp_dict
@@ -211,6 +221,7 @@ async def list_competitions(admin: dict = Depends(get_current_admin)):
     comps = await competition_collection.find().sort("created_at", -1).to_list(length=100)
     for c in comps:
         c["_id"] = str(c["_id"])
+        enrich_competition_submission_config(c)
     return comps
 
 @router.get("/{comp_id}")
@@ -224,6 +235,7 @@ async def get_competition(comp_id: str, admin: dict = Depends(get_current_admin)
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
     comp["_id"] = str(comp["_id"])
+    comp = enrich_competition_submission_config(comp)
     return comp
 
 @router.patch("/{comp_id}")
@@ -249,6 +261,31 @@ async def update_competition(comp_id: str, req: CompetitionUpdateReq, admin: dic
         update_data["banner_url"] = update_data["banner_image_url"]
     elif "banner_url" in update_data and "banner_image_url" not in update_data:
         update_data["banner_image_url"] = update_data["banner_url"]
+
+    # Handle submission field toggles / formats update
+    submission_keys = [
+        "allow_file_upload",
+        "allow_video_link",
+        "allow_audio_upload",
+        "submission_formats",
+        "submission_format_config",
+        "dynamic_submission_fields",
+    ]
+    if any(k in update_data for k in submission_keys):
+        existing_comp = await competition_collection.find_one({"_id": c_id})
+        if not existing_comp:
+            raise HTTPException(status_code=404, detail="Competition not found")
+
+        merged_for_norm = dict(existing_comp)
+        merged_for_norm.update(update_data)
+        normalized = normalize_submission_settings(merged_for_norm, is_update=False)
+
+        update_data["allow_file_upload"] = normalized["allow_file_upload"]
+        update_data["allow_video_link"] = normalized["allow_video_link"]
+        update_data["allow_audio_upload"] = normalized["allow_audio_upload"]
+        update_data["submission_formats"] = normalized["submission_formats"]
+        update_data["submission_format_config"] = normalized["submission_format_config"]
+        update_data["dynamic_submission_fields"] = normalized["dynamic_submission_fields"]
 
     # Validation: min_age cannot exceed max_age if both are provided
     if update_data.get("min_age") is not None and update_data.get("max_age") is not None:
@@ -279,6 +316,7 @@ async def update_competition(comp_id: str, req: CompetitionUpdateReq, admin: dic
     updated_comp = await competition_collection.find_one({"_id": c_id})
     if updated_comp:
         updated_comp["_id"] = str(updated_comp["_id"])
+        updated_comp = enrich_competition_submission_config(updated_comp)
         
     return {
         "message": "Competition updated successfully",

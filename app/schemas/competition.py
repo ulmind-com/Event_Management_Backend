@@ -38,6 +38,15 @@ class JudgingCriterion(BaseModel):
     weight: float = 1.0
     display_order: int = 0
 
+class SubmissionFormatConfig(BaseModel):
+    allow_file_upload: bool = False
+    allow_video_link: bool = False
+    allow_audio_upload: bool = False
+    allowed_submission_types: List[str] = []
+    require_all_fields: bool = False
+    description: Optional[str] = None
+    enabled_fields: Optional[List[str]] = None
+
 class CompetitionRules(BaseModel):
     terms_and_conditions: str = ""
     eligibility_requirements: str = ""
@@ -78,6 +87,11 @@ class CompetitionCreateReq(BaseModel):
     judge_score_weight: float = 0.0
     
     rules: Optional[CompetitionRules] = None
+    allow_file_upload: Optional[bool] = None
+    allow_video_link: Optional[bool] = None
+    allow_audio_upload: Optional[bool] = None
+    submission_formats: Optional[List[str]] = None
+    submission_format_config: Optional[SubmissionFormatConfig] = None
     dynamic_submission_fields: List[DynamicFieldConfig] = []
     judging_criteria: List[JudgingCriterion] = []
 
@@ -119,6 +133,11 @@ class CompetitionUpdateReq(BaseModel):
     judge_score_weight: Optional[float] = None
     
     rules: Optional[CompetitionRules] = None
+    allow_file_upload: Optional[bool] = None
+    allow_video_link: Optional[bool] = None
+    allow_audio_upload: Optional[bool] = None
+    submission_formats: Optional[List[str]] = None
+    submission_format_config: Optional[SubmissionFormatConfig] = None
     dynamic_submission_fields: Optional[List[DynamicFieldConfig]] = None
     judging_criteria: Optional[List[JudgingCriterion]] = None
 

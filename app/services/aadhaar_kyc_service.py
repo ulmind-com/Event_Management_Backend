@@ -112,13 +112,13 @@ class AadhaarKYCService:
             return "XXXX-XXXX-XXXX"
         return f"XXXX-XXXX-{aadhaar[-4:]}"
 
-    # ── Document Extraction (PDF, DigiLocker XML, and Images) ──
+    # ── Document Extraction (PDF, XML, and Images) ──
 
     @classmethod
-    def _extract_from_pdf(cls, pdf_bytes: bytes) -> Tuple[Optional[str], str, bool]:
+    def _extract_from_pdf(cls, pdf_bytes: bytes) -> Tuple[Optional[str], str]:
         """
-        Extract text from DigiLocker / e-Aadhaar PDF.
-        Returns: (aadhaar_number | None, status, is_digilocker)
+        Extract text from e-Aadhaar PDF.
+        Returns: (aadhaar_number | None, status)
         """
         try:
             import pypdf
@@ -129,11 +129,6 @@ class AadhaarKYCService:
                 if text:
                     all_text += " " + text
 
-            is_digilocker = any(
-                keyword in all_text.lower()
-                for keyword in ("digilocker", "digitallocker", "electronic signature", "uidai")
-            )
-
             pattern = r"[2-9]\d{3}[\s\-]?\d{4}[\s\-]?\d{4}"
             matches = re.findall(pattern, all_text)
 
@@ -143,29 +138,28 @@ class AadhaarKYCService:
                 if len(clean) == 12 and clean not in seen:
                     seen.add(clean)
                     if cls.validate_aadhaar_format(clean):
-                        return clean, "EXTRACTED_PDF", is_digilocker
+                        return clean, "EXTRACTED_PDF"
 
-            return None, "NO_AADHAAR_DETECTED_PDF", is_digilocker
+            return None, "NO_AADHAAR_DETECTED_PDF"
         except Exception as e:
             logger.warning(f"PDF extraction error: {e}")
-            return None, "PDF_ERROR", False
+            return None, "PDF_ERROR"
 
     @classmethod
-    def _extract_from_xml(cls, xml_bytes: bytes) -> Tuple[Optional[str], str, bool]:
+    def _extract_from_xml(cls, xml_bytes: bytes) -> Tuple[Optional[str], str]:
         """
-        Extract Aadhaar from DigiLocker e-Aadhaar XML.
-        Returns: (aadhaar_number | None, status, is_digilocker)
+        Extract Aadhaar from e-Aadhaar XML.
+        Returns: (aadhaar_number | None, status)
         """
         try:
             text = xml_bytes.decode("utf-8", errors="ignore")
-            is_digilocker = "digilocker" in text.lower() or "printletterbarcodedata" in text.lower() or "uiddata" in text.lower()
 
             # UID attribute pattern: uid="123456789012"
             uid_match = re.search(r'uid=[\'"]([2-9]\d{11})[\'"]', text)
             if uid_match:
                 clean = uid_match.group(1)
                 if cls.validate_aadhaar_format(clean):
-                    return clean, "EXTRACTED_DIGILOCKER_XML", True
+                    return clean, "EXTRACTED_XML"
 
             # General pattern in XML text
             pattern = r"[2-9]\d{3}[\s\-]?\d{4}[\s\-]?\d{4}"
@@ -173,12 +167,12 @@ class AadhaarKYCService:
             for match in matches:
                 clean = re.sub(r"\D", "", match)
                 if len(clean) == 12 and cls.validate_aadhaar_format(clean):
-                    return clean, "EXTRACTED_XML", is_digilocker
+                    return clean, "EXTRACTED_XML"
 
-            return None, "NO_AADHAAR_DETECTED_XML", is_digilocker
+            return None, "NO_AADHAAR_DETECTED_XML"
         except Exception as e:
             logger.warning(f"XML extraction error: {e}")
-            return None, "XML_ERROR", False
+            return None, "XML_ERROR"
 
     @classmethod
     def _preprocess_image(cls, image_bytes: bytes) -> Image.Image:
@@ -267,8 +261,8 @@ class AadhaarKYCService:
         """
         Smart unified document extractor.
         Supports:
-          1. DigiLocker PDF / e-Aadhaar PDF
-          2. DigiLocker XML
+          1. e-Aadhaar PDF
+          2. e-Aadhaar XML
           3. Aadhaar Card Photo / Scan (JPG, PNG, WEBP)
         Returns:
           (aadhaar_number | None, extraction_status, source)
@@ -280,17 +274,15 @@ class AadhaarKYCService:
 
         # 1. Check if PDF (via magic bytes or filename)
         if doc_bytes[:4] == b"%PDF" or fname.endswith(".pdf"):
-            aadhaar, status, is_dl = cls._extract_from_pdf(doc_bytes)
-            source = "DIGILOCKER_PDF" if is_dl else "PDF"
+            aadhaar, status = cls._extract_from_pdf(doc_bytes)
             if aadhaar:
-                return aadhaar, status, source
+                return aadhaar, status, "PDF"
 
         # 2. Check if XML
         if doc_bytes[:5] in (b"<?xml", b"<Prin", b"<UidD") or fname.endswith(".xml"):
-            aadhaar, status, is_dl = cls._extract_from_xml(doc_bytes)
-            source = "DIGILOCKER_XML" if is_dl else "XML"
+            aadhaar, status = cls._extract_from_xml(doc_bytes)
             if aadhaar:
-                return aadhaar, status, source
+                return aadhaar, status, "XML"
 
         # 3. Process as Image (JPG, PNG, etc.)
         try:
@@ -332,7 +324,7 @@ class AadhaarKYCService:
     ) -> dict:
         """
         Complete KYC verification pipeline:
-          1. Extract Aadhaar from document (PDF / DigiLocker XML / Image OCR)
+          1. Extract Aadhaar from document (PDF / XML / Image OCR)
           2. Validate format + Verhoeff checksum
           3. SHA-256 hash for secure storage
           4. Check duplicates across all accounts
@@ -373,7 +365,7 @@ class AadhaarKYCService:
             result["kyc_status"] = "EXTRACTION_FAILED"
             result[
                 "message"
-            ] = f"Could not extract Aadhaar number from uploaded document ({extraction_status}). Please ensure you upload a clear Aadhaar card image or official DigiLocker PDF."
+            ] = f"Could not extract Aadhaar number from uploaded document ({extraction_status}). Please ensure you upload a clear Aadhaar card image or official e-Aadhaar PDF."
 
             await kyc_verification_collection.update_one(
                 {"user_email": user_email},

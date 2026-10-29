@@ -109,10 +109,9 @@ async def register_step3(
     address: str = Form(...),
     parent_phone_number: Optional[int] = Form(None),
     profile_photo: Optional[UploadFile] = File(None),
-    digilocker_verification_id: Optional[str] = Form(None, description="DigiLocker verification ID if verified via DigiLocker"),
     authorization: str = Header(...)
 ):
-    """Step 3: Setup password, profile details, direct DigiLocker KYC verification, and complete registration."""
+    """Step 3: Setup password, profile details, and complete registration."""
     token = authorization.replace("Bearer ", "").strip()
     payload = decode_token(token)
     if not payload or payload.get("type") != "registration":
@@ -129,31 +128,23 @@ async def register_step3(
 
     final_age = calculate_age(dob)
 
-    # ══════════════════════════════════════════════
-    # DIRECT DIGILOCKER KYC VERIFICATION (ONLY)
-    # ══════════════════════════════════════════════
+    # Check if user already completed KYC verification
     from app.core.database import kyc_verification_collection
 
     kyc_result = None
     kyc_doc_uri = None
 
-    # Check if user already verified directly via DigiLocker
-    kyc_query = {"user_email": email}
-    if digilocker_verification_id:
-        kyc_query = {"$or": [{"user_email": email}, {"verification_id": digilocker_verification_id}]}
-
-    existing_kyc = await kyc_verification_collection.find_one(kyc_query)
+    existing_kyc = await kyc_verification_collection.find_one({"user_email": email})
 
     if existing_kyc and existing_kyc.get("status") == "VERIFIED":
-        # Successfully verified directly via DigiLocker!
         aadhaar_masked = existing_kyc.get("aadhaar_masked")
         kyc_result = {
             "kyc_status": "VERIFIED",
             "aadhaar_masked": aadhaar_masked,
-            "message": f"Aadhaar ({aadhaar_masked}) verified via DigiLocker. KYC complete.",
-            "source": existing_kyc.get("verification_source", "DIGILOCKER"),
+            "message": f"Govt ID ({aadhaar_masked}) verified. KYC complete.",
+            "source": existing_kyc.get("verification_source", "AADHAAR_KYC"),
         }
-        kyc_doc_uri = existing_kyc.get("digilocker_doc_uri") or f"digilocker://org.uidai/aadhaar/{aadhaar_masked}"
+        kyc_doc_uri = existing_kyc.get("kyc_doc_uri")
 
     profile_url = None
     if profile_photo:

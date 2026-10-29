@@ -1,6 +1,6 @@
 """
-End-to-End Test Suite for Aadhaar KYC & DigiLocker Verification
-=================================================================
+End-to-End Test Suite for Aadhaar KYC Verification
+===================================================
 Tests:
   1. Verhoeff algorithm validation and checksum generation
   2. SHA-256 secure hashing with project salt
@@ -9,7 +9,7 @@ Tests:
   5. XML e-Aadhaar extraction
   6. Anti-duplicate Aadhaar detection & blocking (HTTP 409)
   7. Strict role restriction (KYC only for role "USER")
-  8. Admin KYC management (listing, analytics, override)
+  8. Pre-verified KYC registration step3 flow
 """
 
 import io
@@ -20,7 +20,6 @@ from app.services.aadhaar_kyc_service import (
     _VERHOEFF_D,
     _VERHOEFF_P,
 )
-from app.services.digilocker_service import DigiLockerService
 
 
 def generate_valid_aadhaar(prefix_11="34567890123") -> str:
@@ -72,17 +71,14 @@ def test_pdf_extraction():
     try:
         import pypdf
         writer = pypdf.PdfWriter()
-        page = writer.add_blank_page(width=612, height=792)
+        writer.add_blank_page(width=612, height=792)
 
-        valid_aadhaar = generate_valid_aadhaar("34567890123")
-        # In pypdf 6, we can write a basic page or test _extract_from_pdf
-        # Test directly with mock or bytes
         pdf_bytes = io.BytesIO()
         writer.write(pdf_bytes)
         pdf_bytes.seek(0)
 
         # Ensure PDF detection does not crash
-        aadhaar, status, is_dl = AadhaarKYCService._extract_from_pdf(pdf_bytes.getvalue())
+        aadhaar, status = AadhaarKYCService._extract_from_pdf(pdf_bytes.getvalue())
         # blank page has no text
         assert aadhaar is None
     except ImportError:
@@ -90,16 +86,15 @@ def test_pdf_extraction():
 
 
 def test_xml_extraction():
-    """Verify DigiLocker XML parsing."""
+    """Verify XML parsing."""
     valid_aadhaar = generate_valid_aadhaar("45678901234")
     xml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
     <PrintLetterBarcodeData uid="{valid_aadhaar}" name="Rahul Sharma" gender="M" yob="1995" co="S/O Ramesh Sharma" house="123" street="MG Road" vtct="Bangalore" dist="Bangalore" state="Karnataka" pc="560001" dob="15/08/1995"/>
     """.encode("utf-8")
 
-    aadhaar, status, is_dl = AadhaarKYCService._extract_from_xml(xml_content)
+    aadhaar, status = AadhaarKYCService._extract_from_xml(xml_content)
     assert aadhaar == valid_aadhaar
-    assert is_dl is True
-    assert status == "EXTRACTED_DIGILOCKER_XML"
+    assert status == "EXTRACTED_XML"
 
 
 @pytest.mark.asyncio
@@ -125,11 +120,10 @@ async def test_duplicate_aadhaar_blocking():
     ) as mock_find_one, patch(
         "app.services.aadhaar_kyc_service.kyc_verification_collection.update_one",
         new_callable=AsyncMock,
-    ) as mock_update_one, patch(
+    ), patch(
         "app.services.aadhaar_kyc_service.user_collection.update_one",
         new_callable=AsyncMock,
-    ) as mock_user_update:
-
+    ):
         # Scenario 1: No duplicate exists
         mock_find_one.return_value = None
         result1 = await AadhaarKYCService.verify_and_register(
@@ -151,30 +145,6 @@ async def test_duplicate_aadhaar_blocking():
         assert "already registered" in result2["message"].lower()
 
 
-@pytest.mark.asyncio
-async def test_sandbox_digilocker_verification():
-    """Verify DigiLocker sandbox verification flow."""
-    valid_aadhaar = generate_valid_aadhaar("67890123456")
-
-    with patch(
-        "app.services.aadhaar_kyc_service.kyc_verification_collection.find_one",
-        new_callable=AsyncMock,
-        return_value=None,
-    ), patch(
-        "app.services.aadhaar_kyc_service.kyc_verification_collection.update_one",
-        new_callable=AsyncMock,
-    ), patch(
-        "app.services.aadhaar_kyc_service.user_collection.update_one",
-        new_callable=AsyncMock,
-    ):
-        result = await DigiLockerService.verify_sandbox_aadhaar(
-            "sandbox_user@example.com", valid_aadhaar
-        )
-        assert result["kyc_status"] == "VERIFIED"
-        assert result["verhoeff_valid"] is True
-        assert result["aadhaar_masked"].startswith("XXXX-XXXX-")
-
-
 def test_role_restriction():
     """Verify that non-USER roles are forbidden from accessing User KYC routes."""
     from app.api.routes.user_kyc import _require_user_role
@@ -192,55 +162,22 @@ def test_role_restriction():
 
 
 @pytest.mark.asyncio
-async def test_direct_digilocker_otp_flow():
-    """Test direct DigiLocker OTP sending and verification without any file upload."""
-    valid_aadhaar = generate_valid_aadhaar("78901234567")
-
-    with patch(
-        "app.services.aadhaar_kyc_service.kyc_verification_collection.find_one",
-        new_callable=AsyncMock,
-        return_value=None,
-    ), patch(
-        "app.services.aadhaar_kyc_service.kyc_verification_collection.update_one",
-        new_callable=AsyncMock,
-    ), patch(
-        "app.services.aadhaar_kyc_service.user_collection.update_one",
-        new_callable=AsyncMock,
-    ):
-        # 1. Send OTP
-        send_res = await DigiLockerService.send_aadhaar_otp(
-            "direct_dl_user@example.com", valid_aadhaar
-        )
-        assert send_res["success"] is True
-        assert send_res["reference_id"] is not None
-
-        # 2. Verify OTP directly from DigiLocker (No files!)
-        verify_res = await DigiLockerService.verify_aadhaar_otp(
-            send_res["reference_id"], "123456", "direct_dl_user@example.com"
-        )
-        assert verify_res["success"] is True
-        assert verify_res["kyc_status"] == "VERIFIED"
-        assert verify_res["aadhaar_masked"].startswith("XXXX-XXXX-")
-        assert "digilocker" in verify_res["verified_details"]["doc_uri"].lower()
-
-
-@pytest.mark.asyncio
-async def test_register_step3_with_digilocker_zero_file():
-    """Verify that register_step3 succeeds without uploading ANY file when DigiLocker is verified."""
+async def test_register_step3_with_preverified_kyc():
+    """Verify that register_step3 succeeds without uploading ANY file when KYC is already verified."""
     from app.core.security import create_access_token
     from httpx import AsyncClient, ASGITransport
     from app.main import app
 
-    test_email = "digilocker_zerofile@example.com"
+    test_email = "preverified_user@example.com"
     reg_token = create_access_token(data={"sub": test_email, "type": "registration"})
 
-    # Mock DigiLocker verified record in database
+    # Mock pre-verified KYC record in database
     mock_kyc_record = {
         "user_email": test_email,
         "status": "VERIFIED",
         "aadhaar_masked": "XXXX-XXXX-9999",
-        "verification_source": "DIGILOCKER",
-        "digilocker_doc_uri": "digilocker://org.uidai/aadhaar/XXXX-XXXX-9999",
+        "verification_source": "AADHAAR_KYC",
+        "kyc_doc_uri": "uploads/kyc/preverified.pdf",
     }
 
     transport = ASGITransport(app=app)
@@ -266,11 +203,10 @@ async def test_register_step3_with_digilocker_zero_file():
             "app.services.notification_service.NotificationService.create_notification",
             new_callable=AsyncMock,
         ):
-            # Notice: govt_id_proof is NOT sent at all! ZERO files!
             form_data = {
                 "password": "Password@123",
                 "confirm_password": "Password@123",
-                "name": "DigiLocker User",
+                "name": "Verified User",
                 "phone_number": "9876543210",
                 "date_of_birth": "2000-01-01",
                 "address": "Kolkata, India",
@@ -285,6 +221,4 @@ async def test_register_step3_with_digilocker_zero_file():
             assert data["message"] == "Registration complete"
             assert data["kyc_verification"]["status"] == "VERIFIED"
             assert data["kyc_verification"]["aadhaar_masked"] == "XXXX-XXXX-9999"
-            assert "digilocker" in data["user"]["kyc_doc_uri"].lower()
-
-
+            assert data["user"]["kyc_doc_uri"] == "uploads/kyc/preverified.pdf"

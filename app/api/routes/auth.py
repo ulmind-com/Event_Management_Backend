@@ -29,6 +29,14 @@ from app.services.cloudinary_srv import upload_image
 from app.core.database import user_collection, otp_collection
 from app.core.security import create_access_token, decode_token, get_password_hash, verify_password
 
+from app.core.profile_lifecycle import (
+    calculate_age,
+    parse_date,
+    check_profile_completion,
+    get_profile_form_schema,
+    enrich_user_with_profile_status,
+)
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -36,32 +44,6 @@ router = APIRouter()
 def generate_otp(length: int = 6) -> str:
     return "".join(random.choices(string.digits, k=length))
 
-def calculate_age(dob: date) -> int:
-    today = date.today()
-    return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-
-def parse_date(date_str: str) -> date:
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(date_str, fmt).date()
-        except ValueError:
-            pass
-    raise ValueError("Invalid date format")
-
-def check_profile_completion(user: dict) -> Tuple[bool, List[str]]:
-    """Checks if required profile fields (name, phone_number, date_of_birth, address) are filled."""
-    if not user:
-        return False, ["name", "phone_number", "date_of_birth", "address"]
-    missing = []
-    if not user.get("name") or not str(user.get("name")).strip():
-        missing.append("name")
-    if not user.get("phone_number") or not str(user.get("phone_number")).strip():
-        missing.append("phone_number")
-    if not user.get("date_of_birth") or not str(user.get("date_of_birth")).strip():
-        missing.append("date_of_birth")
-    if not user.get("address") or not str(user.get("address")).strip():
-        missing.append("address")
-    return len(missing) == 0, missing
 
 # ══════════════════════════════════════════════
 # NEW USER REGISTRATION (3 Steps)
@@ -313,6 +295,7 @@ async def user_login(req: UserLoginReq):
         pass
 
     is_completed, missing = check_profile_completion(user)
+    form_schema = get_profile_form_schema(user)
 
     # Sync completion flag in database
     await user_collection.update_one(
@@ -321,6 +304,7 @@ async def user_login(req: UserLoginReq):
             "registration_complete": is_completed,
             "is_profile_completed": is_completed,
             "profile_completed": is_completed,
+            "first_time_login": not is_completed,
             "updated_at": datetime.now(timezone.utc)
         }}
     )
@@ -336,8 +320,12 @@ async def user_login(req: UserLoginReq):
         "is_profile_completed": is_completed,
         "profile_completed": is_completed,
         "requires_profile_completion": not is_completed,
+        "prompt_profile_form": not is_completed,
+        "first_time_login": not is_completed,
         "missing_fields": missing,
+        "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
         "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard",
+        "profile_form": form_schema,
         "user": {
             "email": req.email,
             "name": user.get("name"),
@@ -351,8 +339,12 @@ async def user_login(req: UserLoginReq):
             "is_profile_completed": is_completed,
             "profile_completed": is_completed,
             "requires_profile_completion": not is_completed,
+            "prompt_profile_form": not is_completed,
+            "first_time_login": not is_completed,
             "missing_fields": missing,
-            "first_time_login": not is_completed
+            "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
+            "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard",
+            "profile_form": form_schema,
         }
     }
 
@@ -754,6 +746,8 @@ async def google_login(req: GoogleLoginReq):
     # 4. Generate Eventora JWT access token
     access_token = create_access_token(data={"sub": email, "type": "user"})
 
+    form_schema = get_profile_form_schema(user_doc)
+
     return {
         "message": "Google sign-in successful. Welcome to Eventora!" if is_new_user else "Google login successful",
         "access_token": access_token,
@@ -765,8 +759,12 @@ async def google_login(req: GoogleLoginReq):
         "is_profile_completed": is_completed,
         "profile_completed": is_completed,
         "requires_profile_completion": not is_completed,
+        "prompt_profile_form": not is_completed,
+        "first_time_login": not is_completed,
         "missing_fields": missing,
+        "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
         "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard",
+        "profile_form": form_schema,
         "user": {
             "email": email,
             "name": user_doc.get("name", name),
@@ -780,8 +778,12 @@ async def google_login(req: GoogleLoginReq):
             "is_profile_completed": is_completed,
             "profile_completed": is_completed,
             "requires_profile_completion": not is_completed,
+            "prompt_profile_form": not is_completed,
+            "first_time_login": not is_completed,
             "missing_fields": missing,
-            "first_time_login": is_new_user
+            "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
+            "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard",
+            "profile_form": form_schema,
         }
     }
 
@@ -803,14 +805,7 @@ async def get_user_profile(authorization: str = Header(...)):
     if user.get("is_deleted"):
         raise HTTPException(status_code=403, detail="Account is disabled or deleted. Contact support.")
 
-    is_completed, missing = check_profile_completion(user)
-    user["is_profile_completed"] = is_completed
-    user["profile_completed"] = is_completed
-    user["requires_profile_completion"] = not is_completed
-    user["missing_fields"] = missing
-    user["registration_complete"] = is_completed
-    user["redirect_url"] = "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard"
-    return user
+    return enrich_user_with_profile_status(user)
 
 
 @router.get("/status")
@@ -827,6 +822,7 @@ async def get_auth_status(authorization: str = Header(...)):
         raise HTTPException(status_code=403, detail="Account is disabled or deleted.")
 
     is_completed, missing = check_profile_completion(user)
+    form_schema = get_profile_form_schema(user)
     return {
         "authenticated": True,
         "email": user.get("email"),
@@ -835,8 +831,12 @@ async def get_auth_status(authorization: str = Header(...)):
         "is_profile_completed": is_completed,
         "profile_completed": is_completed,
         "requires_profile_completion": not is_completed,
+        "prompt_profile_form": not is_completed,
+        "first_time_login": not is_completed,
         "missing_fields": missing,
-        "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard"
+        "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
+        "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard",
+        "profile_form": form_schema,
     }
 
 
@@ -925,19 +925,18 @@ async def auth_complete_profile(
     await user_collection.update_one({"email": email}, {"$set": update_data})
 
     updated = await user_collection.find_one({"email": email}, {"_id": 0, "password_hash": 0})
-    is_now_completed, now_missing = check_profile_completion(updated)
-    updated["is_profile_completed"] = is_now_completed
-    updated["profile_completed"] = is_now_completed
-    updated["requires_profile_completion"] = not is_now_completed
-    updated["missing_fields"] = now_missing
-    updated["registration_complete"] = is_now_completed
+    updated = enrich_user_with_profile_status(updated)
 
     return {
-        "message": "Profile setup completed successfully" if is_now_completed else "Profile updated successfully",
-        "is_profile_completed": is_now_completed,
-        "requires_profile_completion": not is_now_completed,
-        "missing_fields": now_missing,
-        "redirect_url": "/dashboard",
+        "message": "Profile setup completed successfully" if updated.get("is_profile_completed") else "Profile updated successfully",
+        "is_profile_completed": updated.get("is_profile_completed"),
+        "requires_profile_completion": updated.get("requires_profile_completion"),
+        "prompt_profile_form": updated.get("prompt_profile_form"),
+        "first_time_login": updated.get("first_time_login"),
+        "missing_fields": updated.get("missing_fields", []),
+        "next_step": updated.get("next_step"),
+        "redirect_url": updated.get("redirect_url"),
+        "profile_form": updated.get("profile_form"),
         "user": updated
     }
 
@@ -1005,18 +1004,17 @@ async def auth_complete_profile_json(
     await user_collection.update_one({"email": email}, {"$set": update_data})
 
     updated = await user_collection.find_one({"email": email}, {"_id": 0, "password_hash": 0})
-    is_now_completed, now_missing = check_profile_completion(updated)
-    updated["is_profile_completed"] = is_now_completed
-    updated["profile_completed"] = is_now_completed
-    updated["requires_profile_completion"] = not is_now_completed
-    updated["missing_fields"] = now_missing
-    updated["registration_complete"] = is_now_completed
+    updated = enrich_user_with_profile_status(updated)
 
     return {
-        "message": "Profile setup completed successfully" if is_now_completed else "Profile updated successfully",
-        "is_profile_completed": is_now_completed,
-        "requires_profile_completion": not is_now_completed,
-        "missing_fields": now_missing,
-        "redirect_url": "/dashboard",
+        "message": "Profile setup completed successfully" if updated.get("is_profile_completed") else "Profile updated successfully",
+        "is_profile_completed": updated.get("is_profile_completed"),
+        "requires_profile_completion": updated.get("requires_profile_completion"),
+        "prompt_profile_form": updated.get("prompt_profile_form"),
+        "first_time_login": updated.get("first_time_login"),
+        "missing_fields": updated.get("missing_fields", []),
+        "next_step": updated.get("next_step"),
+        "redirect_url": updated.get("redirect_url"),
+        "profile_form": updated.get("profile_form"),
         "user": updated
     }

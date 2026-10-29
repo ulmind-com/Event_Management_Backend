@@ -15,54 +15,27 @@ from app.services.cloudinary_srv import upload_image
 from app.services.wallet_service import WalletService
 from datetime import datetime, timezone, date
 
+from app.core.profile_lifecycle import (
+    calculate_age,
+    parse_date,
+    check_profile_completion,
+    get_profile_form_schema,
+    enrich_user_with_profile_status,
+)
+
 router = APIRouter()
-
-
-def calculate_age(dob: date) -> int:
-    today = date.today()
-    return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-
-
-def parse_date(date_str: str) -> Optional[date]:
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(date_str, fmt).date()
-        except ValueError:
-            pass
-    return None
-
-
-def check_profile_completion(user: dict) -> Tuple[bool, List[str]]:
-    """Checks if required profile fields (name, phone_number, date_of_birth, address) are filled."""
-    if not user:
-        return False, ["name", "phone_number", "date_of_birth", "address"]
-    missing = []
-    if not user.get("name") or not str(user.get("name")).strip():
-        missing.append("name")
-    if not user.get("phone_number") or not str(user.get("phone_number")).strip():
-        missing.append("phone_number")
-    if not user.get("date_of_birth") or not str(user.get("date_of_birth")).strip():
-        missing.append("date_of_birth")
-    if not user.get("address") or not str(user.get("address")).strip():
-        missing.append("address")
-    return len(missing) == 0, missing
 
 
 @router.get("/me")
 async def get_my_profile(current_user: dict = Depends(get_current_user_allow_incomplete)):
-    """Retrieve own profile, including profile completeness status."""
+    """Retrieve own profile, including profile completeness status and profile input form schema."""
     if "_id" in current_user:
         del current_user["_id"]
     if "password_hash" in current_user:
         del current_user["password_hash"]
 
-    is_completed, missing = check_profile_completion(current_user)
-    current_user["is_profile_completed"] = is_completed
-    current_user["profile_completed"] = is_completed
-    current_user["requires_profile_completion"] = not is_completed
-    current_user["missing_fields"] = missing
-    current_user["registration_complete"] = is_completed
-    return current_user
+    return enrich_user_with_profile_status(current_user)
+
 
 
 @router.put("/me")
@@ -144,18 +117,18 @@ async def update_my_profile(
     await user_collection.update_one({"email": current_user["email"]}, {"$set": update_data})
 
     updated_user = await user_collection.find_one({"email": current_user["email"]}, {"_id": 0, "password_hash": 0})
-    is_now_completed, now_missing = check_profile_completion(updated_user)
-    updated_user["is_profile_completed"] = is_now_completed
-    updated_user["profile_completed"] = is_now_completed
-    updated_user["requires_profile_completion"] = not is_now_completed
-    updated_user["missing_fields"] = now_missing
-    updated_user["registration_complete"] = is_now_completed
+    updated_user = enrich_user_with_profile_status(updated_user)
 
     return {
-        "message": "Profile updated successfully" if not is_now_completed else "Profile setup completed successfully",
-        "is_profile_completed": is_now_completed,
-        "requires_profile_completion": not is_now_completed,
-        "missing_fields": now_missing,
+        "message": "Profile setup completed successfully" if updated_user.get("is_profile_completed") else "Profile updated successfully",
+        "is_profile_completed": updated_user.get("is_profile_completed"),
+        "requires_profile_completion": updated_user.get("requires_profile_completion"),
+        "prompt_profile_form": updated_user.get("prompt_profile_form"),
+        "first_time_login": updated_user.get("first_time_login"),
+        "missing_fields": updated_user.get("missing_fields", []),
+        "next_step": updated_user.get("next_step"),
+        "redirect_url": updated_user.get("redirect_url"),
+        "profile_form": updated_user.get("profile_form"),
         "user": updated_user
     }
 
@@ -206,18 +179,18 @@ async def complete_profile_json(
     await user_collection.update_one({"email": current_user["email"]}, {"$set": update_data})
 
     updated_user = await user_collection.find_one({"email": current_user["email"]}, {"_id": 0, "password_hash": 0})
-    is_now_completed, now_missing = check_profile_completion(updated_user)
-    updated_user["is_profile_completed"] = is_now_completed
-    updated_user["profile_completed"] = is_now_completed
-    updated_user["requires_profile_completion"] = not is_now_completed
-    updated_user["missing_fields"] = now_missing
-    updated_user["registration_complete"] = is_now_completed
+    updated_user = enrich_user_with_profile_status(updated_user)
 
     return {
-        "message": "Profile setup completed successfully",
-        "is_profile_completed": is_now_completed,
-        "requires_profile_completion": not is_now_completed,
-        "missing_fields": now_missing,
+        "message": "Profile setup completed successfully" if updated_user.get("is_profile_completed") else "Profile updated successfully",
+        "is_profile_completed": updated_user.get("is_profile_completed"),
+        "requires_profile_completion": updated_user.get("requires_profile_completion"),
+        "prompt_profile_form": updated_user.get("prompt_profile_form"),
+        "first_time_login": updated_user.get("first_time_login"),
+        "missing_fields": updated_user.get("missing_fields", []),
+        "next_step": updated_user.get("next_step"),
+        "redirect_url": updated_user.get("redirect_url"),
+        "profile_form": updated_user.get("profile_form"),
         "user": updated_user,
     }
 
@@ -225,12 +198,10 @@ async def complete_profile_json(
 async def get_my_dashboard(current_user: dict = Depends(get_current_user_allow_incomplete)):
     """Retrieve full dashboard data for the user."""
     email = current_user["email"]
-    is_completed, missing = check_profile_completion(current_user)
-    current_user["is_profile_completed"] = is_completed
-    current_user["profile_completed"] = is_completed
-    current_user["requires_profile_completion"] = not is_completed
-    current_user["missing_fields"] = missing
-    current_user["registration_complete"] = is_completed
+    current_user = enrich_user_with_profile_status(current_user)
+    is_completed = current_user["is_profile_completed"]
+    missing = current_user["missing_fields"]
+    form_schema = current_user["profile_form"]
     
     # 1. Fetch Registrations (Events & Courses)
     events = await registration_collection.find({"email": email, "activity_type": "event"}).to_list(length=100)
@@ -382,8 +353,12 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user_allow_i
         "profile": current_user,
         "is_profile_completed": is_completed,
         "requires_profile_completion": not is_completed,
+        "prompt_profile_form": not is_completed,
+        "first_time_login": not is_completed,
         "missing_fields": missing,
-        "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else None,
+        "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
+        "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard",
+        "profile_form": form_schema,
         "my_events": events,
         "my_tickets": tickets,
         "my_competitions": competitions,

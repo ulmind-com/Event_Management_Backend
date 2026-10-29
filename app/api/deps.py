@@ -5,6 +5,8 @@ from app.core.database import user_collection
 
 security = HTTPBearer()
 
+from app.core.profile_lifecycle import check_profile_completion
+
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     payload = decode_token(token)
@@ -25,10 +27,11 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
-    if not user.get("registration_complete"):
+    is_completed, missing = check_profile_completion(user)
+    if not is_completed:
         raise HTTPException(
-            status_code=403,
-            detail="Registration incomplete. Please complete your profile details first."
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Registration incomplete. Please complete your profile details first (Missing: {', '.join(missing)})."
         )
         
     return user

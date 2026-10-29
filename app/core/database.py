@@ -1,14 +1,15 @@
-try:
-    import certifi
-    ca_file = certifi.where()
-except Exception:
-    ca_file = None
+import certifi
+from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.config import settings
 
-client_kwargs = {}
-if ca_file:
-    client_kwargs["tlsCAFile"] = ca_file
-
-client = AsyncIOMotorClient(settings.MONGODB_URI, **client_kwargs)
+client = AsyncIOMotorClient(
+    settings.MONGODB_URI,
+    tls=True,
+    tlsCAFile=certifi.where(),
+    serverSelectionTimeoutMS=30000,
+    connectTimeoutMS=20000,
+    socketTimeoutMS=20000,
+)
 db = client.eventora_db
 
 # ── Existing Collections ──

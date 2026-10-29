@@ -17,7 +17,7 @@ from app.core.database import (
 from app.core.security import create_access_token
 
 
-def _generate_test_signature(order_id: str, payment_id: str, secret: str = None) -> str:
+def _generate_test_signature(order_id: str, payment_id: str, secret: str | None = None) -> str:
     key = secret or settings.RAZORPAY_KEY_SECRET or "rzp_secret_dummy_test"
     msg = f"{order_id}|{payment_id}"
     return hmac.new(key.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -35,10 +35,15 @@ async def test_paid_competition_registration_payment_lifecycle():
             {"email": test_email},
             {"$set": {
                 "email": test_email,
-                "role": "attendee",
+                "role": "USER",
+                "name": "Payment Tester",
                 "full_name": "Payment Tester",
+                "phone_number": "9876543210",
+                "address": "123 Test St",
                 "date_of_birth": "2000-01-01",
-                "registration_complete": True
+                "registration_complete": True,
+                "is_profile_completed": True,
+                "profile_completed": True,
             }},
             upsert=True
         )
@@ -154,9 +159,15 @@ async def test_paid_course_activity_registration_lifecycle():
             {"email": test_email},
             {"$set": {
                 "email": test_email,
-                "role": "attendee",
+                "role": "USER",
+                "name": "Course Tester",
                 "full_name": "Course Tester",
-                "registration_complete": True
+                "phone_number": "9876543210",
+                "address": "123 Test St",
+                "date_of_birth": "2000-01-01",
+                "registration_complete": True,
+                "is_profile_completed": True,
+                "profile_completed": True,
             }},
             upsert=True
         )
@@ -248,9 +259,15 @@ async def test_vip_pass_booking_lifecycle():
             {"email": test_email},
             {"$set": {
                 "email": test_email,
-                "role": "attendee",
+                "role": "USER",
+                "name": "VIP Tester",
                 "full_name": "VIP Tester",
-                "registration_complete": True
+                "phone_number": "9876543210",
+                "address": "123 Test St",
+                "date_of_birth": "2000-01-01",
+                "registration_complete": True,
+                "is_profile_completed": True,
+                "profile_completed": True,
             }},
             upsert=True
         )

@@ -1,6 +1,6 @@
 import pytest
 from httpx import AsyncClient, ASGITransport
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 import jwt
 
@@ -20,8 +20,11 @@ async def test_competition_registration_edge_cases():
             "email": user_email,
             "name": "Edge Test User",
             "phone_number": "9876543210",
+            "address": "123 Edge Lane",
             "date_of_birth": "2000-01-15T00:00:00.000Z",  # ISO format string
             "registration_complete": True,
+            "is_profile_completed": True,
+            "profile_completed": True,
             "created_at": datetime.now(timezone.utc)
         })
 
@@ -44,11 +47,11 @@ async def test_competition_registration_edge_cases():
             "participation_fee": None,  # EXPLICIT NONE
             "min_age": 10,
             "max_age": 50,
-            "start_date": datetime.now(timezone.utc),
-            "end_date": datetime.now(timezone.utc),
-            "registration_start_date": datetime.now(timezone.utc),
-            "registration_deadline": datetime.now(timezone.utc),
-            "submission_deadline": datetime.now(timezone.utc),
+            "start_date": datetime.now(timezone.utc) - timedelta(days=1),
+            "end_date": datetime.now(timezone.utc) + timedelta(days=30),
+            "registration_start_date": datetime.now(timezone.utc) - timedelta(days=2),
+            "registration_deadline": datetime.now(timezone.utc) + timedelta(days=10),
+            "submission_deadline": datetime.now(timezone.utc) + timedelta(days=15),
             "dynamic_submission_fields": []
         }
         comp_res = await db["competitions"].insert_one(comp_doc)

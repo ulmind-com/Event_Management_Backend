@@ -23,10 +23,15 @@ async def test_competition_registration_status_lifecycle():
             {"email": test_email},
             {"$set": {
                 "email": test_email,
-                "role": "attendee",
+                "role": "USER",
+                "name": "Status Tester",
                 "full_name": "Status Tester",
+                "phone_number": "9876543210",
+                "address": "123 Status Lane",
                 "date_of_birth": "2000-01-01",
-                "registration_complete": True
+                "registration_complete": True,
+                "is_profile_completed": True,
+                "profile_completed": True,
             }},
             upsert=True
         )

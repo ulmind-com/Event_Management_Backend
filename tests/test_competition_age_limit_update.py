@@ -116,9 +116,13 @@ async def test_competition_age_limit_create_and_update():
         await db["users"].insert_one({
             "email": test_user_email,
             "name": "Age Test User",
+            "phone_number": "9876543210",
+            "address": "123 Age Lane",
             "date_of_birth": "2004-01-01",
-            "role": "user",
-            "registration_complete": True
+            "role": "USER",
+            "registration_complete": True,
+            "is_profile_completed": True,
+            "profile_completed": True,
         })
         user_token = create_access_token({"sub": test_user_email, "type": "user"})
         user_headers = {"Authorization": f"Bearer {user_token}"}

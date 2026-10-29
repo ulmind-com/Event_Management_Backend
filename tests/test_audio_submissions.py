@@ -22,10 +22,15 @@ async def test_audio_only_submission_validation():
         {"email": "audio_test_user@example.com"},
         {"$set": {
             "email": "audio_test_user@example.com",
+            "name": "Audio Tester",
             "full_name": "Audio Tester",
+            "phone_number": "9876543210",
+            "address": "123 Audio Lane",
             "password_hash": get_password_hash("test1234"),
             "is_verified": True,
             "registration_complete": True,
+            "is_profile_completed": True,
+            "profile_completed": True,
             "date_of_birth": "2000-01-01"
         }},
         upsert=True

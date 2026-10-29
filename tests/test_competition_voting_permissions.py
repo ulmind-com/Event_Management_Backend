@@ -52,22 +52,37 @@ async def test_competition_self_voting_and_participant_voting_rules(ac: AsyncCli
         c1_user = await user_collection.insert_one({
             "email": contestant1_email,
             "name": "Contestant One",
-            "role": "user",
+            "phone_number": "9876543210",
+            "date_of_birth": "2000-01-01",
+            "address": "123 Stage St",
+            "role": "USER",
             "registration_complete": True,
+            "is_profile_completed": True,
+            "profile_completed": True,
             "created_at": datetime.now(timezone.utc)
         })
         c2_user = await user_collection.insert_one({
             "email": contestant2_email,
             "name": "Contestant Two",
-            "role": "user",
+            "phone_number": "9876543211",
+            "date_of_birth": "2000-01-01",
+            "address": "124 Stage St",
+            "role": "USER",
             "registration_complete": True,
+            "is_profile_completed": True,
+            "profile_completed": True,
             "created_at": datetime.now(timezone.utc)
         })
         aud_user = await user_collection.insert_one({
             "email": audience_email,
             "name": "Audience Fan",
-            "role": "user",
+            "phone_number": "9876543212",
+            "date_of_birth": "2000-01-01",
+            "address": "125 Stage St",
+            "role": "USER",
             "registration_complete": True,
+            "is_profile_completed": True,
+            "profile_completed": True,
             "created_at": datetime.now(timezone.utc)
         })
 

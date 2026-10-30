@@ -357,7 +357,7 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user_allow_i
         "first_time_login": not is_completed,
         "missing_fields": missing,
         "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
-        "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard",
+        "redirect_url": "/complete-profile" if not is_completed else "/dashboard",
         "profile_form": form_schema,
         "my_events": events,
         "my_tickets": tickets,

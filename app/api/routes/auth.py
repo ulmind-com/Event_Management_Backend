@@ -104,10 +104,10 @@ async def register_step3(
     password: str = Form(...),
     confirm_password: str = Form(...),
     name: str = Form(...),
-    phone_number: int = Form(...),
+    phone_number: str = Form(...),
     date_of_birth: str = Form(..., description="Date of birth (YYYY-MM-DD)"),
     address: str = Form(...),
-    parent_phone_number: Optional[int] = Form(None),
+    parent_phone_number: str = Form(...),
     profile_photo: Optional[UploadFile] = File(None),
     authorization: str = Header(...)
 ):
@@ -121,9 +121,19 @@ async def register_step3(
     if password != confirm_password:
         raise HTTPException(status_code=400, detail="Passwords do not match")
 
+    cleaned_phone = re.sub(r"\D", "", str(phone_number).strip())
+    if len(cleaned_phone) < 10:
+        raise HTTPException(status_code=400, detail="Mobile number must be at least 10 digits")
+
+    cleaned_parent_phone = re.sub(r"\D", "", str(parent_phone_number).strip())
+    if len(cleaned_parent_phone) < 10:
+        raise HTTPException(status_code=400, detail="Parent/Guardian phone number must be at least 10 digits")
+
     try:
         dob = parse_date(date_of_birth)
-    except ValueError:
+        if not dob:
+            raise ValueError()
+    except Exception:
         raise HTTPException(status_code=400, detail="Invalid date format.")
 
     final_age = calculate_age(dob)
@@ -166,12 +176,12 @@ async def register_step3(
 
     update_data = {
         "password_hash": hashed_pwd,
-        "name": name,
-        "phone_number": phone_number,
+        "name": name.strip(),
+        "phone_number": cleaned_phone,
         "date_of_birth": dob.strftime("%Y-%m-%d"),
         "age": final_age,
-        "address": address,
-        "parent_phone_number": parent_phone_number,
+        "address": address.strip(),
+        "parent_phone_number": cleaned_parent_phone,
         "profile_photo": profile_url,
         "kyc_doc_uri": kyc_doc_uri,
         "role": "USER",
@@ -315,7 +325,7 @@ async def user_login(req: UserLoginReq):
         "first_time_login": not is_completed,
         "missing_fields": missing,
         "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
-        "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard",
+        "redirect_url": "/complete-profile" if not is_completed else "/dashboard",
         "profile_form": form_schema,
         "user": {
             "email": req.email,
@@ -334,7 +344,7 @@ async def user_login(req: UserLoginReq):
             "first_time_login": not is_completed,
             "missing_fields": missing,
             "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
-            "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard",
+            "redirect_url": "/complete-profile" if not is_completed else "/dashboard",
             "profile_form": form_schema,
         }
     }
@@ -372,6 +382,13 @@ async def forgot_password_request(req: ForgotPasswordReq):
         raise HTTPException(
             status_code=403,
             detail="Password reset on this portal is reserved for user accounts. Staff should use their administrative portal."
+        )
+
+    # Google-only accounts do not use local passwords
+    if user.get("auth_provider") == "GOOGLE" and not user.get("password_hash"):
+        raise HTTPException(
+            status_code=400,
+            detail="This account was registered using Google Sign-In and does not use a separate password. Please sign in using 'Continue with Google'."
         )
 
     otp_code = generate_otp()
@@ -701,7 +718,7 @@ async def google_login(req: GoogleLoginReq):
         # First-time Google sign-ins MUST complete their profile (phone, dob, address)
         is_new_user = True
         is_completed = False
-        missing = ["phone_number", "date_of_birth", "address"]
+        missing = ["phone_number", "date_of_birth", "address", "parent_phone_number"]
         new_user_data = {
             "email": email,
             "name": name,
@@ -754,7 +771,7 @@ async def google_login(req: GoogleLoginReq):
         "first_time_login": not is_completed,
         "missing_fields": missing,
         "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
-        "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard",
+        "redirect_url": "/complete-profile" if not is_completed else "/dashboard",
         "profile_form": form_schema,
         "user": {
             "email": email,
@@ -773,7 +790,7 @@ async def google_login(req: GoogleLoginReq):
             "first_time_login": not is_completed,
             "missing_fields": missing,
             "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
-            "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard",
+            "redirect_url": "/complete-profile" if not is_completed else "/dashboard",
             "profile_form": form_schema,
         }
     }
@@ -826,7 +843,7 @@ async def get_auth_status(authorization: str = Header(...)):
         "first_time_login": not is_completed,
         "missing_fields": missing,
         "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
-        "redirect_url": "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard",
+        "redirect_url": "/complete-profile" if not is_completed else "/dashboard",
         "profile_form": form_schema,
     }
 

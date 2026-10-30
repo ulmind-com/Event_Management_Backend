@@ -30,11 +30,11 @@ def parse_date(date_str: str) -> Optional[date]:
 
 def check_profile_completion(user: Optional[Dict[str, Any]]) -> Tuple[bool, List[str]]:
     """
-    Checks if all required profile fields (name, phone_number, date_of_birth, address) are filled.
+    Checks if all required profile fields (name, phone_number, date_of_birth, address, parent_phone_number) are filled.
     Returns (is_completed, missing_fields_list).
     """
     if not user:
-        return False, ["name", "phone_number", "date_of_birth", "address"]
+        return False, ["name", "phone_number", "date_of_birth", "address", "parent_phone_number"]
 
     missing: List[str] = []
 
@@ -61,6 +61,15 @@ def check_profile_completion(user: Optional[Dict[str, Any]]) -> Tuple[bool, List
     address = user.get("address")
     if not address or not str(address).strip():
         missing.append("address")
+
+    # 5. Parent / Guardian Phone Number
+    parent_phone = user.get("parent_phone_number")
+    if parent_phone is None or not str(parent_phone).strip():
+        missing.append("parent_phone_number")
+    else:
+        cleaned_parent_phone = re.sub(r"\D", "", str(parent_phone).strip())
+        if len(cleaned_parent_phone) < 10:
+            missing.append("parent_phone_number")
 
     return len(missing) == 0, missing
 
@@ -130,10 +139,10 @@ def get_profile_form_schema(user: Optional[Dict[str, Any]] = None) -> Dict[str, 
                 "name": "parent_phone_number",
                 "label": "Parent / Guardian Contact",
                 "type": "tel",
-                "placeholder": "Required for participants under 18",
-                "required": False,
+                "placeholder": "10-digit guardian mobile number",
+                "required": True,
                 "value": parent_phone_val,
-                "is_missing": False,
+                "is_missing": "parent_phone_number" in missing,
             },
             {
                 "name": "profile_photo",
@@ -162,7 +171,7 @@ def enrich_user_with_profile_status(user: Dict[str, Any]) -> Dict[str, Any]:
     user["prompt_profile_form"] = not is_completed
     user["first_time_login"] = not is_completed or user.get("first_time_login", False)
     user["missing_fields"] = missing
-    user["redirect_url"] = "/dashboard?tab=profile&setup=true" if not is_completed else "/dashboard"
+    user["redirect_url"] = "/complete-profile" if not is_completed else "/dashboard"
     user["next_step"] = "COMPLETE_PROFILE" if not is_completed else "DASHBOARD"
     user["profile_form"] = form_schema
     return user

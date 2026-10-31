@@ -13,7 +13,12 @@ from app.core.database import (
     leaderboard_result_collection,
     user_collection,
 )
-from app.schemas.competition import CompetitionCreateReq, CompetitionUpdateReq
+from app.schemas.competition import (
+    CompetitionCreateReq,
+    CompetitionUpdateReq,
+    StagePerformerSetReq,
+    StageOrderUpdateReq,
+)
 from app.services.cloudinary_srv import upload_image
 from app.services.competition_lifecycle import (
     evaluate_competition_registration_status,
@@ -23,6 +28,7 @@ from app.services.competition_submission_config import (
     normalize_submission_settings,
     enrich_competition_submission_config,
 )
+from app.services.competition_stage_service import CompetitionStageService
 from datetime import datetime, timezone
 
 router = APIRouter()
@@ -1161,10 +1167,16 @@ async def list_competition_participants(
 
     total_fees = online_fees_collected + cash_fees_collected
 
+    # Live stage context
+    live_stage = comp.get("live_stage") or {}
+    curr_stage_performer = live_stage.get("current_performer") or {}
+    curr_stage_email = (curr_stage_performer.get("user_email") or "").strip().lower()
+
     participants_res = []
     for r in raw_regs:
         r_id = str(r["_id"])
         email = r.get("user_email", "")
+        clean_email = email.strip().lower()
         usr = users_map.get(email, {})
         sub = submissions_map.get(email)
 
@@ -1191,6 +1203,12 @@ async def list_competition_participants(
             p_status = raw_p_status
             c_status = ""
 
+        # Check stage status
+        is_on_stage = bool(curr_stage_email and clean_email == curr_stage_email)
+        reg_stage_status = r.get("stage_status", "NOT_STARTED")
+        if is_on_stage:
+            reg_stage_status = "ON_STAGE"
+
         participants_res.append({
             "_id": r_id,
             "registration_id": r_id,
@@ -1209,7 +1227,10 @@ async def list_competition_participants(
             "fee": fee_val,
             "registered_at": r.get("registered_at"),
             "rules_accepted": bool(r.get("rules_accepted", True)),
-            "submission": sub
+            "submission": sub,
+            "stage_status": reg_stage_status,
+            "is_current_performer": is_on_stage,
+            "stage_order": r.get("stage_order", 0)
         })
 
     return {
@@ -1233,6 +1254,7 @@ async def list_competition_participants(
         "free_total": free_total,
         "skip": skip,
         "limit": limit,
+        "live_stage": live_stage,
         "participants": participants_res
     }
 
@@ -1320,4 +1342,101 @@ async def revert_participant_cash(
         "payment_status": "PENDING",
         "cash_status": "PENDING"
     }
+
+
+# ══════════════════════════════════════════════
+# LIVE STAGE PERFORMANCE MANAGEMENT (Admin)
+# ══════════════════════════════════════════════
+
+@router.get("/{comp_id}/stage")
+async def get_stage_dashboard(comp_id: str, admin: dict = Depends(get_current_admin)):
+    """
+    Returns live stage dashboard for this competition:
+    - Active on-stage performer
+    - Previous performer
+    - Full list of registered participants with performance status (NOT_STARTED, ON_STAGE, COMPLETED),
+      registration reference, photos, submissions, and judge scores.
+    """
+    return await CompetitionStageService.get_admin_stage_dashboard(comp_id)
+
+
+@router.post("/{comp_id}/stage/set-performer")
+async def set_stage_performer(
+    comp_id: str,
+    req: StagePerformerSetReq,
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Sets a registered contestant as the active on-stage performer.
+    Accepts registration_id, user_email, or participant_id.
+    Ensures a scorable submission exists in competition_submission_collection,
+    marks previous performer as COMPLETED, and broadcasts real-time update to all judges, users, and audience.
+    """
+    target_id = req.identifier or req.registration_id or req.registration_reference or req.user_email or req.participant_id
+    if not target_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Must provide identifier, registration_id, registration_reference, user_email, or participant_id to set performer."
+        )
+
+    return await CompetitionStageService.set_current_performer(
+        comp_id=comp_id,
+        identifier=target_id,
+        admin_email=admin.get("email", "admin@eventora.com"),
+        notes=req.notes
+    )
+
+
+@router.post("/{comp_id}/stage/next-performer")
+async def advance_stage_performer(
+    comp_id: str,
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Automatically advances the live stage to the next unperformed registered participant in queue.
+    """
+    return await CompetitionStageService.advance_to_next_performer(
+        comp_id=comp_id,
+        admin_email=admin.get("email", "admin@eventora.com")
+    )
+
+
+@router.post("/{comp_id}/stage/end-performance")
+async def end_stage_performance(
+    comp_id: str,
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Ends the current live stage performance, marks performer as COMPLETED,
+    and puts stage in IDLE (intermission/waiting for next).
+    """
+    return await CompetitionStageService.end_current_performance(
+        comp_id=comp_id,
+        admin_email=admin.get("email", "admin@eventora.com")
+    )
+
+
+@router.post("/{comp_id}/stage/clear")
+async def clear_stage(
+    comp_id: str,
+    admin: dict = Depends(get_current_admin)
+):
+    """Alias to clear the stage and set stage status to IDLE."""
+    return await CompetitionStageService.end_current_performance(
+        comp_id=comp_id,
+        admin_email=admin.get("email", "admin@eventora.com")
+    )
+
+
+@router.post("/{comp_id}/stage/order")
+async def update_stage_order(
+    comp_id: str,
+    req: StageOrderUpdateReq,
+    admin: dict = Depends(get_current_admin)
+):
+    """Updates sequence order for registered participants for this competition."""
+    return await CompetitionStageService.update_stage_orders(
+        comp_id=comp_id,
+        orders=req.orders
+    )
 

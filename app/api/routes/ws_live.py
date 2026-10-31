@@ -1,6 +1,7 @@
-﻿from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.websocket import ws_manager
 from app.core.database import leaderboard_result_collection, judge_score_collection
+from app.services.competition_stage_service import CompetitionStageService
 import logging
 
 logger = logging.getLogger(__name__)
@@ -37,10 +38,13 @@ async def websocket_live_scores(websocket: WebSocket, comp_id: str):
                 "judge_count": s["judge_count"]
             })
         
+        stage_state = await CompetitionStageService.get_public_stage_status(comp_id)
+
         await websocket.send_json({
             "event": "initial_state",
             "competition_id": comp_id,
-            "leaderboard": ranked
+            "leaderboard": ranked,
+            "live_stage": stage_state
         })
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket, comp_id)
@@ -75,14 +79,18 @@ async def websocket_public_leaderboard(websocket: WebSocket, comp_id: str):
         for r in results:
             r["_id"] = str(r["_id"])
         
+        stage_state = await CompetitionStageService.get_public_stage_status(comp_id)
+
         await websocket.send_json({
             "event": "initial_state",
             "competition_id": comp_id,
-            "leaderboard": results
+            "leaderboard": results,
+            "live_stage": stage_state
         })
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket, comp_id)
         return
+
     except Exception as e:
         logger.error(f"Error: {e}")
     

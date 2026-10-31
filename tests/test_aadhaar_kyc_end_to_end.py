@@ -210,7 +210,9 @@ async def test_register_step3_with_preverified_kyc():
                 "phone_number": "9876543210",
                 "date_of_birth": "2000-01-01",
                 "address": "Kolkata, India",
+                "parent_phone_number": "9876543211",
             }
+
             res = await ac.post(
                 "/api/auth/register/step3",
                 data=form_data,

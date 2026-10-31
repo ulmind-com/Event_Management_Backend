@@ -62,14 +62,16 @@ def check_profile_completion(user: Optional[Dict[str, Any]]) -> Tuple[bool, List
     if not address or not str(address).strip():
         missing.append("address")
 
-    # 5. Parent / Guardian Phone Number
-    parent_phone = user.get("parent_phone_number")
-    if parent_phone is None or not str(parent_phone).strip():
-        missing.append("parent_phone_number")
-    else:
-        cleaned_parent_phone = re.sub(r"\D", "", str(parent_phone).strip())
-        if len(cleaned_parent_phone) < 10:
+    # 5. Parent / Guardian Phone Number (Only required for standard USER role, not JUDGE/ADMIN/VOLUNTEER)
+    if user.get("role") in [None, "USER"]:
+        parent_phone = user.get("parent_phone_number")
+        if parent_phone is None or not str(parent_phone).strip():
             missing.append("parent_phone_number")
+        else:
+            cleaned_parent_phone = re.sub(r"\D", "", str(parent_phone).strip())
+            if len(cleaned_parent_phone) < 10:
+                missing.append("parent_phone_number")
+
 
     return len(missing) == 0, missing
 
@@ -174,4 +176,22 @@ def enrich_user_with_profile_status(user: Dict[str, Any]) -> Dict[str, Any]:
     user["redirect_url"] = "/complete-profile" if not is_completed else "/dashboard"
     user["next_step"] = "COMPLETE_PROFILE" if not is_completed else "DASHBOARD"
     user["profile_form"] = form_schema
+
+    # ── Government ID & Profile Verification Badges ──
+    is_verified = bool(
+        user.get("is_verified")
+        or user.get("is_id_verified")
+        or user.get("is_govt_id_verified")
+        or user.get("kyc_status") == "VERIFIED"
+    )
+    user["is_verified"] = is_verified
+    user["is_id_verified"] = is_verified
+    user["is_govt_id_verified"] = is_verified
+    user["verified_badge"] = is_verified
+    user["verified_tick"] = is_verified
+    user["verification_status"] = "VERIFIED" if is_verified else user.get("verification_status", "NOT_VERIFIED")
+    if is_verified:
+        user["badge_label"] = "Verified Profile"
+
     return user
+

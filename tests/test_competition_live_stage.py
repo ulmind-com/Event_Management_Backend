@@ -65,12 +65,14 @@ async def test_live_stage_end_to_end_workflow():
         "phone_number": "9876543210",
         "date_of_birth": "1988-05-15",
         "address": "456 Judge Boulevard, Kolkata",
+        "parent_phone_number": "9876543211",
         "role": "JUDGE",
         "status": "ACTIVE",
         "is_verified": True,
         "registration_complete": True,
         "created_at": datetime.now(timezone.utc),
     })
+
 
     # Setup participant users with complete profiles
     for i, em in enumerate([p1_email, p2_email, p3_email], 1):

@@ -8,11 +8,31 @@ from app.core.database import user_collection
 from app.services.audit import log_admin_action
 from app.services.user_activity_service import UserActivityService
 
+from pydantic import BaseModel
+
 router = APIRouter()
 
+class AdminVerifyUserReq(BaseModel):
+    notes: Optional[str] = "Manually verified by admin after checking government ID."
+    govt_id_type: Optional[str] = "GOVT_ID"  # AADHAAR, VOTER_ID, PAN, PASSPORT, DRIVING_LICENSE, GOVT_ID
+    govt_id_number: Optional[str] = None
+
 def clean(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    if doc and "_id" in doc:
-        doc["_id"] = str(doc["_id"])
+    if doc:
+        if "_id" in doc:
+            doc["_id"] = str(doc["_id"])
+        is_v = bool(
+            doc.get("is_verified")
+            or doc.get("is_id_verified")
+            or doc.get("is_govt_id_verified")
+            or doc.get("kyc_status") == "VERIFIED"
+        )
+        doc["is_verified"] = is_v
+        doc["is_id_verified"] = is_v
+        doc["is_govt_id_verified"] = is_v
+        doc["verified_badge"] = is_v
+        doc["verified_tick"] = is_v
+        doc["verification_status"] = "VERIFIED" if is_v else doc.get("verification_status", "NOT_VERIFIED")
     return doc
 
 def oid(id_str: str) -> ObjectId:
@@ -35,19 +55,42 @@ async def ensure_ttl_index() -> None:
 async def list_active_users(
     role: Optional[str] = None,
     search: Optional[str] = None,
+    is_verified: Optional[bool] = None,
     admin: dict = Depends(get_current_admin)
 ):
-    """List all ACTIVE users (not in recycle bin) with optional search."""
+    """List all ACTIVE users (not in recycle bin) with optional search and verification filter."""
     q: Dict[str, Any] = {"is_deleted": {"$ne": True}}
     if role:
         q["role"] = role
+    if is_verified is not None:
+        if is_verified:
+            q["$or"] = [
+                {"is_verified": True},
+                {"is_id_verified": True},
+                {"is_govt_id_verified": True},
+                {"verification_status": "VERIFIED"}
+            ]
+        else:
+            q["$and"] = [
+                {"is_verified": {"$ne": True}},
+                {"is_id_verified": {"$ne": True}},
+                {"is_govt_id_verified": {"$ne": True}},
+                {"verification_status": {"$ne": "VERIFIED"}}
+            ]
     if search:
-        q["$or"] = [
+        search_clause = [
             {"name": {"$regex": search, "$options": "i"}},
             {"email": {"$regex": search, "$options": "i"}}
         ]
+        if "$or" in q:
+            q["$and"] = [{"$or": q.pop("$or")}, {"$or": search_clause}]
+        elif "$and" in q:
+            q["$and"].append({"$or": search_clause})
+        else:
+            q["$or"] = search_clause
     docs = await user_collection.find(q).sort("created_at", -1).to_list(length=500)
     return [clean(d) for d in docs]
+
 
 @router.delete("/{identifier}")
 async def soft_delete_user(identifier: str, admin: dict = Depends(get_current_admin)):
@@ -331,5 +374,175 @@ async def get_admin_user_tickets_and_bookings(user_id: str, admin: dict = Depend
         "bookings": bookings,
         "tickets": tickets
     }
+
+
+# ══════════════════════════════════════════════
+# MANUAL USER GOVT ID VERIFICATION (LIFETIME BADGE)
+# ══════════════════════════════════════════════
+
+@router.post("/{identifier}/verify")
+@router.post("/{identifier}/verify-govt-id")
+async def verify_user_govt_id(
+    identifier: str,
+    req: Optional[AdminVerifyUserReq] = None,
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Super Admin manually verifies a user after checking their Government ID (Aadhaar, Voter ID, PAN, Passport, etc.).
+    Once verified, the user receives an official verified badge / tick that persists for the lifetime of that account.
+    """
+    clean_id = identifier.strip()
+    query: Dict[str, Any] = {"is_deleted": {"$ne": True}}
+    if ObjectId.is_valid(clean_id):
+        query["$or"] = [{"email": clean_id}, {"_id": ObjectId(clean_id)}]
+    else:
+        query["email"] = clean_id
+
+    user = await user_collection.find_one(query)
+    if not user:
+        raise HTTPException(status_code=404, detail="Active user not found")
+
+    now = datetime.now(timezone.utc)
+    notes = (req.notes if (req and req.notes) else "Manually verified by admin after checking government ID.").strip()
+    id_type = (req.govt_id_type if (req and req.govt_id_type) else "GOVT_ID").strip()
+    id_num = req.govt_id_number.strip() if (req and req.govt_id_number) else None
+
+    verification_details = {
+        "verified_by": admin.get("email", "admin@eventora.com"),
+        "verified_at": now.isoformat(),
+        "method": "MANUAL_GOVT_ID_CHECK",
+        "govt_id_type": id_type,
+        "govt_id_number": id_num,
+        "notes": notes
+    }
+
+    update_fields = {
+        "is_verified": True,
+        "is_id_verified": True,
+        "is_govt_id_verified": True,
+        "verified_badge": True,
+        "verified_tick": True,
+        "verification_status": "VERIFIED",
+        "verified_at": now,
+        "verified_by": admin.get("email", "admin@eventora.com"),
+        "verification_details": verification_details,
+        "kyc_status": "VERIFIED",
+        "updated_at": now
+    }
+
+    await user_collection.update_one({"_id": user["_id"]}, {"$set": update_fields})
+
+    # Sync with kyc_verification_collection if collection exists
+    try:
+        from app.core.database import kyc_verification_collection
+        await kyc_verification_collection.update_one(
+            {"user_email": user["email"]},
+            {"$set": {
+                "status": "VERIFIED",
+                "verification_source": "ADMIN_MANUAL_VERIFICATION",
+                "verified_at": now,
+                "verified_by": admin.get("email", "admin@eventora.com"),
+                "reason": notes
+            }},
+            upsert=True
+        )
+    except Exception:
+        pass
+
+    # Audit logging
+    await log_admin_action(
+        admin.get("email", "admin@eventora.com"),
+        "verify_user_govt_id",
+        "user",
+        user["email"],
+        metadata={"user_id": str(user["_id"]), "govt_id_type": id_type}
+    )
+
+    # In-app notification for the user
+    try:
+        from app.services.notification_service import NotificationService
+        from app.core.notification_types import NotificationType, NotificationPriority
+        from app.schemas.notification import NotificationCreate
+        await NotificationService.send_in_app(
+            recipient_email=user["email"],
+            notification_data=NotificationCreate(
+                type=NotificationType.SYSTEM_ALERT,
+                title="Profile Verified by Admin ✅",
+                message="Your Government ID has been verified by the administrator. Your profile now features an official verified badge.",
+                priority=NotificationPriority.MEDIUM
+            )
+        )
+    except Exception:
+        pass
+
+    return {
+        "message": "User successfully verified. Verified badge and tick are now active on user profile.",
+        "user_id": str(user["_id"]),
+        "email": user["email"],
+        "is_verified": True,
+        "is_id_verified": True,
+        "is_govt_id_verified": True,
+        "verified_badge": True,
+        "verified_tick": True,
+        "verification_status": "VERIFIED",
+        "verified_at": now.isoformat(),
+        "verified_by": admin.get("email", "admin@eventora.com"),
+        "verification_details": verification_details
+    }
+
+
+@router.post("/{identifier}/unverify")
+async def unverify_user_govt_id(
+    identifier: str,
+    reason: Optional[str] = "Revoked by admin",
+    admin: dict = Depends(get_current_admin)
+):
+    """Admin un-verifies or revokes verified status for a user."""
+    clean_id = identifier.strip()
+    query: Dict[str, Any] = {"is_deleted": {"$ne": True}}
+    if ObjectId.is_valid(clean_id):
+        query["$or"] = [{"email": clean_id}, {"_id": ObjectId(clean_id)}]
+    else:
+        query["email"] = clean_id
+
+    user = await user_collection.find_one(query)
+    if not user:
+        raise HTTPException(status_code=404, detail="Active user not found")
+
+    now = datetime.now(timezone.utc)
+    update_fields = {
+        "is_verified": False,
+        "is_id_verified": False,
+        "is_govt_id_verified": False,
+        "verified_badge": False,
+        "verified_tick": False,
+        "verification_status": "REVOKED",
+        "unverified_at": now,
+        "unverified_by": admin.get("email", "admin@eventora.com"),
+        "unverified_reason": reason,
+        "updated_at": now
+    }
+    await user_collection.update_one({"_id": user["_id"]}, {"$set": update_fields})
+
+    await log_admin_action(
+        admin.get("email", "admin@eventora.com"),
+        "unverify_user_govt_id",
+        "user",
+        user["email"],
+        metadata={"user_id": str(user["_id"]), "reason": reason}
+    )
+
+    return {
+        "message": "User verified status revoked.",
+        "user_id": str(user["_id"]),
+        "email": user["email"],
+        "is_verified": False,
+        "is_id_verified": False,
+        "is_govt_id_verified": False,
+        "verified_badge": False,
+        "verified_tick": False,
+        "verification_status": "REVOKED"
+    }
+
 
 

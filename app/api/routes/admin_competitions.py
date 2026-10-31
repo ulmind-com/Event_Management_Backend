@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, UploadFile, File, Form, Body
+from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import re
 import json
@@ -20,6 +21,7 @@ from app.schemas.competition import (
     StageOrderUpdateReq,
 )
 from app.services.cloudinary_srv import upload_image
+from app.services.audit import log_admin_action
 from app.services.competition_lifecycle import (
     evaluate_competition_registration_status,
     safe_object_id,
@@ -1239,15 +1241,30 @@ async def list_competition_participants(
             "registration_id": r_id,
             "registration_reference": r.get("registration_reference", f"CRG-{r_id[:8]}"),
             "competition_id": str(comp_id),
+            "user_id": str(usr.get("_id")) if usr.get("_id") else (r.get("user_id") or ""),
             "user_email": email,
-            "user_name": usr.get("name") or r.get("user_name") or "Participant",
+            "user_name": usr.get("name") or usr.get("full_name") or r.get("user_name") or "Participant",
             "user_phone": usr.get("phone_number") or usr.get("phone") or r.get("user_phone") or "",
+            "date_of_birth": usr.get("date_of_birth") or usr.get("dob") or r.get("date_of_birth") or "",
+            "age": usr.get("age") or r.get("age"),
+            "address": usr.get("address") or usr.get("full_address") or r.get("address") or "",
+            "parent_phone_number": usr.get("parent_phone_number") or usr.get("parent_phone") or usr.get("emergency_contact") or r.get("parent_phone_number") or "",
+            "profile_photo": usr.get("profile_photo") or usr.get("avatar") or r.get("profile_photo") or "",
+            "govt_id_number": usr.get("govt_id_number") or r.get("govt_id_number") or "",
+            "govt_id_type": usr.get("govt_id_type") or r.get("govt_id_type") or "AADHAAR",
+            "govt_id_url": usr.get("govt_id_url") or usr.get("govt_id_doc") or r.get("govt_id_url") or "",
             "is_verified": is_user_verified,
             "is_id_verified": is_user_verified,
             "is_govt_id_verified": is_user_verified,
             "verified_badge": is_user_verified,
             "verified_tick": is_user_verified,
             "verification_status": "VERIFIED" if is_user_verified else usr.get("verification_status", "NOT_VERIFIED"),
+            "verification_details": usr.get("verification_details"),
+            "verified_at": (
+                usr.get("verified_at").isoformat()
+                if isinstance(usr.get("verified_at"), datetime)
+                else usr.get("verified_at")
+            ),
             "status": r.get("status", "CONFIRMED"),
             "payment_status": p_status,
             "payment_method": method,
@@ -1372,6 +1389,143 @@ async def revert_participant_cash(
         "registration_id": reg_id,
         "payment_status": "PENDING",
         "cash_status": "PENDING"
+    }
+
+
+class AdminVerifyParticipantReq(BaseModel):
+    notes: Optional[str] = "Manually verified by admin after physical Aadhaar check."
+    govt_id_type: Optional[str] = "AADHAAR"
+    govt_id_number: Optional[str] = None
+
+
+@router.post("/{comp_id}/participants/{reg_id}/verify-govt-id")
+@router.post("/{comp_id}/participants/{reg_id}/verify-participant")
+async def verify_competition_participant_govt_id(
+    comp_id: str,
+    reg_id: str,
+    req: Optional[AdminVerifyParticipantReq] = Body(None),
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Super Admin manually verifies a competition participant after checking their physical Aadhaar card.
+    Grants the user a lifetime verified status with the official Facebook-style Blue Badge.
+    No further verification is ever required across any competition.
+    """
+    clean_reg_id = reg_id.strip()
+    reg = None
+    if ObjectId.is_valid(clean_reg_id):
+        reg = await competition_registration_collection.find_one({
+            "_id": ObjectId(clean_reg_id),
+            "competition_id": str(comp_id)
+        })
+
+    # If not found by registration _id, try looking up by email, reference, or user_id
+    if not reg:
+        reg = await competition_registration_collection.find_one({
+            "competition_id": str(comp_id),
+            "$or": [
+                {"user_email": clean_reg_id},
+                {"registration_reference": clean_reg_id},
+                {"user_id": clean_reg_id}
+            ]
+        })
+
+    user_email = (reg.get("user_email") if reg else clean_reg_id).strip()
+
+    # Find the user
+    user_query: Dict[str, Any] = {"is_deleted": {"$ne": True}}
+    if ObjectId.is_valid(user_email):
+        user_query["$or"] = [{"email": user_email}, {"_id": ObjectId(user_email)}]
+    else:
+        user_query["email"] = user_email
+
+    user = await user_collection.find_one(user_query)
+    if not user:
+        raise HTTPException(status_code=404, detail="Participant user account not found.")
+
+    now = datetime.now(timezone.utc)
+    notes = (req.notes if (req and req.notes) else f"Manually verified at competition venue by admin {admin.get('email', 'admin')} after physical Aadhaar card check.").strip()
+    id_type = (req.govt_id_type if (req and req.govt_id_type) else "AADHAAR").strip()
+    id_num = req.govt_id_number.strip() if (req and req.govt_id_number) else (user.get("govt_id_number") or None)
+
+    verification_details = {
+        "verified_by": admin.get("email", "admin@eventora.com"),
+        "verified_at": now.isoformat(),
+        "method": "PHYSICAL_AADHAAR_CHECK",
+        "competition_id": str(comp_id),
+        "govt_id_type": id_type,
+        "govt_id_number": id_num,
+        "notes": notes
+    }
+
+    update_fields = {
+        "is_verified": True,
+        "is_id_verified": True,
+        "is_govt_id_verified": True,
+        "verified_badge": True,
+        "verified_tick": True,
+        "verification_status": "VERIFIED",
+        "verified_at": now,
+        "verified_by": admin.get("email", "admin@eventora.com"),
+        "verification_details": verification_details,
+        "kyc_status": "VERIFIED",
+        "updated_at": now
+    }
+    if id_num:
+        update_fields["govt_id_number"] = id_num
+    if id_type:
+        update_fields["govt_id_type"] = id_type
+
+    await user_collection.update_one({"_id": user["_id"]}, {"$set": update_fields})
+
+    # Also update competition registration document with verified flag
+    try:
+        await competition_registration_collection.update_many(
+            {"user_email": user["email"]},
+            {"$set": {
+                "is_verified": True,
+                "verified_badge": True,
+                "verification_status": "VERIFIED",
+                "updated_at": now.isoformat()
+            }}
+        )
+    except Exception:
+        pass
+
+    # Also sync with kyc_verification_collection if present
+    try:
+        from app.core.database import kyc_verification_collection
+        await kyc_verification_collection.update_one(
+            {"user_email": user["email"]},
+            {"$set": {
+                "status": "VERIFIED",
+                "verification_source": "ADMIN_MANUAL_VERIFICATION",
+                "verified_at": now,
+                "verified_by": admin.get("email", "admin@eventora.com"),
+                "reason": notes
+            }},
+            upsert=True
+        )
+    except Exception:
+        pass
+
+    # Audit logging
+    await log_admin_action(
+        admin.get("email", "admin@eventora.com"),
+        "verify_competition_participant",
+        "competition_participant",
+        user["email"],
+        metadata={"competition_id": str(comp_id), "user_id": str(user["_id"])}
+    )
+
+    return {
+        "success": True,
+        "message": f"Participant {user.get('name', user['email'])} has been successfully verified with lifetime Blue Badge!",
+        "user_email": user["email"],
+        "is_verified": True,
+        "verified_badge": True,
+        "verification_status": "VERIFIED",
+        "verified_at": now.isoformat()
     }
 
 

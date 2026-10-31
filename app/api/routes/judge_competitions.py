@@ -20,6 +20,7 @@ from app.schemas.competition import (
     JudgeFeedbackReq, SessionPINReq
 )
 from app.core.websocket import ws_manager
+from app.services.competition_stage_service import CompetitionStageService
 from datetime import datetime, timezone
 
 router = APIRouter()
@@ -134,6 +135,19 @@ async def list_contestants(comp_id: str, judge: dict = Depends(get_current_judge
     - Formatted submission_url & media_url for instant preview
     """
     await verify_judge_assignment(judge["email"], comp_id)
+
+    # Fetch competition live_stage context
+    c_query = [{"competition_id": str(comp_id)}]
+    if ObjectId.is_valid(comp_id):
+        c_query.append({"competition_id": ObjectId(comp_id)})
+
+    comp_doc = await competition_collection.find_one({
+        "$or": [{"_id": ObjectId(comp_id)} if ObjectId.is_valid(comp_id) else {"_id": comp_id}, {"id": comp_id}]
+    })
+    live_stage = (comp_doc.get("live_stage") or {}) if comp_doc else {}
+    curr_stage_performer = live_stage.get("current_performer") or {}
+    curr_sub_id = str(curr_stage_performer.get("submission_id", "")).strip()
+    curr_stage_email = (curr_stage_performer.get("user_email") or "").strip().lower()
 
     sub_query = {
         "$or": [{"competition_id": str(comp_id)}],
@@ -298,7 +312,14 @@ async def list_contestants(comp_id: str, judge: dict = Depends(get_current_judge
             elif sid in draft_set:
                 s["has_draft"] = True
 
+        # Stage status & on-stage detection
+        is_current = (bool(curr_sub_id and sid == curr_sub_id) or bool(curr_stage_email and u_email == curr_stage_email))
+        s["is_current_performer"] = is_current
+        s["on_stage"] = is_current
+        s["stage_status"] = "ON_STAGE" if is_current else r_info.get("stage_status", "NOT_STARTED")
+
     return subs
+
 
 # ══════════════════════════════════════════════
 # 2. SESSION PIN VERIFICATION
@@ -666,3 +687,53 @@ async def my_progress(comp_id: str, judge: dict = Depends(get_current_judge)):
         "pending": max(0, total_subs - scored - skipped),
         "completion_pct": round((scored + skipped) / total_subs * 100, 1) if total_subs > 0 else 0
     }
+
+# ══════════════════════════════════════════════
+# 8. LIVE STAGE JUDGE PANEL ENDPOINTS
+# ══════════════════════════════════════════════
+
+@router.get("/{comp_id}/live-stage")
+@router.get("/{comp_id}/current-performer")
+async def get_judge_live_stage_card(comp_id: str, judge: dict = Depends(get_current_judge)):
+    """
+    Returns the real-time stage card for the judge panel:
+    - Current active performer on stage (name, photo, registration reference, performance title)
+    - Submission ID (ready for scoring)
+    - Full judging criteria with max scores and weights
+    - Current judge's scoring status (has_scored, my_scores, total_score, comments, is_locked)
+    """
+    await verify_judge_assignment(judge["email"], comp_id)
+    return await CompetitionStageService.get_judge_stage_card(comp_id, judge["email"])
+
+
+@router.post("/{comp_id}/live-stage/score")
+async def score_current_stage_performer(
+    comp_id: str,
+    req: ScoreReq,
+    judge: dict = Depends(get_current_judge)
+):
+    """
+    Directly submits official scores for the participant currently on stage.
+    Ensures seamless one-click scoring from the judge's live stage card.
+    """
+    await verify_judge_assignment(judge["email"], comp_id)
+
+    stage_state = await CompetitionStageService.get_stage_state(comp_id)
+    if stage_state.get("stage_status") not in ["LIVE", "ON_STAGE"] or not stage_state.get("current_performer"):
+        raise HTTPException(
+            status_code=400,
+            detail="No participant is currently performing on stage to score."
+        )
+
+    curr = stage_state["current_performer"]
+    sub_id = curr.get("submission_id")
+    if not sub_id:
+        sub = await CompetitionStageService.get_or_create_submission(
+            comp_id=comp_id,
+            user_email=curr.get("user_email", ""),
+            user_name=curr.get("user_name", ""),
+            reg_id=curr.get("registration_id")
+        )
+        sub_id = sub["submission_id"]
+
+    return await submit_score(submission_id=str(sub_id), req=req, judge=judge)

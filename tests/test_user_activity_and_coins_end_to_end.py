@@ -32,14 +32,23 @@ async def setup_test_data():
     # Create User
     user_res = await user_collection.insert_one({
         "name": "Alice Audit",
+        "full_name": "Alice Audit",
         "email": user_email,
         "phone": "+919876500001",
+        "phone_number": "9876500001",
+        "date_of_birth": "1995-01-01",
+        "address": "Audit Street 10",
+        "parent_phone_number": "9876500002",
         "role": "USER",
         "status": "ACTIVE",
+        "email_verified": True,
         "registration_complete": True,
+        "is_profile_completed": True,
+        "profile_completed": True,
         "created_at": datetime.now(timezone.utc)
     })
     user_id = str(user_res.inserted_id)
+
 
     # Create Admin
     await admin_collection.insert_one({

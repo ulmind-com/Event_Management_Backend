@@ -27,6 +27,7 @@ from app.core.database import (
     audience_vote_collection,
 )
 from app.services.competition_lifecycle import evaluate_competition_registration_status
+from app.services.competition_stage_service import CompetitionStageService
 
 router = APIRouter()
 
@@ -461,7 +462,28 @@ async def get_live_competition_detail(comp_id: str):
         "total_audience_votes": total_audience_votes,
     }
 
+    comp["live_stage"] = comp.get("live_stage") or {
+        "stage_status": "IDLE",
+        "current_performer": None
+    }
+
     return comp
+
+
+@router.get(
+    "/live/competitions/{comp_id}/live-stage",
+    summary="Live Competition Stage Status",
+    description="Returns who is currently performing on stage, queue count, and stage status."
+)
+@router.get(
+    "/live/competitions/{comp_id}/current-performer",
+    summary="Live Competition Current Performer",
+    description="Alias for live stage status."
+)
+async def get_live_competition_stage(comp_id: str):
+    """Public real-time view of current on-stage performer for live competitions."""
+    return await CompetitionStageService.get_public_stage_status(comp_id)
+
 
 
 # ── GET /live/events/{event_id}  ─────────────────────────────────────────────

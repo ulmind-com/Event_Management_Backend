@@ -1,9 +1,19 @@
 from fastapi import APIRouter, HTTPException, Depends
 from bson import ObjectId
 from app.core.database import judge_feedback_collection, competition_collection, leaderboard_result_collection
-from bson import ObjectId
+from app.services.competition_stage_service import CompetitionStageService
 
 router = APIRouter()
+
+@router.get("/competitions/{comp_id}/live-stage")
+@router.get("/competitions/{comp_id}/current-performer")
+async def get_public_competition_live_stage(comp_id: str):
+    """
+    Public API: Returns the current live stage performance status for a competition.
+    Visible to all audiences, competitors, judges, and viewers in real-time.
+    """
+    return await CompetitionStageService.get_public_stage_status(comp_id)
+
 
 @router.get("/competitions/{comp_id}/results")
 async def public_results(comp_id: str):

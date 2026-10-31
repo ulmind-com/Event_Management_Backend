@@ -189,9 +189,16 @@ async def register_step3(
         "is_profile_completed": True,
         "profile_completed": True,
         "first_time_login": False,
+        "is_verified": False,
+        "is_id_verified": False,
+        "is_govt_id_verified": False,
+        "verified_badge": False,
+        "verified_tick": False,
+        "verification_status": "NOT_VERIFIED",
         "profile_completed_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
     }
+
 
     # Attach KYC status to user profile
     if kyc_result:
@@ -343,11 +350,15 @@ async def user_login(req: UserLoginReq):
             "prompt_profile_form": not is_completed,
             "first_time_login": not is_completed,
             "missing_fields": missing,
-            "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
-            "redirect_url": "/complete-profile" if not is_completed else "/dashboard",
             "profile_form": form_schema,
+            "is_verified": bool(user.get("is_verified") or user.get("is_id_verified") or user.get("is_govt_id_verified") or user.get("kyc_status") == "VERIFIED"),
+            "is_id_verified": bool(user.get("is_verified") or user.get("is_id_verified") or user.get("is_govt_id_verified") or user.get("kyc_status") == "VERIFIED"),
+            "verified_badge": bool(user.get("is_verified") or user.get("is_id_verified") or user.get("is_govt_id_verified") or user.get("kyc_status") == "VERIFIED"),
+            "verified_tick": bool(user.get("is_verified") or user.get("is_id_verified") or user.get("is_govt_id_verified") or user.get("kyc_status") == "VERIFIED"),
+            "verification_status": "VERIFIED" if bool(user.get("is_verified") or user.get("is_id_verified") or user.get("is_govt_id_verified") or user.get("kyc_status") == "VERIFIED") else user.get("verification_status", "NOT_VERIFIED"),
         }
     }
+
 
 
 # ══════════════════════════════════════════════
@@ -729,6 +740,12 @@ async def google_login(req: GoogleLoginReq):
             "is_profile_completed": False,
             "profile_completed": False,
             "first_time_login": True,
+            "is_verified": False,
+            "is_id_verified": False,
+            "is_govt_id_verified": False,
+            "verified_badge": False,
+            "verified_tick": False,
+            "verification_status": "NOT_VERIFIED",
             "auth_provider": "GOOGLE",
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
@@ -794,13 +811,16 @@ async def google_login(req: GoogleLoginReq):
             "profile_completed": is_completed,
             "requires_profile_completion": not is_completed,
             "prompt_profile_form": not is_completed,
-            "first_time_login": not is_completed,
             "missing_fields": missing,
-            "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
-            "redirect_url": "/complete-profile" if not is_completed else "/dashboard",
             "profile_form": form_schema,
+            "is_verified": bool(user_doc.get("is_verified") or user_doc.get("is_id_verified") or user_doc.get("is_govt_id_verified") or user_doc.get("kyc_status") == "VERIFIED"),
+            "is_id_verified": bool(user_doc.get("is_verified") or user_doc.get("is_id_verified") or user_doc.get("is_govt_id_verified") or user_doc.get("kyc_status") == "VERIFIED"),
+            "verified_badge": bool(user_doc.get("is_verified") or user_doc.get("is_id_verified") or user_doc.get("is_govt_id_verified") or user_doc.get("kyc_status") == "VERIFIED"),
+            "verified_tick": bool(user_doc.get("is_verified") or user_doc.get("is_id_verified") or user_doc.get("is_govt_id_verified") or user_doc.get("kyc_status") == "VERIFIED"),
+            "verification_status": "VERIFIED" if bool(user_doc.get("is_verified") or user_doc.get("is_id_verified") or user_doc.get("is_govt_id_verified") or user_doc.get("kyc_status") == "VERIFIED") else user_doc.get("verification_status", "NOT_VERIFIED"),
         }
     }
+
 
 
 # ══════════════════════════════════════════════
@@ -852,7 +872,13 @@ async def get_auth_status(authorization: str = Header(...)):
         "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
         "redirect_url": "/complete-profile" if not is_completed else "/dashboard",
         "profile_form": form_schema,
+        "is_verified": bool(user.get("is_verified") or user.get("is_id_verified") or user.get("is_govt_id_verified") or user.get("kyc_status") == "VERIFIED"),
+        "is_id_verified": bool(user.get("is_verified") or user.get("is_id_verified") or user.get("is_govt_id_verified") or user.get("kyc_status") == "VERIFIED"),
+        "verified_badge": bool(user.get("is_verified") or user.get("is_id_verified") or user.get("is_govt_id_verified") or user.get("kyc_status") == "VERIFIED"),
+        "verified_tick": bool(user.get("is_verified") or user.get("is_id_verified") or user.get("is_govt_id_verified") or user.get("kyc_status") == "VERIFIED"),
+        "verification_status": "VERIFIED" if bool(user.get("is_verified") or user.get("is_id_verified") or user.get("is_govt_id_verified") or user.get("kyc_status") == "VERIFIED") else user.get("verification_status", "NOT_VERIFIED"),
     }
+
 
 
 @router.post("/complete-profile")

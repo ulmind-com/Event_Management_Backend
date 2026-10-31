@@ -64,6 +64,7 @@ judging_session_collection = db["judging_sessions"]
 draft_score_collection = db["draft_scores"]
 judge_feedback_collection = db["judge_feedbacks"]
 coi_skip_collection = db["coi_skips"]
+competition_stage_collection = db["competition_stage_sessions"]
 
 # Referral, Reward, Wallet & Discount Collections
 referral_program_config_collection = db["referral_program_config"]

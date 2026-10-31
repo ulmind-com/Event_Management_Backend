@@ -204,3 +204,21 @@ class SessionPINReq(BaseModel):
 
 class SessionCreateReq(BaseModel):
     pin: Optional[str] = None
+
+
+# ── Live Stage Performance Schemas ──
+
+class StagePerformerSetReq(BaseModel):
+    identifier: Optional[str] = None
+    registration_id: Optional[str] = None
+    registration_reference: Optional[str] = None
+    user_email: Optional[str] = None
+    participant_id: Optional[str] = None
+    notes: Optional[str] = None
+
+class StageOrderUpdateReq(BaseModel):
+    orders: List[Dict[str, Any]]  # [{"registration_id": str, "stage_order": int}]
+
+class StageScoreReq(BaseModel):
+    scores: Dict[str, float]
+    comments: Optional[str] = None

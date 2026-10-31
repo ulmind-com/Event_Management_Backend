@@ -130,6 +130,13 @@ class UserActivityService:
         user_courses = await UserActivityService.get_user_courses(user_id)
         user_merch = await UserActivityService.get_user_merchandise_orders(user_id)
 
+        is_verified = bool(
+            user.get('is_verified')
+            or user.get('is_id_verified')
+            or user.get('is_govt_id_verified')
+            or user.get('kyc_status') == 'VERIFIED'
+        )
+
         return {
             'user': {
                 'id': uid_str,
@@ -138,6 +145,15 @@ class UserActivityService:
                 'phone': user.get('phone'),
                 'role': user.get('role', 'USER'),
                 'account_status': user.get('status', 'ACTIVE'),
+                'is_verified': is_verified,
+                'is_id_verified': is_verified,
+                'is_govt_id_verified': is_verified,
+                'verified_badge': is_verified,
+                'verified_tick': is_verified,
+                'verification_status': 'VERIFIED' if is_verified else user.get('verification_status', 'NOT_VERIFIED'),
+                'verified_at': user.get('verified_at'),
+                'verified_by': user.get('verified_by'),
+                'verification_details': user.get('verification_details'),
                 'created_at': user.get('created_at'),
             },
             'activity_summary': {

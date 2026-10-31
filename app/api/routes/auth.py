@@ -733,8 +733,15 @@ async def google_login(req: GoogleLoginReq):
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
         }
-        await user_collection.insert_one(new_user_data)
-        user_doc = new_user_data
+        try:
+            await user_collection.update_one(
+                {"email": email},
+                {"$setOnInsert": new_user_data},
+                upsert=True
+            )
+            user_doc = await user_collection.find_one({"email": email}) or new_user_data
+        except Exception:
+            user_doc = await user_collection.find_one({"email": email}) or new_user_data
 
         # Attribute referral if provided
         if req.referral_code:

@@ -38,6 +38,13 @@ def root():
 
 @app.on_event("startup")
 async def startup_event():
+    # Pre-warm Firebase Admin SDK safely at startup
+    try:
+        from app.services.firebase_auth_service import init_firebase_admin
+        init_firebase_admin()
+    except Exception:
+        pass
+
     # Initialize notification indexes safely
     from app.core.notification_indexes import init_notification_indexes
     await init_notification_indexes()

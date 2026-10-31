@@ -106,8 +106,15 @@ class ReferralService:
                 "updated_at": datetime.now(timezone.utc),
                 "updated_by": "system"
             }
-            await referral_program_config_collection.insert_one(default_config)
-            return default_config
+            try:
+                await referral_program_config_collection.update_one(
+                    {"_id": "current_config"},
+                    {"$setOnInsert": default_config},
+                    upsert=True
+                )
+            except Exception:
+                pass
+            return await referral_program_config_collection.find_one({"_id": "current_config"}) or default_config
         return config
 
     @classmethod

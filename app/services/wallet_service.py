@@ -31,8 +31,15 @@ class WalletService:
                 "created_at": datetime.now(timezone.utc),
                 "updated_at": datetime.now(timezone.utc)
             }
-            await user_wallet_collection.insert_one(new_wallet)
-            return new_wallet
+            try:
+                await user_wallet_collection.update_one(
+                    {"email": user_email},
+                    {"$setOnInsert": new_wallet},
+                    upsert=True
+                )
+            except Exception:
+                pass
+            return await user_wallet_collection.find_one({"email": user_email}) or new_wallet
         return wallet
 
     @classmethod

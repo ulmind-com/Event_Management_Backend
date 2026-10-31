@@ -9,6 +9,9 @@ client = AsyncIOMotorClient(
     serverSelectionTimeoutMS=30000,
     connectTimeoutMS=20000,
     socketTimeoutMS=20000,
+    maxPoolSize=50,
+    minPoolSize=5,
+    maxIdleTimeMS=45000,
 )
 db = client.eventora_db
 

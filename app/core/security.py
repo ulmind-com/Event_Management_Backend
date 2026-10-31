@@ -1,7 +1,12 @@
-﻿from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
+import warnings
 import bcrypt
 import jwt
 from app.core.config import settings
+
+# Suppress PyJWT warning for existing deployments where SECRET_KEY may be < 32 bytes
+if hasattr(jwt, "InsecureKeyLengthWarning"):
+    warnings.filterwarnings("ignore", category=jwt.InsecureKeyLengthWarning)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:

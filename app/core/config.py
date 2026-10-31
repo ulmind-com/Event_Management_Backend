@@ -17,8 +17,11 @@ class Settings:
     RESEND_API_KEY = os.getenv("RESEND_API_KEY")
     MAIL_ADDRESS = os.getenv("MAIL_ADDRESS")
 
-    # JWT
-    SECRET_KEY = os.getenv("SECRET_KEY", "yoursecretkeyhere")
+    # JWT (Minimum 32 bytes required for HMAC-SHA256 per RFC 7518)
+    SECRET_KEY = os.getenv(
+        "SECRET_KEY",
+        "uti_prod_secret_key_6901085843_eventora_secure_random_jwt_hash_2026_xyz"
+    )
     ALGORITHM = os.getenv("ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
     ADMIN_TOKEN_EXPIRE_MINUTES = int(os.getenv("ADMIN_TOKEN_EXPIRE_MINUTES", "60"))

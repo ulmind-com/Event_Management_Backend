@@ -236,6 +236,16 @@ class CompetitionStageService:
             total_score_sum = sum(float(sc.get("total_score", 0.0)) for sc in user_scores)
             avg_score = round(total_score_sum / len(user_scores), 2) if user_scores else 0.0
 
+            # User verification status (Admin Manual Verification)
+            is_user_verified = bool(
+                usr.get("is_verified")
+                or usr.get("is_id_verified")
+                or usr.get("is_govt_id_verified")
+                or usr.get("verified_badge")
+                or usr.get("verified_tick")
+                or usr.get("kyc_status") == "VERIFIED"
+            )
+
             participants_list.append({
                 "registration_id": r_id,
                 "registration_reference": reg_ref,
@@ -244,6 +254,12 @@ class CompetitionStageService:
                 "full_name": name,
                 "user_phone": phone,
                 "user_photo": photo,
+                "is_verified": is_user_verified,
+                "is_id_verified": is_user_verified,
+                "is_govt_id_verified": is_user_verified,
+                "verified_badge": is_user_verified,
+                "verified_tick": is_user_verified,
+                "verification_status": "VERIFIED" if is_user_verified else usr.get("verification_status", "NOT_VERIFIED"),
                 "stage_order": r.get("stage_order", idx + 1),
                 "stage_status": stage_stat,
                 "is_current_performer": is_curr,
@@ -376,6 +392,16 @@ class CompetitionStageService:
             prev_performer["completed_at"] = now_iso
 
         # Build new performer details
+        is_user_verified = bool(
+            usr and (
+                usr.get("is_verified")
+                or usr.get("is_id_verified")
+                or usr.get("is_govt_id_verified")
+                or usr.get("verified_badge")
+                or usr.get("verified_tick")
+                or usr.get("kyc_status") == "VERIFIED"
+            )
+        )
         new_performer = {
             "registration_id": reg_id,
             "registration_reference": reg_ref,
@@ -385,6 +411,12 @@ class CompetitionStageService:
             "user_phone": user_phone,
             "user_photo": user_photo,
             "avatar": user_photo,
+            "is_verified": is_user_verified,
+            "is_id_verified": is_user_verified,
+            "is_govt_id_verified": is_user_verified,
+            "verified_badge": is_user_verified,
+            "verified_tick": is_user_verified,
+            "verification_status": "VERIFIED" if is_user_verified else (usr.get("verification_status", "NOT_VERIFIED") if usr else "NOT_VERIFIED"),
             "submission_id": submission_id,
             "entry_title": reg.get("entry_title") or f"Stage Performance - {user_name}",
             "stage_status": "ON_STAGE",
@@ -641,6 +673,26 @@ class CompetitionStageService:
         if hasattr(scored_at, "isoformat"):
             scored_at = scored_at.isoformat()
 
+        # Resolve verification status for current on-stage performer
+        is_user_verified = bool(
+            curr.get("is_verified")
+            or curr.get("is_id_verified")
+            or curr.get("is_govt_id_verified")
+            or curr.get("verified_badge")
+            or curr.get("verified_tick")
+        )
+        if not is_user_verified and user_email:
+            u_doc = await user_collection.find_one({"email": user_email})
+            if u_doc:
+                is_user_verified = bool(
+                    u_doc.get("is_verified")
+                    or u_doc.get("is_id_verified")
+                    or u_doc.get("is_govt_id_verified")
+                    or u_doc.get("verified_badge")
+                    or u_doc.get("verified_tick")
+                    or u_doc.get("kyc_status") == "VERIFIED"
+                )
+
         card_data = {
             "submission_id": sub_id,
             "registration_id": curr.get("registration_id"),
@@ -650,6 +702,12 @@ class CompetitionStageService:
             "user_email": user_email,
             "user_photo": curr.get("user_photo"),
             "user_phone": curr.get("user_phone"),
+            "is_verified": is_user_verified,
+            "is_id_verified": is_user_verified,
+            "is_govt_id_verified": is_user_verified,
+            "verified_badge": is_user_verified,
+            "verified_tick": is_user_verified,
+            "verification_status": "VERIFIED" if is_user_verified else "NOT_VERIFIED",
             "entry_title": curr.get("entry_title"),
             "started_at": curr.get("started_at"),
             "stage_status": curr.get("stage_status", "ON_STAGE"),
@@ -703,6 +761,13 @@ class CompetitionStageService:
 
         public_curr = None
         if curr:
+            is_v = bool(
+                curr.get("is_verified")
+                or curr.get("is_id_verified")
+                or curr.get("is_govt_id_verified")
+                or curr.get("verified_badge")
+                or curr.get("verified_tick")
+            )
             public_curr = {
                 "participant_name": curr.get("user_name"),
                 "user_name": curr.get("user_name"),
@@ -711,18 +776,31 @@ class CompetitionStageService:
                 "avatar": curr.get("user_photo"),
                 "entry_title": curr.get("entry_title"),
                 "started_at": curr.get("started_at"),
-                "stage_status": curr.get("stage_status", "ON_STAGE")
+                "stage_status": curr.get("stage_status", "ON_STAGE"),
+                "is_verified": is_v,
+                "verified_badge": is_v,
+                "verified_tick": is_v
             }
 
         public_prev = None
         if prev:
+            is_v = bool(
+                prev.get("is_verified")
+                or prev.get("is_id_verified")
+                or prev.get("is_govt_id_verified")
+                or prev.get("verified_badge")
+                or prev.get("verified_tick")
+            )
             public_prev = {
                 "participant_name": prev.get("user_name"),
                 "user_name": prev.get("user_name"),
                 "registration_reference": prev.get("registration_reference"),
                 "user_photo": prev.get("user_photo"),
                 "entry_title": prev.get("entry_title"),
-                "completed_at": prev.get("completed_at")
+                "completed_at": prev.get("completed_at"),
+                "is_verified": is_v,
+                "verified_badge": is_v,
+                "verified_tick": is_v
             }
 
         return {

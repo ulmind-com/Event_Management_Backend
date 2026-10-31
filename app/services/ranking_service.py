@@ -118,6 +118,9 @@ class RankingService:
             if "profile_photo" in p: result["profile_photo"] = p["profile_photo"]
             if "audience_votes" in p: result["audience_votes"] = p["audience_votes"]
             if "judge_score" in p: result["judge_score"] = p["judge_score"]
+            if "is_verified" in p: result["is_verified"] = p["is_verified"]
+            if "verified_badge" in p: result["verified_badge"] = p["verified_badge"]
+            if "verified_tick" in p: result["verified_tick"] = p["verified_tick"]
             result["total_score"] = result.get("total_score", result["final_score"])
             result["score"] = result.get("score", result["final_score"])
             result["points"] = result.get("points", result["final_score"])

@@ -383,6 +383,14 @@ async def provisional_leaderboard(comp_id: str):
             or email.split("@")[0].replace(".", " ").title()
         )
         avatar = user_doc.get("profile_photo") or ""
+        is_user_verified = bool(
+            user_doc.get("is_verified")
+            or user_doc.get("is_id_verified")
+            or user_doc.get("is_govt_id_verified")
+            or user_doc.get("verified_badge")
+            or user_doc.get("verified_tick")
+            or user_doc.get("kyc_status") == "VERIFIED"
+        )
 
         participants_data.append({
             "participant_id": email,
@@ -390,7 +398,10 @@ async def provisional_leaderboard(comp_id: str):
             "name": display_name,
             "profile_photo": avatar,
             "audience_votes": votes,
-            "judge_score": total_judge
+            "judge_score": total_judge,
+            "is_verified": is_user_verified,
+            "verified_badge": is_user_verified,
+            "verified_tick": is_user_verified
         })
 
     final_leaderboard = RankingService.calculate_leaderboard(participants_data, max_audience_votes, max_judge_score, comp)

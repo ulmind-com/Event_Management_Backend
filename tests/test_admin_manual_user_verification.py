@@ -6,7 +6,15 @@ from bson import ObjectId
 
 from app.core.config import settings
 from app.core.security import create_access_token, get_password_hash
-from app.core.database import user_collection, admin_collection, kyc_verification_collection
+from app.core.database import (
+    user_collection,
+    admin_collection,
+    kyc_verification_collection,
+    competition_collection,
+    competition_registration_collection,
+    competition_submission_collection,
+    judge_assignment_collection
+)
 from app.main import app
 
 
@@ -225,3 +233,254 @@ async def test_admin_manual_user_verification_lifecycle():
     await user_collection.delete_many({"email": {"$in": [user_email, f"deleted_"]}})
     await user_collection.delete_many({"original_email": user_email})
     await kyc_verification_collection.delete_many({"user_email": user_email})
+
+
+@pytest.mark.asyncio
+async def test_verified_user_in_competition_participant_list():
+    """
+    End-to-End Test for Verified User Badge in Competition Registration & Contestant Lists:
+    1. Admin verifies User A after physical Aadhaar card inspection (with zero payload / no form needed).
+    2. User B remains unverified.
+    3. Both users register for a live competition.
+    4. In Admin Competition Participants List (GET /api/admin/advanced-competitions/{comp_id}/participants):
+       - User A displays is_verified=True, verified_badge=True, verified_tick=True.
+       - User B displays is_verified=False, verified_badge=False, verified_tick=False.
+    5. In Judge Contestants List (GET /api/judge/{comp_id}/contestants):
+       - User A displays is_verified=True, verified_badge=True, verified_tick=True.
+    6. When User A is on stage (GET /api/judge/{comp_id}/live-stage and GET /api/admin/.../live-stage):
+       - Both Judge and Admin stage panels reflect is_verified=True and verified_badge=True.
+    """
+    admin_email = "admin_comp_verify@eventora.com"
+    judge_email = "judge_comp_verify@eventora.com"
+    user_a_email = "usera_verified@eventora.com"
+    user_b_email = "userb_unverified@eventora.com"
+
+    now = datetime.now(timezone.utc)
+
+    # 1. Cleanup old test data
+    await admin_collection.delete_many({"email": admin_email})
+    await user_collection.delete_many({"email": {"$in": [user_a_email, user_b_email, judge_email]}})
+    await competition_collection.delete_many({"title": "Grand Verification Championship"})
+    await competition_registration_collection.delete_many({"user_email": {"$in": [user_a_email, user_b_email]}})
+    await competition_submission_collection.delete_many({"user_email": {"$in": [user_a_email, user_b_email]}})
+    await judge_assignment_collection.delete_many({"judge_email": judge_email})
+
+    # 2. Insert Admin & Judge
+    await admin_collection.insert_one({
+        "email": admin_email,
+        "password_hash": get_password_hash("adminpassword123"),
+        "role": "super_admin",
+        "created_at": now
+    })
+
+    judge_user = {
+        "email": judge_email,
+        "name": "Honorable Judge",
+        "full_name": "Honorable Judge",
+        "role": "JUDGE",
+        "phone_number": "9876543299",
+        "date_of_birth": "1980-01-01",
+        "address": "High Court Street, Kolkata",
+        "status": "ACTIVE",
+        "email_verified": True,
+        "is_profile_completed": True,
+        "created_at": now
+    }
+    await user_collection.insert_one(judge_user)
+
+    # 3. Insert User A and User B
+    user_a_doc = {
+        "email": user_a_email,
+        "name": "Verified Superstar",
+        "full_name": "Verified Superstar",
+        "phone_number": "9998887771",
+        "date_of_birth": "1998-05-20",
+        "address": "Salt Lake Sector 1, Kolkata",
+        "parent_phone_number": "9998887770",
+        "role": "USER",
+        "status": "ACTIVE",
+        "email_verified": True,
+        "is_profile_completed": True,
+        "is_verified": False,
+        "verified_badge": False,
+        "verified_tick": False,
+        "created_at": now,
+        "updated_at": now
+    }
+    user_b_doc = {
+        "email": user_b_email,
+        "name": "Unverified Performer",
+        "full_name": "Unverified Performer",
+        "phone_number": "9998887772",
+        "date_of_birth": "2000-08-15",
+        "address": "Park Street, Kolkata",
+        "parent_phone_number": "9998887773",
+        "role": "USER",
+        "status": "ACTIVE",
+        "email_verified": True,
+        "is_profile_completed": True,
+        "is_verified": False,
+        "verified_badge": False,
+        "verified_tick": False,
+        "created_at": now,
+        "updated_at": now
+    }
+    res_a = await user_collection.insert_one(user_a_doc)
+    user_a_id = str(res_a.inserted_id)
+    await user_collection.insert_one(user_b_doc)
+
+    # 4. Insert Competition & Assign Judge
+    comp_doc = {
+        "title": "Grand Verification Championship",
+        "description": "Championship to test participant badge display",
+        "status": "ACTIVE",
+        "registration_status": "OPEN",
+        "category": "MUSIC",
+        "registration_deadline": "2027-12-31T23:59:59Z",
+        "start_date": "2027-12-31T00:00:00Z",
+        "end_date": "2027-12-31T23:59:59Z",
+        "participation_fee": 0.0,
+        "fee": 0.0,
+        "is_paid": False,
+        "price": 0.0,
+        "audience_voting_enabled": False,
+        "judge_scoring_enabled": True,
+        "judging_criteria": [
+            {"criterion_id": "c1", "name": "Vocal Technique", "max_score": 10, "weight": 1.0}
+        ],
+        "created_at": now
+    }
+    comp_res = await competition_collection.insert_one(comp_doc)
+    comp_id = str(comp_res.inserted_id)
+
+    await judge_assignment_collection.insert_one({
+        "judge_email": judge_email,
+        "competition_id": comp_id,
+        "assigned_at": now
+    })
+
+    # Tokens
+    admin_token = create_access_token({"sub": admin_email, "type": "admin", "role": "super_admin"})
+    judge_token = create_access_token({"sub": judge_email, "type": "user", "role": "JUDGE"})
+    user_a_token = create_access_token({"sub": user_a_email, "type": "user"})
+    user_b_token = create_access_token({"sub": user_b_email, "type": "user"})
+
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    judge_headers = {"Authorization": f"Bearer {judge_token}"}
+    user_a_headers = {"Authorization": f"Bearer {user_a_token}"}
+    user_b_headers = {"Authorization": f"Bearer {user_b_token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # ── Step A: Admin verifies User A with zero payload / no form needed ──
+        verify_res = await ac.post(
+            f"/api/admin/users/{user_a_id}/verify",
+            headers=admin_headers
+        )
+        assert verify_res.status_code == 200, f"Admin verify failed: {verify_res.text}"
+        assert verify_res.json()["is_verified"] is True
+        assert verify_res.json()["verified_badge"] is True
+        assert verify_res.json()["verified_tick"] is True
+
+        # ── Step B: Both users register for competition ──
+        reg_a = await competition_registration_collection.insert_one({
+            "competition_id": comp_id,
+            "user_email": user_a_email,
+            "user_name": "Verified Superstar",
+            "registration_reference": "CRG-VERIFIED01",
+            "status": "CONFIRMED",
+            "payment_status": "PAID",
+            "fee": 0.0,
+            "registered_at": now
+        })
+        reg_a_id = str(reg_a.inserted_id)
+
+        await competition_registration_collection.insert_one({
+            "competition_id": comp_id,
+            "user_email": user_b_email,
+            "user_name": "Unverified Performer",
+            "registration_reference": "CRG-UNVERIFIED02",
+            "status": "CONFIRMED",
+            "payment_status": "PAID",
+            "fee": 0.0,
+            "registered_at": now
+        })
+
+        # User A has an approved submission
+        await competition_submission_collection.insert_one({
+            "competition_id": comp_id,
+            "user_email": user_a_email,
+            "name": "Verified Superstar",
+            "registration_reference": "CRG-VERIFIED01",
+            "title": "Acoustic Melody",
+            "status": "APPROVED",
+            "files": {"file": "https://example.com/audio.mp3"},
+            "submitted_at": now
+        })
+
+        # ── Step C: Admin inspects Competition Participants List ──
+        parts_res = await ac.get(f"/api/admin/advanced-competitions/{comp_id}/participants", headers=admin_headers)
+        assert parts_res.status_code == 200, f"Participants endpoint failed: {parts_res.text}"
+        participants = parts_res.json()["participants"]
+        assert len(participants) >= 2
+
+        part_a = next(p for p in participants if p["user_email"] == user_a_email)
+        part_b = next(p for p in participants if p["user_email"] == user_b_email)
+
+        # Verified participant shows verified badge & tick
+        assert part_a["is_verified"] is True
+        assert part_a["verified_badge"] is True
+        assert part_a["verified_tick"] is True
+        assert part_a["verification_status"] == "VERIFIED"
+
+        # Unverified participant shows unverified
+        assert part_b["is_verified"] is False
+        assert part_b["verified_badge"] is False
+        assert part_b["verified_tick"] is False
+
+        # ── Step D: Judge inspects Contestants List ──
+        judge_contestants = await ac.get(f"/api/judge/{comp_id}/contestants", headers=judge_headers)
+        assert judge_contestants.status_code == 200, f"Judge contestants failed: {judge_contestants.text}"
+        contestants = judge_contestants.json()
+        contestant_a = next(c for c in contestants if c["user_email"] == user_a_email)
+
+        assert contestant_a["is_verified"] is True
+        assert contestant_a["verified_badge"] is True
+        assert contestant_a["verified_tick"] is True
+        assert contestant_a["verification_status"] == "VERIFIED"
+
+        # ── Step E: Admin sets Verified User on Live Stage ──
+        set_res = await ac.post(
+            f"/api/admin/advanced-competitions/{comp_id}/stage/set-performer",
+            json={"registration_id": reg_a_id},
+            headers=admin_headers
+        )
+        assert set_res.status_code == 200, f"Set performer failed: {set_res.text}"
+        curr_performer = set_res.json()["current_performer"]
+        assert curr_performer["is_verified"] is True
+        assert curr_performer["verified_badge"] is True
+        assert curr_performer["verified_tick"] is True
+
+        # Judge Live Stage Card shows verified badge
+        judge_card_res = await ac.get(f"/api/judge/{comp_id}/live-stage", headers=judge_headers)
+        assert judge_card_res.status_code == 200
+        card_data = judge_card_res.json()["current_performer"]
+        assert card_data["is_verified"] is True
+        assert card_data["verified_badge"] is True
+        assert card_data["verified_tick"] is True
+
+        # Public Live Stage shows verified badge
+        public_stage = await ac.get(f"/api/public/competitions/{comp_id}/live-stage")
+        assert public_stage.status_code == 200
+        pub_curr = public_stage.json()["current_performer"]
+        assert pub_curr["is_verified"] is True
+        assert pub_curr["verified_badge"] is True
+        assert pub_curr["verified_tick"] is True
+
+    # Cleanup
+    await admin_collection.delete_many({"email": admin_email})
+    await user_collection.delete_many({"email": {"$in": [user_a_email, user_b_email, judge_email]}})
+    await competition_collection.delete_many({"title": "Grand Verification Championship"})
+    await competition_registration_collection.delete_many({"user_email": {"$in": [user_a_email, user_b_email]}})
+    await competition_submission_collection.delete_many({"user_email": {"$in": [user_a_email, user_b_email]}})
+    await judge_assignment_collection.delete_many({"judge_email": judge_email})
+

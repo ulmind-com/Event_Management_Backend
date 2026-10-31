@@ -193,13 +193,16 @@ async def list_contestants(comp_id: str, judge: dict = Depends(get_current_judge
         for s in subs if s.get("user_email")
     })
 
-    # Batch Join 1: user_collection (name, full_name, profile_photo, phone)
+    # Batch Join 1: user_collection (name, full_name, profile_photo, phone, verification status)
     user_map = {}
     if all_emails:
         try:
             users = await user_collection.find(
                 {"email": {"$in": all_emails}},
-                {"email": 1, "name": 1, "full_name": 1, "profile_photo": 1, "photo_url": 1, "avatar": 1, "phone": 1, "phone_number": 1}
+                {
+                    "email": 1, "name": 1, "full_name": 1, "profile_photo": 1, "photo_url": 1, "avatar": 1, "phone": 1, "phone_number": 1,
+                    "is_verified": 1, "is_id_verified": 1, "is_govt_id_verified": 1, "verified_badge": 1, "verified_tick": 1, "verification_status": 1, "kyc_status": 1
+                }
             ).to_list(length=len(all_emails) * 2)
             for u in users:
                 em = (u.get("email") or "").strip().lower()
@@ -232,6 +235,22 @@ async def list_contestants(comp_id: str, judge: dict = Depends(get_current_judge
         u_email = (s.get("user_email") or "").strip().lower()
         u_info = user_map.get(u_email, {})
         r_info = reg_map.get(u_email, {})
+
+        # Resolve Verified Profile Status (Admin Manual Verification)
+        is_user_verified = bool(
+            u_info.get("is_verified")
+            or u_info.get("is_id_verified")
+            or u_info.get("is_govt_id_verified")
+            or u_info.get("verified_badge")
+            or u_info.get("verified_tick")
+            or u_info.get("kyc_status") == "VERIFIED"
+        )
+        s["is_verified"] = is_user_verified
+        s["is_id_verified"] = is_user_verified
+        s["is_govt_id_verified"] = is_user_verified
+        s["verified_badge"] = is_user_verified
+        s["verified_tick"] = is_user_verified
+        s["verification_status"] = "VERIFIED" if is_user_verified else u_info.get("verification_status", "NOT_VERIFIED")
 
         # 1. Resolve User Name / Full Name
         real_name = (

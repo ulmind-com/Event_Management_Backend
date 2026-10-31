@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from typing import Optional, Any, Dict
 from datetime import datetime, timezone
 from bson import ObjectId
@@ -13,8 +13,8 @@ from pydantic import BaseModel
 router = APIRouter()
 
 class AdminVerifyUserReq(BaseModel):
-    notes: Optional[str] = "Manually verified by admin after checking government ID."
-    govt_id_type: Optional[str] = "GOVT_ID"  # AADHAAR, VOTER_ID, PAN, PASSPORT, DRIVING_LICENSE, GOVT_ID
+    notes: Optional[str] = "Manually verified by admin after physical Aadhaar check."
+    govt_id_type: Optional[str] = "AADHAAR"  # Default to Aadhaar
     govt_id_number: Optional[str] = None
 
 def clean(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -384,12 +384,12 @@ async def get_admin_user_tickets_and_bookings(user_id: str, admin: dict = Depend
 @router.post("/{identifier}/verify-govt-id")
 async def verify_user_govt_id(
     identifier: str,
-    req: Optional[AdminVerifyUserReq] = None,
+    req: Optional[AdminVerifyUserReq] = Body(None),
     admin: dict = Depends(get_current_admin)
 ):
     """
-    Super Admin manually verifies a user after checking their Government ID (Aadhaar, Voter ID, PAN, Passport, etc.).
-    Once verified, the user receives an official verified badge / tick that persists for the lifetime of that account.
+    Super Admin manually verifies a user after checking their Aadhaar / Government ID.
+    No forms or ID number submission needed. A single click verifies the user for the lifetime of that account.
     """
     clean_id = identifier.strip()
     query: Dict[str, Any] = {"is_deleted": {"$ne": True}}
@@ -403,14 +403,14 @@ async def verify_user_govt_id(
         raise HTTPException(status_code=404, detail="Active user not found")
 
     now = datetime.now(timezone.utc)
-    notes = (req.notes if (req and req.notes) else "Manually verified by admin after checking government ID.").strip()
-    id_type = (req.govt_id_type if (req and req.govt_id_type) else "GOVT_ID").strip()
+    notes = (req.notes if (req and req.notes) else "Manually verified by admin after physical Aadhaar card check.").strip()
+    id_type = (req.govt_id_type if (req and req.govt_id_type) else "AADHAAR").strip()
     id_num = req.govt_id_number.strip() if (req and req.govt_id_number) else None
 
     verification_details = {
         "verified_by": admin.get("email", "admin@eventora.com"),
         "verified_at": now.isoformat(),
-        "method": "MANUAL_GOVT_ID_CHECK",
+        "method": "PHYSICAL_AADHAAR_CHECK",
         "govt_id_type": id_type,
         "govt_id_number": id_num,
         "notes": notes

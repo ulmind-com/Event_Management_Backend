@@ -767,18 +767,33 @@ async def export_participants_pdf(comp_id: str, admin: dict = Depends(get_curren
     for sub in submissions:
         user = await user_collection.find_one({"email": sub.get("user_email")}) if sub.get("user_email") else None
         if user:
+            is_v = bool(
+                user.get("is_verified")
+                or user.get("is_id_verified")
+                or user.get("is_govt_id_verified")
+                or user.get("verified_badge")
+                or user.get("verified_tick")
+                or user.get("kyc_status") == "VERIFIED"
+            )
+            v_tag = " [VERIFIED]" if is_v else ""
             participants_data.append({
-                "name": user.get("name") or user.get("full_name") or "Participant",
+                "name": (user.get("name") or user.get("full_name") or "Participant") + v_tag,
                 "email": user.get("email", ""),
                 "phone": user.get("phone_number") or user.get("phone") or "N/A",
-                "status": sub.get("status", "")
+                "status": sub.get("status", ""),
+                "is_verified": is_v,
+                "verified_badge": is_v,
+                "verified_tick": is_v
             })
         else:
             participants_data.append({
                 "name": sub.get("participant_name") or sub.get("name") or sub.get("user_email") or "Participant",
                 "email": sub.get("user_email", ""),
                 "phone": sub.get("phone_number") or sub.get("phone") or "N/A",
-                "status": sub.get("status", "")
+                "status": sub.get("status", ""),
+                "is_verified": False,
+                "verified_badge": False,
+                "verified_tick": False
             })
             
     # Generate PDF
@@ -1209,6 +1224,16 @@ async def list_competition_participants(
         if is_on_stage:
             reg_stage_status = "ON_STAGE"
 
+        # Check user verification status (Admin Manual Verification)
+        is_user_verified = bool(
+            usr.get("is_verified")
+            or usr.get("is_id_verified")
+            or usr.get("is_govt_id_verified")
+            or usr.get("verified_badge")
+            or usr.get("verified_tick")
+            or usr.get("kyc_status") == "VERIFIED"
+        )
+
         participants_res.append({
             "_id": r_id,
             "registration_id": r_id,
@@ -1217,6 +1242,12 @@ async def list_competition_participants(
             "user_email": email,
             "user_name": usr.get("name") or r.get("user_name") or "Participant",
             "user_phone": usr.get("phone_number") or usr.get("phone") or r.get("user_phone") or "",
+            "is_verified": is_user_verified,
+            "is_id_verified": is_user_verified,
+            "is_govt_id_verified": is_user_verified,
+            "verified_badge": is_user_verified,
+            "verified_tick": is_user_verified,
+            "verification_status": "VERIFIED" if is_user_verified else usr.get("verification_status", "NOT_VERIFIED"),
             "status": r.get("status", "CONFIRMED"),
             "payment_status": p_status,
             "payment_method": method,

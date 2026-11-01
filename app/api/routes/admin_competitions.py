@@ -1078,16 +1078,23 @@ async def list_competition_participants(
     Super Admin inspects all registered participants for a competition,
     including registration details, payment verification (Cash vs Online), and file/link submissions.
     """
-    try:
-        c_oid = ObjectId(comp_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid competition ID format")
-
-    comp = await competition_collection.find_one({"_id": c_oid})
+    comp = None
+    if ObjectId.is_valid(comp_id):
+        comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp:
+        comp = await competition_collection.find_one({"$or": [{"_id": str(comp_id)}, {"id": str(comp_id)}]})
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
 
-    query: Dict[str, Any] = {"competition_id": str(comp_id)}
+    comp_match = [str(comp_id)]
+    if ObjectId.is_valid(comp_id):
+        comp_match.append(ObjectId(comp_id))
+    if comp.get("_id"):
+        comp_match.append(comp["_id"])
+        comp_match.append(str(comp["_id"]))
+    comp_match = list({str(x): x for x in comp_match}.values())
+
+    query: Dict[str, Any] = {"competition_id": {"$in": comp_match}}
     if status and status != "ALL":
         query["status"] = status
     if payment_status and payment_status != "ALL":
@@ -1118,7 +1125,19 @@ async def list_competition_participants(
     total = await competition_registration_collection.count_documents(query)
     raw_regs = await competition_registration_collection.find(query).sort("registered_at", -1).skip(skip).limit(limit).to_list(length=limit)
 
-    emails = list({r.get("user_email") for r in raw_regs if r.get("user_email")})
+    if total == 0:
+        legacy_query: Dict[str, Any] = {
+            "$or": [
+                {"activity_id": {"$in": comp_match}},
+                {"competition_id": {"$in": comp_match}}
+            ]
+        }
+        legacy_regs = await registration_collection.find(legacy_query).sort("created_at", -1).skip(skip).limit(limit).to_list(length=limit)
+        if legacy_regs:
+            raw_regs = legacy_regs
+            total = len(legacy_regs)
+
+    emails = list({(r.get("user_email") or r.get("email") or "").strip() for r in raw_regs if (r.get("user_email") or r.get("email"))})
 
     users_map = {}
     if emails:
@@ -1128,7 +1147,7 @@ async def list_competition_participants(
     submissions_map = {}
     if emails:
         subs = await competition_submission_collection.find({
-            "competition_id": str(comp_id),
+            "competition_id": {"$in": comp_match},
             "user_email": {"$in": emails}
         }).to_list(length=len(emails) * 2)
         for s in subs:
@@ -1140,7 +1159,14 @@ async def list_competition_participants(
                 "files": s.get("files", {})
             }
 
-    all_regs = await competition_registration_collection.find({"competition_id": str(comp_id)}).to_list(length=5000)
+    all_regs = await competition_registration_collection.find({"competition_id": {"$in": comp_match}}).to_list(length=5000)
+    if not all_regs:
+        all_regs = await registration_collection.find({
+            "$or": [
+                {"activity_id": {"$in": comp_match}},
+                {"competition_id": {"$in": comp_match}}
+            ]
+        }).to_list(length=5000)
     confirmed_count = sum(1 for r in all_regs if r.get("status") == "CONFIRMED" or r.get("payment_status") in ("PAID", "NOT_REQUIRED"))
     pending_count = sum(1 for r in all_regs if r.get("status") == "PENDING" and r.get("payment_status") != "PAID")
     total_submissions = await competition_submission_collection.count_documents({"competition_id": str(comp_id)})
@@ -1192,10 +1218,10 @@ async def list_competition_participants(
     participants_res = []
     for r in raw_regs:
         r_id = str(r["_id"])
-        email = r.get("user_email", "")
-        clean_email = email.strip().lower()
-        usr = users_map.get(email, {})
-        sub = submissions_map.get(email)
+        email = (r.get("user_email") or r.get("email") or "").strip()
+        clean_email = email.lower()
+        usr = users_map.get(email) or users_map.get(clean_email) or {}
+        sub = submissions_map.get(email) or submissions_map.get(clean_email)
 
         fee_val = float(r.get("fee", 0.0))
         is_cash = bool(r.get("cash_payment") or str(r.get("payment_method", "")).upper() in ["CASH", "OFFLINE"])

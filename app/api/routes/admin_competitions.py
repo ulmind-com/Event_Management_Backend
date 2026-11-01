@@ -1434,7 +1434,7 @@ async def verify_competition_participant_govt_id(
 ):
     """
     Super Admin manually verifies a competition participant after checking their physical Aadhaar card.
-    Grants the user a lifetime verified status with the official Facebook-style Blue Badge.
+    Grants the user a lifetime verified status with the official Blue Badge.
     No further verification is ever required across any competition.
     """
     clean_reg_id = reg_id.strip()

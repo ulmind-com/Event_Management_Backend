@@ -27,6 +27,7 @@ from fastapi import HTTPException
 from app.core.database import (
     competition_collection,
     competition_registration_collection,
+    registration_collection,
     competition_submission_collection,
     judge_score_collection,
     draft_score_collection,
@@ -624,6 +625,8 @@ class CompetitionStageService:
         live_stage = comp.get("live_stage") or {}
         curr = live_stage.get("current_performer")
         criteria = comp.get("judging_criteria", [])
+        stage_public = await cls.get_public_stage_status(c_str)
+        lineup = stage_public.get("lineup", [])
 
         if not curr:
             return {
@@ -633,7 +636,8 @@ class CompetitionStageService:
                 "has_active_performer": False,
                 "message": "No participant is currently performing on stage.",
                 "performer": None,
-                "criteria": criteria
+                "criteria": criteria,
+                "lineup": lineup
             }
 
         sub_id = curr.get("submission_id")
@@ -744,7 +748,8 @@ class CompetitionStageService:
             "criteria": criteria,
             "judging_criteria": criteria,
             "can_score": not is_scored,
-            "my_scoring_status": my_status
+            "my_scoring_status": my_status,
+            "lineup": lineup
         }
 
     @classmethod
@@ -803,6 +808,69 @@ class CompetitionStageService:
                 "verified_tick": is_v
             }
 
+        # Build serial performance lineup
+        c_matches = [c_str, ObjectId(c_str)] if ObjectId.is_valid(c_str) else [c_str]
+        regs = await competition_registration_collection.find({
+            "competition_id": {"$in": c_matches}
+        }).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=500)
+
+        if not regs:
+            legacy_or = [
+                {"activity_id": {"$in": c_matches}},
+                {"competition_id": {"$in": c_matches}}
+            ]
+            regs = await registration_collection.find({"$or": legacy_or}).sort([("created_at", 1)]).to_list(length=500)
+
+        lineup_emails = list({(r.get("user_email") or r.get("email") or "").strip().lower() for r in regs if (r.get("user_email") or r.get("email"))})
+        users_map = {}
+        if lineup_emails:
+            usrs = await user_collection.find({"email": {"$in": lineup_emails}}).to_list(length=len(lineup_emails) * 2)
+            users_map = {(u.get("email") or "").strip().lower(): u for u in usrs}
+
+        curr_email = (curr.get("user_email") or "").strip().lower() if curr else ""
+
+        lineup = []
+        for idx, r in enumerate(regs):
+            em = (r.get("user_email") or r.get("email") or "").strip().lower()
+            usr = users_map.get(em, {})
+            name = (
+                r.get("user_name")
+                or usr.get("full_name")
+                or usr.get("name")
+                or r.get("participant_name")
+                or (em.split("@")[0].title() if em else f"Participant #{idx+1}")
+            )
+            photo = usr.get("profile_photo") or usr.get("avatar") or r.get("profile_photo") or ""
+            is_v = bool(
+                usr.get("is_verified")
+                or usr.get("is_id_verified")
+                or usr.get("is_govt_id_verified")
+                or usr.get("verified_badge")
+                or usr.get("verified_tick")
+                or usr.get("kyc_status") == "VERIFIED"
+            )
+            stage_stat = r.get("stage_status", "NOT_STARTED")
+            is_on_stage = bool(curr_email and em == curr_email)
+            if is_on_stage:
+                stage_stat = "ON_STAGE"
+
+            lineup.append({
+                "order": r.get("stage_order", idx + 1),
+                "registration_id": str(r["_id"]),
+                "registration_reference": r.get("registration_reference") or f"CRG-{str(r['_id'])[:8]}",
+                "participant_name": name,
+                "user_name": name,
+                "user_email": em,
+                "user_photo": photo,
+                "avatar": photo,
+                "entry_title": r.get("entry_title") or f"Performance - {name}",
+                "stage_status": stage_stat,
+                "is_current_performer": is_on_stage,
+                "is_verified": is_v,
+                "verified_badge": is_v,
+                "verified_tick": is_v
+            })
+
         return {
             "competition_id": c_str,
             "competition_title": comp.get("title", "Competition"),
@@ -810,6 +878,9 @@ class CompetitionStageService:
             "has_active_performer": bool(public_curr),
             "current_performer": public_curr,
             "previous_performer": public_prev,
+            "total_participants": len(lineup),
+            "completed_count": sum(1 for p in lineup if p.get("stage_status") == "COMPLETED"),
+            "lineup": lineup,
             "updated_at": live_stage.get("updated_at")
         }
 

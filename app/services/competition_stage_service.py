@@ -141,9 +141,20 @@ class CompetitionStageService:
         curr_performer = live_stage.get("current_performer")
         prev_performer = live_stage.get("previous_performer")
 
+        c_matches = [c_str]
+        if ObjectId.is_valid(c_str):
+            c_matches.append(ObjectId(c_str))
+        if comp.get("_id"):
+            c_matches.append(comp["_id"])
+            c_matches.append(str(comp["_id"]))
+        if comp.get("id"):
+            c_matches.append(comp["id"])
+            c_matches.append(str(comp["id"]))
+        c_matches = list({str(x): x for x in c_matches}.values())
+
         # 1. Fetch all confirmed registrations for this competition
         reg_query: Dict[str, Any] = {
-            "competition_id": {"$in": [c_str, ObjectId(c_str)] if ObjectId.is_valid(c_str) else [c_str]},
+            "competition_id": {"$in": c_matches},
             "status": {"$in": ["CONFIRMED", "REGISTERED", "ATTENDED"]}
         }
         regs = await competition_registration_collection.find(reg_query).sort([
@@ -154,8 +165,15 @@ class CompetitionStageService:
         # Fallback if no status: CONFIRMED found, include all registrations for testing/flexibility
         if not regs:
             regs = await competition_registration_collection.find({
-                "competition_id": {"$in": [c_str, ObjectId(c_str)] if ObjectId.is_valid(c_str) else [c_str]}
+                "competition_id": {"$in": c_matches}
             }).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=2000)
+
+        if not regs:
+            legacy_or = [
+                {"activity_id": {"$in": c_matches}},
+                {"competition_id": {"$in": c_matches}}
+            ]
+            regs = await registration_collection.find({"$or": legacy_or}).sort([("created_at", 1)]).to_list(length=2000)
 
         emails = list({(r.get("user_email") or "").strip().lower() for r in regs if r.get("user_email")})
 
@@ -309,25 +327,46 @@ class CompetitionStageService:
         comp = await cls.get_competition_or_404(c_str)
         clean_id = str(identifier).strip()
 
+        c_matches = [c_str]
+        if ObjectId.is_valid(c_str):
+            c_matches.append(ObjectId(c_str))
+        if comp.get("_id"):
+            c_matches.append(comp["_id"])
+            c_matches.append(str(comp["_id"]))
+        if comp.get("id"):
+            c_matches.append(comp["id"])
+            c_matches.append(str(comp["id"]))
+        c_matches = list({str(x): x for x in c_matches}.values())
+
         # Build registration lookup query
         reg_or: List[Dict[str, Any]] = [
             {"registration_reference": clean_id},
             {"user_email": clean_id.lower()},
+            {"email": clean_id.lower()},
             {"_id": clean_id}
         ]
         if ObjectId.is_valid(clean_id):
             reg_or.insert(0, {"_id": ObjectId(clean_id)})
 
         reg = await competition_registration_collection.find_one({
-            "competition_id": {"$in": [c_str, ObjectId(c_str)] if ObjectId.is_valid(c_str) else [c_str]},
+            "competition_id": {"$in": c_matches},
             "$or": reg_or
         })
 
         if not reg:
-            # Fallback: check without competition_id in case format differed
             reg = await competition_registration_collection.find_one({"$or": reg_or})
-            if not reg:
-                raise HTTPException(status_code=404, detail="Participant registration not found for this competition.")
+        if not reg:
+            reg = await registration_collection.find_one({
+                "$or": [
+                    {"activity_id": {"$in": c_matches}},
+                    {"competition_id": {"$in": c_matches}}
+                ],
+                "$or": reg_or
+            })
+        if not reg:
+            reg = await registration_collection.find_one({"$or": reg_or})
+        if not reg:
+            raise HTTPException(status_code=404, detail="Participant registration not found for this competition.")
 
         reg_id = str(reg["_id"])
         user_email = (reg.get("user_email") or "").strip().lower()
@@ -493,9 +532,20 @@ class CompetitionStageService:
         curr_performer = live_stage.get("current_performer")
         current_email = (curr_performer.get("user_email") or "").lower().strip() if curr_performer else ""
 
+        c_matches = [c_str]
+        if ObjectId.is_valid(c_str):
+            c_matches.append(ObjectId(c_str))
+        if comp.get("_id"):
+            c_matches.append(comp["_id"])
+            c_matches.append(str(comp["_id"]))
+        if comp.get("id"):
+            c_matches.append(comp["id"])
+            c_matches.append(str(comp["id"]))
+        c_matches = list({str(x): x for x in c_matches}.values())
+
         # Find next unperformed contestant
         query: Dict[str, Any] = {
-            "competition_id": {"$in": [c_str, ObjectId(c_str)] if ObjectId.is_valid(c_str) else [c_str]},
+            "competition_id": {"$in": c_matches},
             "stage_status": {"$nin": ["COMPLETED", "ON_STAGE", "SKIPPED"]}
         }
         if current_email:
@@ -505,6 +555,25 @@ class CompetitionStageService:
             query,
             sort=[("stage_order", 1), ("registered_at", 1)]
         )
+
+        if not next_reg:
+            legacy_query = {
+                "$or": [
+                    {"activity_id": {"$in": c_matches}},
+                    {"competition_id": {"$in": c_matches}}
+                ],
+                "stage_status": {"$nin": ["COMPLETED", "ON_STAGE", "SKIPPED"]}
+            }
+            if current_email:
+                legacy_query["$and"] = [
+                    {"$or": [{"activity_id": {"$in": c_matches}}, {"competition_id": {"$in": c_matches}}]},
+                    {"user_email": {"$ne": current_email}},
+                    {"email": {"$ne": current_email}}
+                ]
+            next_reg = await registration_collection.find_one(
+                legacy_query,
+                sort=[("created_at", 1)]
+            )
 
         if not next_reg:
             # If all are completed or on stage

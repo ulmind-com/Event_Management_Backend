@@ -6,6 +6,7 @@ from app.core.database import (
     competition_collection,
     competition_submission_collection,
     competition_registration_collection,
+    registration_collection,
     judge_score_collection,
     judge_assignment_collection,
     judging_session_collection,
@@ -336,6 +337,105 @@ async def list_contestants(comp_id: str, judge: dict = Depends(get_current_judge
         s["is_current_performer"] = is_current
         s["on_stage"] = is_current
         s["stage_status"] = "ON_STAGE" if is_current else r_info.get("stage_status", "NOT_STARTED")
+
+    # Ensure all registered participants for this competition appear in the judge's list
+    existing_emails = {(s.get("user_email") or "").strip().lower() for s in subs if s.get("user_email")}
+
+    comp_matches = [str(comp_id)]
+    if ObjectId.is_valid(comp_id):
+        comp_matches.append(ObjectId(comp_id))
+    if comp_doc and comp_doc.get("_id"):
+        comp_matches.append(comp_doc["_id"])
+        comp_matches.append(str(comp_doc["_id"]))
+
+    all_registered = await competition_registration_collection.find({
+        "competition_id": {"$in": comp_matches}
+    }).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=1000)
+
+    if not all_registered:
+        all_registered = await registration_collection.find({
+            "$or": [
+                {"activity_id": {"$in": comp_matches}},
+                {"competition_id": {"$in": comp_matches}}
+            ]
+        }).sort([("created_at", 1)]).to_list(length=1000)
+
+    for r in all_registered:
+        r_em = (r.get("user_email") or r.get("email") or "").strip().lower()
+        if r_em and r_em not in existing_emails:
+            existing_emails.add(r_em)
+            u_info = user_map.get(r_em, {})
+            if not u_info:
+                u_doc = await user_collection.find_one({"email": r_em})
+                if u_doc:
+                    u_info = u_doc
+
+            sc = score_by_user.get(r_em)
+
+            is_user_verified = bool(
+                u_info.get("is_verified")
+                or u_info.get("is_id_verified")
+                or u_info.get("is_govt_id_verified")
+                or u_info.get("verified_badge")
+                or u_info.get("verified_tick")
+                or u_info.get("kyc_status") == "VERIFIED"
+            )
+
+            name = (
+                r.get("user_name")
+                or u_info.get("full_name")
+                or u_info.get("name")
+                or r.get("participant_name")
+                or (r_em.split("@")[0].title() if r_em else "Contestant")
+            )
+            photo = (
+                u_info.get("profile_photo")
+                or u_info.get("photo_url")
+                or u_info.get("avatar")
+                or r.get("profile_photo")
+                or ""
+            )
+            reg_ref = r.get("registration_reference") or f"CRG-{str(r['_id'])[:8]}"
+            phone = r.get("user_phone") or u_info.get("phone_number") or u_info.get("phone") or ""
+
+            is_curr = bool(curr_stage_email and r_em == curr_stage_email)
+            stage_stat = "ON_STAGE" if is_curr else r.get("stage_status", "NOT_STARTED")
+
+            subs.append({
+                "_id": str(r["_id"]),
+                "registration_id": str(r["_id"]),
+                "competition_id": str(comp_id),
+                "user_email": r_em,
+                "user_name": name,
+                "full_name": name,
+                "name": name,
+                "profile_photo": photo,
+                "avatar": photo,
+                "user_photo": photo,
+                "registration_reference": reg_ref,
+                "registration_number": reg_ref,
+                "reg_no": reg_ref,
+                "user_phone": phone,
+                "phone": phone,
+                "title": r.get("entry_title") or f"Performance - {name}",
+                "description": "",
+                "submission_url": "",
+                "media_url": "",
+                "status": "Registered",
+                "is_verified": is_user_verified,
+                "verified_badge": is_user_verified,
+                "is_scored": bool(sc),
+                "has_scored": bool(sc),
+                "is_locked": bool(sc),
+                "total_score": sc.get("total_score") if sc else None,
+                "my_score": sc.get("total_score") if sc else None,
+                "my_scores": sc.get("scores") if sc else {},
+                "my_comments": sc.get("comments") if sc else None,
+                "is_current_performer": is_curr,
+                "on_stage": is_curr,
+                "stage_status": stage_stat,
+                "stage_order": r.get("stage_order", len(subs) + 1),
+            })
 
     return subs
 

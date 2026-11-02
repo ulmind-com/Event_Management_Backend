@@ -623,38 +623,49 @@ async def open_judging_session(comp_id: str, pin: str = None, admin: dict = Depe
     """Opens a live judging session. Optionally sets a PIN judges must enter to score."""
     from app.core.database import judging_session_collection
     
-    existing = await judging_session_collection.find_one({"competition_id": comp_id, "status": "OPEN"})
+    clean_cid = str(comp_id).strip()
+    comp_matches = [clean_cid]
+    if ObjectId.is_valid(clean_cid):
+        comp_matches.append(ObjectId(clean_cid))
+
+    clean_pin = pin.strip() if (pin and str(pin).strip()) else None
+
+    existing = await judging_session_collection.find_one({"competition_id": {"$in": comp_matches}, "status": "OPEN"})
     if existing:
-        raise HTTPException(status_code=409, detail="A session is already open for this competition.")
-    
-    import hashlib
-    pin_hash = None
-    if pin:
-        pin_hash = pin  # In production, hash this
+        if clean_pin:
+            await judging_session_collection.update_one(
+                {"_id": existing["_id"]},
+                {"$set": {"pin": clean_pin, "updated_at": datetime.now(timezone.utc)}}
+            )
+            return {"message": f"Judging session is active. PIN updated to {clean_pin}.", "pin_required": True}
+        return {"message": "Judging session is already active.", "pin_required": bool(existing.get("pin"))}
     
     doc = {
-        "competition_id": comp_id,
+        "competition_id": clean_cid,
         "status": "OPEN",
-        "pin": pin_hash,
+        "pin": clean_pin,
         "verified_judges": [],
         "opened_by": admin.get("email"),
         "opened_at": datetime.now(timezone.utc)
     }
     await judging_session_collection.insert_one(doc)
-    return {"message": "Live judging session opened.", "pin_required": bool(pin)}
+    return {"message": "Live judging session opened successfully.", "pin_required": bool(clean_pin)}
 
 @router.post("/{comp_id}/session/close")
 async def close_judging_session(comp_id: str, admin: dict = Depends(get_current_admin)):
     """Closes the live judging session."""
     from app.core.database import judging_session_collection
     
-    res = await judging_session_collection.update_one(
-        {"competition_id": comp_id, "status": "OPEN"},
+    clean_cid = str(comp_id).strip()
+    comp_matches = [clean_cid]
+    if ObjectId.is_valid(clean_cid):
+        comp_matches.append(ObjectId(clean_cid))
+
+    await judging_session_collection.update_many(
+        {"competition_id": {"$in": comp_matches}, "status": "OPEN"},
         {"$set": {"status": "CLOSED", "closed_at": datetime.now(timezone.utc)}}
     )
-    if res.matched_count == 0:
-        raise HTTPException(status_code=404, detail="No open session found.")
-    return {"message": "Live judging session closed."}
+    return {"message": "Live judging session closed successfully."}
 
 # ══════════════════════════════════════════════
 # ADMIN: JUDGING PROGRESS DASHBOARD

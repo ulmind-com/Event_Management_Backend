@@ -32,9 +32,10 @@ router = APIRouter()
 
 async def get_current_judge(user: dict = Depends(get_current_user)):
     """Verifies that the current user has the JUDGE role."""
-    if user.get("role") != "JUDGE":
+    if str(user.get("role") or "").upper().strip() != "JUDGE":
         raise HTTPException(status_code=403, detail="Not authorized as judge")
-    if user.get("status") != "ACTIVE":
+    stat = str(user.get("status") or "").upper().strip()
+    if stat and stat not in ["ACTIVE", "VERIFIED", "APPROVED"]:
         raise HTTPException(status_code=403, detail="Judge account is not active")
     return user
 
@@ -55,13 +56,20 @@ async def verify_judge_assignment(judge_email: str, competition_id: str):
 
 async def verify_session_pin(judge_email: str, comp_id: str):
     """If a live session with PIN exists, verify judge has validated it."""
+    clean_cid = str(comp_id).strip()
+    comp_matches = [clean_cid]
+    if ObjectId.is_valid(clean_cid):
+        comp_matches.append(ObjectId(clean_cid))
+
     session = await judging_session_collection.find_one({
-        "competition_id": comp_id, "status": "OPEN"
+        "competition_id": {"$in": comp_matches}, "status": "OPEN"
     })
     if not session:
         raise HTTPException(status_code=403, detail="Live judging session is not open for this competition.")
     if session.get("pin"):
-        if judge_email not in session.get("verified_judges", []):
+        clean_email = (judge_email or "").strip().lower()
+        verified_judges = [(j or "").strip().lower() for j in session.get("verified_judges", [])]
+        if clean_email not in verified_judges:
             raise HTTPException(status_code=403, detail="You must verify the session PIN before scoring.")
 
 # ══════════════════════════════════════════════
@@ -76,6 +84,9 @@ async def list_assigned_competitions(judge: dict = Depends(get_current_judge)):
         "judge_email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"}
     }).to_list(length=100)
     
+    if not assignments:
+        return []
+
     valid_ids = []
     str_ids = []
     for a in assignments:
@@ -85,6 +96,9 @@ async def list_assigned_competitions(judge: dict = Depends(get_current_judge)):
             if ObjectId.is_valid(cid):
                 valid_ids.append(ObjectId(cid))
                 
+    if not str_ids:
+        return []
+
     comps = await competition_collection.find({
         "$or": [
             {"_id": {"$in": valid_ids}},
@@ -92,8 +106,25 @@ async def list_assigned_competitions(judge: dict = Depends(get_current_judge)):
             {"id": {"$in": str_ids}}
         ]
     }).to_list(length=100)
+
+    # Pre-fetch session open statuses
+    all_target_cids = str_ids + valid_ids
+    open_sessions = await judging_session_collection.find({
+        "competition_id": {"$in": all_target_cids},
+        "status": "OPEN"
+    }).to_list(length=100)
+    open_comp_ids = {str(s["competition_id"]) for s in open_sessions}
+    pin_required_ids = {str(s["competition_id"]) for s in open_sessions if s.get("pin")}
+
     for c in comps:
-        c["_id"] = str(c["_id"])
+        cid_str = str(c["_id"])
+        c["_id"] = cid_str
+        c["session_open"] = cid_str in open_comp_ids
+        c["pin_required"] = cid_str in pin_required_ids
+        for k, v in list(c.items()):
+            if isinstance(v, ObjectId):
+                c[k] = str(v)
+
     return comps
 
 def extract_submission_url(sub: dict) -> str:
@@ -360,15 +391,34 @@ async def list_contestants(comp_id: str, judge: dict = Depends(get_current_judge
             ]
         }).sort([("created_at", 1)]).to_list(length=1000)
 
+    # Batch pre-fetch any registered users not already in user_map
+    missing_user_emails = list({
+        (r.get("user_email") or r.get("email") or "").strip().lower()
+        for r in all_registered
+        if (r.get("user_email") or r.get("email") or "").strip().lower()
+        and (r.get("user_email") or r.get("email") or "").strip().lower() not in user_map
+    })
+    if missing_user_emails:
+        try:
+            extra_users = await user_collection.find(
+                {"email": {"$in": missing_user_emails}},
+                {
+                    "email": 1, "name": 1, "full_name": 1, "profile_photo": 1, "photo_url": 1, "avatar": 1, "phone": 1, "phone_number": 1,
+                    "is_verified": 1, "is_id_verified": 1, "is_govt_id_verified": 1, "verified_badge": 1, "verified_tick": 1, "verification_status": 1, "kyc_status": 1
+                }
+            ).to_list(length=len(missing_user_emails) * 2)
+            for u in extra_users:
+                em = (u.get("email") or "").strip().lower()
+                if em:
+                    user_map[em] = u
+        except Exception:
+            pass
+
     for r in all_registered:
         r_em = (r.get("user_email") or r.get("email") or "").strip().lower()
         if r_em and r_em not in existing_emails:
             existing_emails.add(r_em)
             u_info = user_map.get(r_em, {})
-            if not u_info:
-                u_doc = await user_collection.find_one({"email": r_em})
-                if u_doc:
-                    u_info = u_doc
 
             sc = score_by_user.get(r_em)
 
@@ -448,19 +498,25 @@ async def list_contestants(comp_id: str, judge: dict = Depends(get_current_judge
 async def verify_pin(comp_id: str, req: SessionPINReq, judge: dict = Depends(get_current_judge)):
     """Judge submits the PIN to unlock scoring for this live session."""
     await verify_judge_assignment(judge["email"], comp_id)
+    clean_cid = str(comp_id).strip()
+    comp_matches = [clean_cid]
+    if ObjectId.is_valid(clean_cid):
+        comp_matches.append(ObjectId(clean_cid))
+
     session = await judging_session_collection.find_one({
-        "competition_id": comp_id, "status": "OPEN"
+        "competition_id": {"$in": comp_matches}, "status": "OPEN"
     })
     if not session:
         raise HTTPException(status_code=404, detail="No active judging session for this competition.")
     if not session.get("pin"):
         return {"message": "This session does not require a PIN."}
-    if session["pin"] != req.pin:
+    if str(session["pin"]).strip() != str(req.pin).strip():
         raise HTTPException(status_code=403, detail="Incorrect PIN.")
 
+    clean_email = (judge.get("email") or "").strip().lower()
     await judging_session_collection.update_one(
         {"_id": session["_id"]},
-        {"$addToSet": {"verified_judges": judge["email"]}}
+        {"$addToSet": {"verified_judges": clean_email}}
     )
     return {"message": "PIN verified. You can now score contestants."}
 

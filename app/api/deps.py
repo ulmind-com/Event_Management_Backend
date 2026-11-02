@@ -26,13 +26,15 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     user = await user_collection.find_one({"email": email})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-        
-    is_completed, missing = check_profile_completion(user)
-    if not is_completed:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Registration incomplete. Please complete your profile details first (Missing: {', '.join(missing)})."
-        )
+
+    user_role = str(user.get("role") or "").upper().strip()
+    if user_role not in ["JUDGE", "ADMIN", "SUPER_ADMIN", "VOLUNTEER"]:
+        is_completed, missing = check_profile_completion(user)
+        if not is_completed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Registration incomplete. Please complete your profile details first (Missing: {', '.join(missing)})."
+            )
         
     return user
 

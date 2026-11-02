@@ -32,9 +32,15 @@ def check_profile_completion(user: Optional[Dict[str, Any]]) -> Tuple[bool, List
     """
     Checks if all required profile fields (name, phone_number, date_of_birth, address, parent_phone_number) are filled.
     Returns (is_completed, missing_fields_list).
+    Staff roles (JUDGE, ADMIN, SUPER_ADMIN, VOLUNTEER) do not require competitor onboarding.
     """
     if not user:
         return False, ["name", "phone_number", "date_of_birth", "address", "parent_phone_number"]
+
+    # Exempt staff / judge / admin / volunteer roles from competitor profile checks
+    role = str(user.get("role") or "").upper().strip()
+    if role in ["JUDGE", "ADMIN", "SUPER_ADMIN", "VOLUNTEER"]:
+        return True, []
 
     missing: List[str] = []
 

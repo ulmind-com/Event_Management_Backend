@@ -1,13 +1,17 @@
-
-
 import re
 import logging
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from app.core.admin_auth import get_current_admin
-from app.core.database import user_collection, judge_assignment_collection, competition_collection
+from app.core.database import (
+    user_collection,
+    judge_assignment_collection,
+    competition_collection,
+    draft_score_collection,
+)
 from app.schemas.judge import JudgeCreateReq, JudgeUpdateReq, JudgeAssignmentReq
 from app.services.email import EmailService
+from app.services.audit import log_admin_action
 from datetime import datetime, timezone
 from app.core.config import settings
 
@@ -179,5 +183,146 @@ async def remove_judge_assignment(req: JudgeAssignmentReq, admin: dict = Depends
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Assignment not found")
     return {"message": "Assignment removed successfully"}
-    
 
+@router.get("/{identifier}")
+async def get_judge(identifier: str, admin: dict = Depends(get_current_admin)):
+    """Fetch single judge profile by email or user ID."""
+    clean_id = identifier.strip()
+    if clean_id.lower() == "assignments":
+        raise HTTPException(status_code=400, detail="Invalid judge identifier.")
+
+    query_conditions = []
+    if ObjectId.is_valid(clean_id):
+        query_conditions.append({"_id": ObjectId(clean_id)})
+    query_conditions.append({
+        "email": {"$regex": f"^{re.escape(clean_id)}$", "$options": "i"}
+    })
+
+    judge = await user_collection.find_one({
+        "$or": query_conditions,
+        "role": "JUDGE"
+    })
+    if not judge:
+        raise HTTPException(status_code=404, detail="Judge not found.")
+
+    judge["_id"] = str(judge["_id"])
+    email_key = str(judge.get("email", "")).strip().lower()
+    assignments = await judge_assignment_collection.find({
+        "judge_email": {"$regex": f"^{re.escape(email_key)}$", "$options": "i"}
+    }).to_list(length=500)
+    assigned_comp_ids = [str(a["competition_id"]) for a in assignments if a.get("competition_id")]
+    judge["assigned_competitions"] = assigned_comp_ids
+    judge["assigned_count"] = len(assigned_comp_ids)
+    return judge
+
+@router.patch("/{identifier}")
+@router.put("/{identifier}")
+async def update_judge(
+    identifier: str,
+    req: JudgeUpdateReq,
+    admin: dict = Depends(get_current_admin),
+):
+    """Update judge profile details by email or user ID."""
+    clean_id = identifier.strip()
+    if clean_id.lower() == "assignments":
+        raise HTTPException(status_code=400, detail="Invalid judge identifier.")
+
+    query_conditions = []
+    if ObjectId.is_valid(clean_id):
+        query_conditions.append({"_id": ObjectId(clean_id)})
+    query_conditions.append({
+        "email": {"$regex": f"^{re.escape(clean_id)}$", "$options": "i"}
+    })
+
+    judge = await user_collection.find_one({
+        "$or": query_conditions,
+        "role": "JUDGE"
+    })
+    if not judge:
+        raise HTTPException(status_code=404, detail="Judge not found.")
+
+    update_data = req.model_dump(exclude_unset=True)
+    if "full_name" in update_data:
+        update_data["name"] = update_data["full_name"]
+    update_data["updated_at"] = datetime.now(timezone.utc)
+
+    await user_collection.update_one(
+        {"_id": judge["_id"]},
+        {"$set": update_data}
+    )
+
+    updated_judge = await user_collection.find_one({"_id": judge["_id"]})
+    updated_judge["_id"] = str(updated_judge["_id"])
+    return updated_judge
+
+@router.delete("/{identifier}")
+async def delete_judge(
+    identifier: str,
+    admin: dict = Depends(get_current_admin),
+):
+    """
+    Permanently deletes a judge account by Email or ObjectId.
+    Cascades deletion of judge competition assignments and unsubmitted drafts.
+    """
+    clean_id = identifier.strip()
+    if clean_id.lower() == "assignments":
+        raise HTTPException(status_code=400, detail="Invalid judge identifier.")
+
+    query_conditions = []
+    if ObjectId.is_valid(clean_id):
+        query_conditions.append({"_id": ObjectId(clean_id)})
+    query_conditions.append({
+        "email": {"$regex": f"^{re.escape(clean_id)}$", "$options": "i"}
+    })
+
+    judge = await user_collection.find_one({
+        "$or": query_conditions,
+        "role": "JUDGE"
+    })
+    if not judge:
+        raise HTTPException(status_code=404, detail="Judge not found.")
+
+    judge_id = str(judge["_id"])
+    judge_email = str(judge.get("email") or "").strip().lower()
+    judge_name = judge.get("full_name") or judge.get("name") or "Judge"
+
+    # 1. Cascade cleanup: delete competition assignments
+    assignments_res = await judge_assignment_collection.delete_many({
+        "judge_email": {"$regex": f"^{re.escape(judge_email)}$", "$options": "i"}
+    })
+
+    # 2. Cascade cleanup: delete unsubmitted draft scores
+    await draft_score_collection.delete_many({
+        "judge_email": {"$regex": f"^{re.escape(judge_email)}$", "$options": "i"}
+    })
+
+    # 3. Delete judge record from user_collection
+    del_res = await user_collection.delete_one({"_id": judge["_id"]})
+    if del_res.deleted_count == 0:
+        raise HTTPException(status_code=500, detail="Failed to delete judge account.")
+
+    # 4. Audit logging
+    await log_admin_action(
+        actor_email=admin.get("email", "admin"),
+        action="delete_judge",
+        resource_type="judge",
+        resource_id=judge_email,
+        outcome="success",
+        metadata={
+            "judge_id": judge_id,
+            "judge_name": judge_name,
+            "unassigned_competitions": assignments_res.deleted_count,
+        }
+    )
+
+    logger.info(
+        f"Admin '{admin.get('email')}' deleted judge '{judge_email}' (ID: {judge_id}), "
+        f"removed {assignments_res.deleted_count} assignments."
+    )
+
+    return {
+        "message": f"Judge '{judge_name}' deleted successfully.",
+        "judge_id": judge_id,
+        "email": judge_email,
+        "unassigned_competitions_count": assignments_res.deleted_count
+    }

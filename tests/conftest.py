@@ -1,7 +1,15 @@
-﻿import sys
+import sys
 import asyncio
 from pathlib import Path
 import motor.motor_asyncio
+
+# Configure DNS resolver to avoid timeouts from inactive virtual network adapters on Windows
+try:
+    import dns.resolver
+    dns.resolver.default_resolver = dns.resolver.Resolver()
+    dns.resolver.default_resolver.nameservers = ['8.8.8.8', '1.1.1.1', '8.8.4.4']
+except Exception:
+    pass
 
 # Add backend root to sys.path
 backend_root = Path(__file__).resolve().parent.parent

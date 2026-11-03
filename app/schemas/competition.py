@@ -67,7 +67,7 @@ class CompetitionCreateReq(BaseModel):
     start_date: datetime
     end_date: datetime
     registration_start_date: datetime
-    registration_deadline: datetime
+    registration_deadline: Optional[datetime] = None
     submission_deadline: datetime
     
     min_age: Optional[int] = None

@@ -89,7 +89,7 @@ async def revoke_badge_award(
     admin: dict = Depends(get_current_admin)
 ):
     """Revokes a user's badge award with audit trail."""
-    admin_email = admin.get('email', 'superadmin@eventora.com')
+    admin_email = admin.get('email', 'superadmin@upgradetalentsindia.in')
     res = await BadgeService.revoke_badge_award(badge_award_id, reason, admin_email)
     if not res.get('success'):
         raise HTTPException(status_code=404, detail=res.get('message'))

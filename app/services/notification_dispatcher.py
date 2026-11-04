@@ -150,7 +150,7 @@ class NotificationDispatcher:
                 return "no_devices"
 
             provider = PushProviderFactory.get_provider()
-            title = notification.get("title", "Eventora Notification")
+            title = notification.get("title", "UTI Notification")
             body = notification.get("message", "")
             data_payload = {
                 "notification_id": notification_id,
@@ -213,9 +213,9 @@ class NotificationDispatcher:
                 return "skipped_no_api_key"
 
             resend.api_key = settings.RESEND_API_KEY
-            title = notification.get("title", "Eventora Notification")
+            title = notification.get("title", "UTI Notification")
             message = notification.get("message", "")
-            action_url = notification.get("action_url") or "https://eventora.com"
+            action_url = notification.get("action_url") or "https://upgradetalentsindia.in"
 
             from app.services.email import _render_base_email, _get_sender, _escape
 
@@ -230,7 +230,7 @@ class NotificationDispatcher:
               </p>
               <div style="text-align: center; margin: 30px 0 10px 0;">
                 <a href="{action_url}" style="display: inline-block; background: linear-gradient(135deg, #6366F1 0%, #A855F7 100%); color: #FFFFFF; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
-                  View in Eventora &rarr;
+                  View in Upgrade Talents India &rarr;
                 </a>
               </div>
             """
@@ -247,9 +247,9 @@ class NotificationDispatcher:
             )
 
             params = {
-                "from": _get_sender("Eventora Notifications"),
+                "from": _get_sender("UTI Notifications"),
                 "to": [user_email],
-                "subject": f"Eventora: {title}",
+                "subject": f"UTI: {title}",
                 "html": html_body,
             }
 

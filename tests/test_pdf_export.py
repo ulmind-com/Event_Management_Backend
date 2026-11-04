@@ -11,7 +11,7 @@ async def run_test():
     client = AsyncIOMotorClient(settings.MONGODB_URI)
     db = client.eventora_db
     
-    admin_token = create_access_token({"sub": "admin@eventora.com", "type": "admin"})
+    admin_token = create_access_token({"sub": "admin@upgradetalentsindia.in", "type": "admin"})
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
     
     # 1. Create a competition that is STILL OPEN
@@ -34,7 +34,7 @@ async def run_test():
     
     # Add a mock user
     await db["users"].insert_one({
-        "email": "testpdf@eventora.com",
+        "email": "testpdf@upgradetalentsindia.in",
         "name": "PDF Tester",
         "phone_number": "9876543210"
     })
@@ -42,7 +42,7 @@ async def run_test():
     # Add a submission
     await db["competition_submissions"].insert_one({
         "competition_id": str(closed_comp.inserted_id),
-        "user_email": "testpdf@eventora.com",
+        "user_email": "testpdf@upgradetalentsindia.in",
         "status": "APPROVED"
     })
     

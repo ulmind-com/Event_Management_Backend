@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import Optional, List, Dict, Any
 from app.api.deps import get_current_user
-from app.core.database import certificate_collection, reward_collection, coin_ledger_collection, coin_reward_lot_collection
+from app.core.database import certificate_collection, reward_collection, coin_ledger_collection, coin_reward_lot_collection, user_collection
 from app.services.wallet_service import WalletService
 from app.services.referral_service import ReferralService
 from app.schemas.referral import (
@@ -61,6 +61,42 @@ async def get_my_coins(current_user: dict = Depends(get_current_user)):
     }
 
 # --- New Referral & Coin Wallet Endpoints ---
+
+@router.get("/referral/validate")
+async def validate_referral_code(code: str = Query(..., min_length=3, max_length=32)):
+    """
+    Public validation endpoint for referral codes.
+    Allows unauthenticated visitors to verify an invitation link/code
+    and previews the inviter name and welcome reward bonus.
+    """
+    config = await ReferralService.get_config()
+    if not config.get("program_enabled", True):
+        return {"valid": False, "reason": "Referral program is currently paused"}
+
+    cleaned_code = code.strip().upper()
+    referrer = await user_collection.find_one({"referral_code": cleaned_code})
+    if not referrer:
+        return {"valid": False, "reason": "Referral code not found"}
+
+    raw_name = referrer.get("name") or "A Talent Member"
+    first_name = raw_name.strip().split()[0] if raw_name else "A Member"
+
+    welcome_coins = config.get("welcome_reward", {}).get("coins", 50) if config.get("welcome_reward", {}).get("enabled", True) else 0
+    referrer_coins = config.get("referrer_reward", {}).get("coins", 100) if config.get("referrer_reward", {}).get("enabled", True) else 0
+    coin_val = config.get("coin_valuation", {}).get("value_per_coin", 0.50)
+
+    return {
+        "valid": True,
+        "referral_code": cleaned_code,
+        "inviter_name": first_name,
+        "inviter_full_name": raw_name,
+        "inviter_photo": referrer.get("profile_photo"),
+        "welcome_coins": welcome_coins,
+        "referrer_coins": referrer_coins,
+        "welcome_coins_value_inr": round(welcome_coins * coin_val, 2),
+        "coin_value_rate": coin_val,
+        "message": f"Join with {first_name}'s invite to earn {welcome_coins} free coins!"
+    }
 
 @router.post("/referral/attribute")
 async def attribute_referral(payload: ReferralAttributeRequest, current_user: dict = Depends(get_current_user)):

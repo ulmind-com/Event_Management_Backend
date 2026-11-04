@@ -66,7 +66,7 @@ test("Update Settings", "PUT", f"{BASE}/admin/website-settings", headers=headers
     "brand_name": "Eventora",
     "tagline": "Your Event, Our Platform",
     "logo_url": "https://example.com/logo.png",
-    "contact_email": "hello@eventora.com",
+    "contact_email": "hello@upgradetalentsindia.in",
     "contact_phone": "+91-9876543210",
     "social_media": {"facebook": "https://fb.com/eventora", "instagram": "https://ig.com/eventora"}
 })
@@ -156,10 +156,10 @@ test("Update App Promo", "PUT", f"{BASE}/admin/app-promotion", headers=headers, 
 # ════════════════════════════════════════
 print("\n=== PHASE 15: IMPORTANT LINKS ===")
 test("Create Link", "POST", f"{BASE}/admin/important-links", headers=headers, json_data={
-    "label": "Privacy Policy", "url": "https://eventora.com/privacy", "category": "legal"
+    "label": "Privacy Policy", "url": "https://upgradetalentsindia.in/privacy", "category": "legal"
 })
 test("Create Link 2", "POST", f"{BASE}/admin/important-links", headers=headers, json_data={
-    "label": "Terms of Service", "url": "https://eventora.com/terms", "category": "legal"
+    "label": "Terms of Service", "url": "https://upgradetalentsindia.in/terms", "category": "legal"
 })
 
 # ════════════════════════════════════════

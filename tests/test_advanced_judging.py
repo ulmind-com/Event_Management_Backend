@@ -25,8 +25,8 @@ async def setup():
         ]})
     
     await db["admin_accounts"].update_one(
-        {"email": "admin@eventora.com"},
-        {"$set": {"email": "admin@eventora.com", "password_hash": get_password_hash("test")}},
+        {"email": "admin@upgradetalentsindia.in"},
+        {"$set": {"email": "admin@upgradetalentsindia.in", "password_hash": get_password_hash("test")}},
         upsert=True
     )
     
@@ -44,7 +44,7 @@ async def setup():
         upsert=True
     )
     
-    admin_token = create_access_token({"sub": "admin@eventora.com", "type": "admin"})
+    admin_token = create_access_token({"sub": "admin@upgradetalentsindia.in", "type": "admin"})
     judge_token = create_access_token({"sub": "test_judge_adv@example.com", "type": "user"})
     
     return (

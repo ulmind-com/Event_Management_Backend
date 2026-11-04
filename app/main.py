@@ -13,7 +13,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="Eventora - Event Management Platform API",
+    description="Upgrade Talents India - Talent Management Platform API",
     version="2.0.0",
 )
 
@@ -34,7 +34,7 @@ app.include_router(api_router, prefix="/api")
 
 @app.get("/", tags=["root"])
 def root():
-    return {"message": "Eventora API is running", "docs": "/docs"}
+    return {"message": "Upgrade Talents India API is running", "docs": "/docs"}
 
 @app.on_event("startup")
 async def startup_event():

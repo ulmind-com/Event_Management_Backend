@@ -27,7 +27,7 @@ class BadgeService:
             return {
                 'badge_id': BadgeService.DEFAULT_BADGE_ID,
                 'badge_name': 'Top Participation',
-                'description': 'Recognizes participants who complete multiple verified Eventora competitions or events.',
+                'description': 'Recognizes participants who complete multiple verified UTI competitions or events.',
                 'category': 'MILESTONE',
                 'image_url': '/badges/top-participation.svg',
                 'enabled': True,

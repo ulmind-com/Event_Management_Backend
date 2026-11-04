@@ -1,4 +1,4 @@
-﻿import requests
+import requests
 import asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
 from app.core.config import settings
@@ -19,8 +19,8 @@ async def setup():
     
     # Create Mock Admin
     await db["admin_accounts"].update_one(
-        {"email": "admin@eventora.com"}, 
-        {"$set": {"email": "admin@eventora.com", "password_hash": get_password_hash("test")}},
+        {"email": "admin@upgradetalentsindia.in"}, 
+        {"$set": {"email": "admin@upgradetalentsindia.in", "password_hash": get_password_hash("test")}},
         upsert=True
     )
     
@@ -32,7 +32,7 @@ async def setup():
     )
     
     # Generate tokens
-    admin_token = create_access_token({"sub": "admin@eventora.com", "type": "admin"})
+    admin_token = create_access_token({"sub": "admin@upgradetalentsindia.in", "type": "admin"})
     user_token = create_access_token({"sub": "sagnik@example.com", "type": "user"})
     
     admin_headers = {"Authorization": f"Bearer {admin_token}"}

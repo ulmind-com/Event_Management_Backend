@@ -94,16 +94,16 @@ async def get_certificate_share_metadata(
         raise HTTPException(status_code=404, detail='Certificate not found or unauthorized')
 
     token = cert.get('verification_token')
-    v_url = f'https://eventora.com/verify-certificate/{token}'
+    v_url = f'https://upgradetalentsindia.in/verify-certificate/{token}'
     display_type = cert.get('certificate_type', 'PARTICIPATION').replace('_', ' ').title()
     title = f'Earned {display_type} Certificate in {cert.get("activity_title")}'
 
     return {
         'certificate_id': certificate_id,
         'share_title': title,
-        'description': f'Proud to receive this official certificate from Eventora for outstanding achievement in {cert.get("activity_title")}.',
+        'description': f'Proud to receive this official certificate from Upgrade Talents India for outstanding achievement in {cert.get("activity_title")}.',
         'verification_url': v_url,
-        'badge_preview_url': 'https://eventora.com/static/cert-preview.png'
+        'badge_preview_url': 'https://upgradetalentsindia.in/static/cert-preview.png'
     }
 
 @router.get('/badges')

@@ -36,7 +36,7 @@ async def test_audio_only_submission_validation():
         upsert=True
     )
 
-    admin_token = create_access_token({"sub": "admin@eventora.com", "type": "admin"})
+    admin_token = create_access_token({"sub": "admin@upgradetalentsindia.in", "type": "admin"})
     user_token = create_access_token({"sub": "audio_test_user@example.com", "type": "user"})
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
     user_headers = {"Authorization": f"Bearer {user_token}"}

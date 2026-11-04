@@ -15,7 +15,7 @@ class BadgeStatus(str, Enum):
 class BadgePolicyConfig(BaseModel):
     badge_id: str = 'TOP_PARTICIPATION'
     badge_name: str = 'Top Participation'
-    description: str = 'Recognizes participants who complete multiple verified Eventora competitions or events.'
+    description: str = 'Recognizes participants who complete multiple verified UTI competitions or events.'
     category: str = 'MILESTONE'
     image_url: Optional[str] = '/badges/top-participation.svg'
     enabled: bool = True

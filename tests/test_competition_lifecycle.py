@@ -52,7 +52,7 @@ async def test_lifecycle_and_finalization():
     client = AsyncIOMotorClient(settings.MONGODB_URI)
     db = client.eventora_db
     
-    admin_token = create_access_token({"sub": "admin@eventora.com", "type": "admin"})
+    admin_token = create_access_token({"sub": "admin@upgradetalentsindia.in", "type": "admin"})
     headers = {"Authorization": f"Bearer {admin_token}"}
     
     # Clean previous

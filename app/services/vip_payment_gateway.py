@@ -11,7 +11,7 @@ logger = logging.getLogger("eventora.vip_payment_gateway")
 
 class VIPPaymentGatewayAdapter:
     """
-    Production-ready Payment Gateway Adapter for Eventora VIP Pass Bookings.
+    Production-ready Payment Gateway Adapter for UTI VIP Pass Bookings.
     Supports Razorpay, Stripe, and Generic Webhook architectures.
     Enforces strict signature verification, order reconciliation, and safe unconfigured states.
     """
@@ -133,7 +133,7 @@ class VIPPaymentGatewayAdapter:
                     "amount": amount_paise,
                     "currency": currency,
                     "order_id": provider_order_id,
-                    "name": "Eventora VIP Pass",
+                    "name": "UTI VIP Pass",
                     "description": f"VIP Pass Booking - {booking_reference}",
                     "prefill": {"email": user_email} if user_email else {}
                 },

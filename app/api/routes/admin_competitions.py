@@ -1486,7 +1486,7 @@ async def verify_competition_participant_govt_id(
     id_num = req.govt_id_number.strip() if (req and req.govt_id_number) else (user.get("govt_id_number") or None)
 
     verification_details = {
-        "verified_by": admin.get("email", "admin@eventora.com"),
+        "verified_by": admin.get("email", "admin@upgradetalentsindia.in"),
         "verified_at": now.isoformat(),
         "method": "PHYSICAL_AADHAAR_CHECK",
         "competition_id": str(comp_id),
@@ -1503,7 +1503,7 @@ async def verify_competition_participant_govt_id(
         "verified_tick": True,
         "verification_status": "VERIFIED",
         "verified_at": now,
-        "verified_by": admin.get("email", "admin@eventora.com"),
+        "verified_by": admin.get("email", "admin@upgradetalentsindia.in"),
         "verification_details": verification_details,
         "kyc_status": "VERIFIED",
         "updated_at": now
@@ -1538,7 +1538,7 @@ async def verify_competition_participant_govt_id(
                 "status": "VERIFIED",
                 "verification_source": "ADMIN_MANUAL_VERIFICATION",
                 "verified_at": now,
-                "verified_by": admin.get("email", "admin@eventora.com"),
+                "verified_by": admin.get("email", "admin@upgradetalentsindia.in"),
                 "reason": notes
             }},
             upsert=True
@@ -1548,7 +1548,7 @@ async def verify_competition_participant_govt_id(
 
     # Audit logging
     await log_admin_action(
-        admin.get("email", "admin@eventora.com"),
+        admin.get("email", "admin@upgradetalentsindia.in"),
         "verify_competition_participant",
         "competition_participant",
         user["email"],
@@ -1604,7 +1604,7 @@ async def set_stage_performer(
     return await CompetitionStageService.set_current_performer(
         comp_id=comp_id,
         identifier=target_id,
-        admin_email=admin.get("email", "admin@eventora.com"),
+        admin_email=admin.get("email", "admin@upgradetalentsindia.in"),
         notes=req.notes
     )
 
@@ -1619,7 +1619,7 @@ async def advance_stage_performer(
     """
     return await CompetitionStageService.advance_to_next_performer(
         comp_id=comp_id,
-        admin_email=admin.get("email", "admin@eventora.com")
+        admin_email=admin.get("email", "admin@upgradetalentsindia.in")
     )
 
 
@@ -1634,7 +1634,7 @@ async def end_stage_performance(
     """
     return await CompetitionStageService.end_current_performance(
         comp_id=comp_id,
-        admin_email=admin.get("email", "admin@eventora.com")
+        admin_email=admin.get("email", "admin@upgradetalentsindia.in")
     )
 
 
@@ -1646,7 +1646,7 @@ async def clear_stage(
     """Alias to clear the stage and set stage status to IDLE."""
     return await CompetitionStageService.end_current_performance(
         comp_id=comp_id,
-        admin_email=admin.get("email", "admin@eventora.com")
+        admin_email=admin.get("email", "admin@upgradetalentsindia.in")
     )
 
 

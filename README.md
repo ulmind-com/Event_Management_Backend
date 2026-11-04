@@ -149,7 +149,7 @@ ADMIN_TOKEN_EXPIRE_MINUTES=60
 CORS_ORIGINS=*
 
 # Super Admin Initial Credentials
-SUPER_ADMIN_EMAIL=admin@eventora.com
+SUPER_ADMIN_EMAIL=admin@upgradetalentsindia.in
 SUPER_ADMIN_PASSWORD=your_super_admin_password
 ```
 

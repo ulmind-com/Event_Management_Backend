@@ -20,11 +20,11 @@ async def setup():
     
     # Mock Admin
     await db["admin_accounts"].update_one(
-        {"email": "admin@eventora.com"}, 
-        {"$set": {"email": "admin@eventora.com", "password_hash": get_password_hash("test")}},
+        {"email": "admin@upgradetalentsindia.in"}, 
+        {"$set": {"email": "admin@upgradetalentsindia.in", "password_hash": get_password_hash("test")}},
         upsert=True
     )
-    admin_token = create_access_token({"sub": "admin@eventora.com", "type": "admin"})
+    admin_token = create_access_token({"sub": "admin@upgradetalentsindia.in", "type": "admin"})
     
     return {"Authorization": f"Bearer {admin_token}"}
 

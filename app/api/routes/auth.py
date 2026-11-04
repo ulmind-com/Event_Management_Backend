@@ -229,7 +229,7 @@ async def register_step3(
         await NotificationService.create_notification(NotificationCreate(
             recipient_user_id=email,
             notification_type=NotificationType.REGISTRATION_CONFIRMATION,
-            title="Welcome to Eventora!",
+            title="Welcome to Upgrade Talents India!",
             message=f"Hi {name}, your registration is complete. Welcome to the premier event management platform!",
             resource_type="user",
             resource_id=email,
@@ -781,7 +781,7 @@ async def google_login(req: GoogleLoginReq):
     form_schema = get_profile_form_schema(user_doc)
 
     return {
-        "message": "Google sign-in successful. Welcome to Eventora!" if is_new_user else "Google login successful",
+        "message": "Google sign-in successful. Welcome to Upgrade Talents India!" if is_new_user else "Google login successful",
         "access_token": access_token,
         "token_type": "bearer",
         "user_email": email,
@@ -965,6 +965,13 @@ async def auth_complete_profile(
     update_data["updated_at"] = datetime.now(timezone.utc)
     await user_collection.update_one({"email": email}, {"$set": update_data})
 
+    if is_completed:
+        try:
+            await ReferralService.get_or_create_user_referral_code(email)
+            await ReferralService.qualify_and_reward_referral(email)
+        except Exception:
+            pass
+
     updated = await user_collection.find_one({"email": email}, {"_id": 0, "password_hash": 0})
     updated = enrich_user_with_profile_status(updated)
 
@@ -1043,6 +1050,13 @@ async def auth_complete_profile_json(
 
     update_data["updated_at"] = datetime.now(timezone.utc)
     await user_collection.update_one({"email": email}, {"$set": update_data})
+
+    if is_completed:
+        try:
+            await ReferralService.get_or_create_user_referral_code(email)
+            await ReferralService.qualify_and_reward_referral(email)
+        except Exception:
+            pass
 
     updated = await user_collection.find_one({"email": email}, {"_id": 0, "password_hash": 0})
     updated = enrich_user_with_profile_status(updated)

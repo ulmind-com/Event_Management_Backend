@@ -38,7 +38,7 @@ async def test_create_competition_without_registration_deadline():
     - Lifecycle evaluation should return registration OPEN (no deadline to
       expire).
     """
-    admin_email = "admin_optdl_test@eventora.com"
+    admin_email = "admin_optdl_test@upgradetalentsindia.in"
     comp_title = f"No Deadline Comp {int(datetime.now().timestamp())}"
 
     # ── Setup admin ──
@@ -128,7 +128,7 @@ async def test_create_competition_with_registration_deadline():
     - When deadline is in the past (simulated) → lifecycle auto-closes
       registration.
     """
-    admin_email = "admin_withdl_test@eventora.com"
+    admin_email = "admin_withdl_test@upgradetalentsindia.in"
     comp_title = f"With Deadline Comp {int(datetime.now().timestamp())}"
 
     await admin_collection.delete_many({"email": admin_email})
@@ -217,7 +217,7 @@ async def test_add_deadline_later_via_update():
     - Update to add a future deadline → still OPEN.
     - Simulate past deadline → CLOSED.
     """
-    admin_email = "admin_updatedl_test@eventora.com"
+    admin_email = "admin_updatedl_test@upgradetalentsindia.in"
     comp_title = f"Update Deadline Comp {int(datetime.now().timestamp())}"
 
     await admin_collection.delete_many({"email": admin_email})

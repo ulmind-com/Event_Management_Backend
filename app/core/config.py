@@ -43,7 +43,7 @@ class Settings:
 
     # Project
     FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "event-management-4fe6f")
-    PROJECT_NAME = "Eventora API"
+    PROJECT_NAME = "Upgrade Talents India API"
 
     # Notification System Configuration
     NOTIFICATIONS_ENABLED = os.getenv("NOTIFICATIONS_ENABLED", "true").lower() in ("true", "1", "yes")
@@ -61,7 +61,7 @@ class Settings:
     WEB_PUSH_ENABLED = os.getenv("WEB_PUSH_ENABLED", "false").lower() in ("true", "1", "yes")
     WEB_PUSH_VAPID_PUBLIC_KEY = os.getenv("WEB_PUSH_VAPID_PUBLIC_KEY", "")
     WEB_PUSH_VAPID_PRIVATE_KEY = os.getenv("WEB_PUSH_VAPID_PRIVATE_KEY", "")
-    WEB_PUSH_SUBJECT = os.getenv("WEB_PUSH_SUBJECT", "mailto:noreply@eventora.com")
+    WEB_PUSH_SUBJECT = os.getenv("WEB_PUSH_SUBJECT", "mailto:noreply@upgradetalentsindia.in")
 
     # Aadhaar KYC Hashing
     AADHAAR_HASH_SALT = os.getenv("AADHAAR_HASH_SALT", "eventora_kyc_salt_v1_production")

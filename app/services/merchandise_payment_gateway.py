@@ -120,7 +120,7 @@ class MerchandisePaymentGatewayAdapter:
             "order_number": order_number,
             "amount": amount_in_cents,
             "currency": currency,
-            "name": "Eventora Merchandise",
+            "name": "UTI Merchandise",
             "description": f"Order {order_number}",
             "prefill": {"email": user_email}
         }

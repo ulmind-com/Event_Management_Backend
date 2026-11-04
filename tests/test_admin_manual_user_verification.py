@@ -31,8 +31,8 @@ async def test_admin_manual_user_verification_lifecycle():
     7. Admin deletes user. When a new account is registered with the same email, it starts unverified.
     8. Admin verifies new account and can optionally unverify via POST /api/admin/users/{user_id}/unverify.
     """
-    admin_email = "admin_verify_test@eventora.com"
-    user_email = "user_verify_test@eventora.com"
+    admin_email = "admin_verify_test@upgradetalentsindia.in"
+    user_email = "user_verify_test@upgradetalentsindia.in"
 
     # Clean up test accounts
     await admin_collection.delete_many({"email": admin_email})
@@ -250,10 +250,10 @@ async def test_verified_user_in_competition_participant_list():
     6. When User A is on stage (GET /api/judge/{comp_id}/live-stage and GET /api/admin/.../live-stage):
        - Both Judge and Admin stage panels reflect is_verified=True and verified_badge=True.
     """
-    admin_email = "admin_comp_verify@eventora.com"
-    judge_email = "judge_comp_verify@eventora.com"
-    user_a_email = "usera_verified@eventora.com"
-    user_b_email = "userb_unverified@eventora.com"
+    admin_email = "admin_comp_verify@upgradetalentsindia.in"
+    judge_email = "judge_comp_verify@upgradetalentsindia.in"
+    user_a_email = "usera_verified@upgradetalentsindia.in"
+    user_b_email = "userb_unverified@upgradetalentsindia.in"
 
     now = datetime.now(timezone.utc)
 

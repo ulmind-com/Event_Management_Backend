@@ -39,7 +39,7 @@ logger = logging.getLogger("eventora.notification_service")
 
 class NotificationService:
     """
-    Central authoritative notification service for Eventora.
+    Central authoritative notification service for Upgrade Talents India.
     Handles persistence, idempotency, preference filtering, queries, device tokens, and dispatching.
     """
 

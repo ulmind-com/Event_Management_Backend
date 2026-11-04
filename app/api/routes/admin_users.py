@@ -196,7 +196,7 @@ async def get_admin_user_activity_timeline(
     limit: int = Query(default=50, ge=1, le=200),
     admin: dict = Depends(get_current_admin)
 ):
-    """Unified chronological activity timeline across all Eventora activities."""
+    """Unified chronological activity timeline across all UTI activities."""
     timeline = await UserActivityService.get_user_activity_timeline(user_id, limit=limit)
     return {"user_id": user_id, "timeline": timeline, "total": len(timeline)}
 
@@ -408,7 +408,7 @@ async def verify_user_govt_id(
     id_num = req.govt_id_number.strip() if (req and req.govt_id_number) else None
 
     verification_details = {
-        "verified_by": admin.get("email", "admin@eventora.com"),
+        "verified_by": admin.get("email", "admin@upgradetalentsindia.in"),
         "verified_at": now.isoformat(),
         "method": "PHYSICAL_AADHAAR_CHECK",
         "govt_id_type": id_type,
@@ -424,7 +424,7 @@ async def verify_user_govt_id(
         "verified_tick": True,
         "verification_status": "VERIFIED",
         "verified_at": now,
-        "verified_by": admin.get("email", "admin@eventora.com"),
+        "verified_by": admin.get("email", "admin@upgradetalentsindia.in"),
         "verification_details": verification_details,
         "kyc_status": "VERIFIED",
         "updated_at": now
@@ -441,7 +441,7 @@ async def verify_user_govt_id(
                 "status": "VERIFIED",
                 "verification_source": "ADMIN_MANUAL_VERIFICATION",
                 "verified_at": now,
-                "verified_by": admin.get("email", "admin@eventora.com"),
+                "verified_by": admin.get("email", "admin@upgradetalentsindia.in"),
                 "reason": notes
             }},
             upsert=True
@@ -451,7 +451,7 @@ async def verify_user_govt_id(
 
     # Audit logging
     await log_admin_action(
-        admin.get("email", "admin@eventora.com"),
+        admin.get("email", "admin@upgradetalentsindia.in"),
         "verify_user_govt_id",
         "user",
         user["email"],
@@ -486,7 +486,7 @@ async def verify_user_govt_id(
         "verified_tick": True,
         "verification_status": "VERIFIED",
         "verified_at": now.isoformat(),
-        "verified_by": admin.get("email", "admin@eventora.com"),
+        "verified_by": admin.get("email", "admin@upgradetalentsindia.in"),
         "verification_details": verification_details
     }
 
@@ -518,14 +518,14 @@ async def unverify_user_govt_id(
         "verified_tick": False,
         "verification_status": "REVOKED",
         "unverified_at": now,
-        "unverified_by": admin.get("email", "admin@eventora.com"),
+        "unverified_by": admin.get("email", "admin@upgradetalentsindia.in"),
         "unverified_reason": reason,
         "updated_at": now
     }
     await user_collection.update_one({"_id": user["_id"]}, {"$set": update_fields})
 
     await log_admin_action(
-        admin.get("email", "admin@eventora.com"),
+        admin.get("email", "admin@upgradetalentsindia.in"),
         "unverify_user_govt_id",
         "user",
         user["email"],

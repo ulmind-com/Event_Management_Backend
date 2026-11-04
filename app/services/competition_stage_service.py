@@ -313,7 +313,7 @@ class CompetitionStageService:
         cls,
         comp_id: str,
         identifier: str,
-        admin_email: str = "admin@eventora.com",
+        admin_email: str = "admin@upgradetalentsindia.in",
         notes: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -521,7 +521,7 @@ class CompetitionStageService:
     async def advance_to_next_performer(
         cls,
         comp_id: str,
-        admin_email: str = "admin@eventora.com"
+        admin_email: str = "admin@upgradetalentsindia.in"
     ) -> Dict[str, Any]:
         """
         Advances the stage to the next registered contestant who has not performed yet.
@@ -597,7 +597,7 @@ class CompetitionStageService:
     async def end_current_performance(
         cls,
         comp_id: str,
-        admin_email: str = "admin@eventora.com"
+        admin_email: str = "admin@upgradetalentsindia.in"
     ) -> Dict[str, Any]:
         """
         Ends the current on-stage performance.

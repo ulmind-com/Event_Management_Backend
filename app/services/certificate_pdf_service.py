@@ -164,13 +164,13 @@ class CertificatePDFService:
 
         story.append(Spacer(1, 16))
 
-        v_url = verification_url if verification_url else f'https://eventora.com/verify-certificate/{certificate_id}'
+        v_url = verification_url if verification_url else f'https://upgradetalentsindia.in/verify-certificate/{certificate_id}'
         qr_buf = CertificatePDFService.generate_qr_code_image(v_url)
         qr_img = Image(qr_buf, width=70, height=70)
 
         issue_display = issue_date_str if issue_date_str else 'N/A'
         left_text = f'<b>Certificate ID:</b> {certificate_id}<br/><b>Issued Date:</b> {issue_display}<br/><b>Status:</b> Official & Verified<br/><b>Scan QR to verify authenticity</b>'
-        right_text = '<br/><br/>___________________________<br/><b>Eventora Authorised Signatory</b><br/>Director of Competitions'
+        right_text = '<br/><br/>___________________________<br/><b>Upgrade Talents India Authorised Signatory</b><br/>Director of Competitions'
 
         footer_table = Table(
             [

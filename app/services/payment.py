@@ -71,7 +71,7 @@ class PaymentService:
             "key": key_id,
             "amount": amount_paise,
             "currency": currency,
-            "name": "Eventora Event Ticket",
+            "name": "UTI Event Ticket",
             "description": f"Ticket Booking - {booking_reference}",
             "order_id": provider_order_id,
             "prefill": {"email": notes.get("user_email", "") if notes else ""}

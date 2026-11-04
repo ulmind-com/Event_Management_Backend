@@ -11,7 +11,7 @@ async def test_competition_age_limit_create_and_update():
     client = AsyncIOMotorClient(settings.MONGODB_URI)
     db = client.eventora_db
 
-    admin_token = create_access_token({"sub": "admin@eventora.com", "type": "admin"})
+    admin_token = create_access_token({"sub": "admin@upgradetalentsindia.in", "type": "admin"})
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
     # Clean up previous test competitions
@@ -111,7 +111,7 @@ async def test_competition_age_limit_create_and_update():
 
         # 10. Verify eligibility check with user DOB reflects the edited limits
         # Create user with age ~22 (born 2004-01-01)
-        test_user_email = "age_tester@eventora.com"
+        test_user_email = "age_tester@upgradetalentsindia.in"
         await db["users"].delete_many({"email": test_user_email})
         await db["users"].insert_one({
             "email": test_user_email,

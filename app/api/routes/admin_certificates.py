@@ -47,7 +47,7 @@ async def generate_certificates(
     Generates Participation Certificates and Top-Ranked Award Certificates.
     Sends PDF notifications if configured. Idempotent.
     """
-    admin_email = admin.get('email', 'superadmin@eventora.com')
+    admin_email = admin.get('email', 'superadmin@upgradetalentsindia.in')
     res = await CertificateService.generate_competition_certificates(
         competition_id=comp_id,
         admin_email=admin_email,
@@ -157,7 +157,7 @@ async def revoke_certificate(
     admin: dict = Depends(get_current_admin)
 ):
     """Revokes a certificate with reason and admin audit logging."""
-    admin_email = admin.get('email', 'superadmin@eventora.com')
+    admin_email = admin.get('email', 'superadmin@upgradetalentsindia.in')
     res = await CertificateService.revoke_certificate(certificate_id, req.reason, admin_email)
     if not res.get('success'):
         raise HTTPException(status_code=404, detail=res.get('message'))

@@ -209,7 +209,7 @@ class CertificateService:
             if not existing_part:
                 cert_id = CertificateService.generate_certificate_id('COMPETITION')
                 token = CertificateService.generate_verification_token()
-                v_url = f'https://eventora.com/verify-certificate/{token}'
+                v_url = f'https://upgradetalentsindia.in/verify-certificate/{token}'
 
                 pdf_bytes = CertificatePDFService.generate_certificate_pdf(
                     certificate_id=cert_id,
@@ -299,7 +299,7 @@ class CertificateService:
                 if not existing_award:
                     award_cert_id = CertificateService.generate_certificate_id('COMPETITION')
                     award_token = CertificateService.generate_verification_token()
-                    award_v_url = f'https://eventora.com/verify-certificate/{award_token}'
+                    award_v_url = f'https://upgradetalentsindia.in/verify-certificate/{award_token}'
 
                     award_title = custom_titles.get(str(rank), f'Rank {rank} Winner')
 

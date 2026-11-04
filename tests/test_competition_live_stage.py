@@ -37,8 +37,8 @@ async def test_live_stage_end_to_end_workflow():
     client = AsyncIOMotorClient(settings.MONGODB_URI)
     db = client.eventora_db
 
-    admin_email = "admin_stage_test@eventora.com"
-    judge_email = "judge_stage_test@eventora.com"
+    admin_email = "admin_stage_test@upgradetalentsindia.in"
+    judge_email = "judge_stage_test@upgradetalentsindia.in"
     p1_email = "p1_stage@test.com"
     p2_email = "p2_stage@test.com"
     p3_email = "p3_stage@test.com"

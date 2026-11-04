@@ -42,8 +42,8 @@ async def test_judge_deletion_lifecycle_by_email():
     Test 1: Full lifecycle of judge creation, assignment, draft creation,
     and deletion using EMAIL as identifier.
     """
-    admin_email = "admin_deljudge_test@eventora.com"
-    judge_email = "judge_del_email_test@eventora.com"
+    admin_email = "admin_deljudge_test@upgradetalentsindia.in"
+    judge_email = "judge_del_email_test@upgradetalentsindia.in"
     comp_title = "Judge Delete Test Comp 1"
 
     # ── Setup Admin ──
@@ -184,8 +184,8 @@ async def test_judge_deletion_by_object_id():
     """
     Test 2: Deleting a judge using MongoDB ObjectId as identifier.
     """
-    admin_email = "admin_delid_test@eventora.com"
-    judge_email = "judge_del_id_test@eventora.com"
+    admin_email = "admin_delid_test@upgradetalentsindia.in"
+    judge_email = "judge_del_id_test@upgradetalentsindia.in"
 
     await admin_collection.delete_many({"email": admin_email})
     await admin_collection.insert_one({
@@ -242,8 +242,8 @@ async def test_judge_deletion_validation_and_errors():
     """
     Test 3: Validation, 404 for non-existent judge, and non-judge user protection.
     """
-    admin_email = "admin_delerr_test@eventora.com"
-    user_email = "regular_user_test@eventora.com"
+    admin_email = "admin_delerr_test@upgradetalentsindia.in"
+    user_email = "regular_user_test@upgradetalentsindia.in"
 
     await admin_collection.delete_many({"email": admin_email})
     await admin_collection.insert_one({
@@ -278,7 +278,7 @@ async def test_judge_deletion_validation_and_errors():
         assert res_404.status_code == 404
         assert "Judge not found" in res_404.json()["detail"]
 
-        res_404_email = await ac.delete("/api/admin/judges/nonexistent_judge@eventora.com", headers=admin_headers)
+        res_404_email = await ac.delete("/api/admin/judges/nonexistent_judge@upgradetalentsindia.in", headers=admin_headers)
         assert res_404_email.status_code == 404
 
         # 2. Deleting a standard USER via judge endpoint -> 404 (protects non-judges)

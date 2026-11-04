@@ -178,7 +178,7 @@ class OrderPDFService:
             Paragraph("UPGRADE TALENTS & EVENTORA", brand_style),
             Paragraph("Official Merchandise & Apparel Division", brand_sub),
             Paragraph("Registered Office: Kolkata, West Bengal, India", brand_sub),
-            Paragraph("Support: support@eventora.com | www.eventora.com", brand_sub),
+            Paragraph("Support: support@upgradetalentsindia.in | www.upgradetalentsindia.in", brand_sub),
         ]
         right_meta = [
             Paragraph("TAX INVOICE / ORDER RECEIPT", header_title),
@@ -354,7 +354,7 @@ class OrderPDFService:
                     "<b>TERMS & MERCHANDISE POLICY:</b><br/>"
                     "1. Official Merchandise Sales are strictly final and non-refundable once confirmed.<br/>"
                     "2. All items undergo strict multi-stage quality control before dispatch and handover to courier.<br/>"
-                    "3. For damaged transit packaging or replacement requests due to transit damage, contact <b>support@eventora.com</b> with order number within 48 hours of delivery.<br/>"
+                    "3. For damaged transit packaging or replacement requests due to transit damage, contact <b>support@upgradetalentsindia.in</b> with order number within 48 hours of delivery.<br/>"
                     "4. This invoice serves as proof of purchase and authenticity.",
                     policy_notice
                 )
@@ -373,7 +373,7 @@ class OrderPDFService:
         elements.append(Spacer(1, 14))
 
         # ── 6. Bottom Signature & Verification QR Code ──
-        track_url = f"https://eventora.com/merchandise/orders/{order_number}"
+        track_url = f"https://upgradetalentsindia.in/merchandise/orders/{order_number}"
         qr_buf = cls.generate_qr_code(track_url)
         qr_img = Image(qr_buf, width=60, height=60)
 

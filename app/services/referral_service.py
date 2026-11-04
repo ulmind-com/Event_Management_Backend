@@ -43,12 +43,12 @@ class ReferralService:
 
     @classmethod
     def build_website_referral_link(cls, referral_code: str) -> str:
-        base_url = os.getenv("FRONTEND_URL", "https://eventora.com").rstrip("/")
+        base_url = os.getenv("FRONTEND_URL", "https://upgradetalentsindia.in").rstrip("/")
         return f"{base_url}/register?ref={referral_code}"
 
     @classmethod
     def build_app_referral_link(cls, referral_code: str) -> str:
-        app_base = os.getenv("APP_DOWNLOAD_URL", "https://app.eventora.com/download").rstrip("/")
+        app_base = os.getenv("APP_DOWNLOAD_URL", "https://app.upgradetalentsindia.in/download").rstrip("/")
         return f"{app_base}?ref={referral_code}"
 
     @classmethod
@@ -191,7 +191,7 @@ class ReferralService:
         return {
             "status": "ATTRIBUTION_CAPTURED",
             "referral_id": str(result.inserted_id),
-            "referrer_name": referrer.get("name", "Eventora Member"),
+            "referrer_name": referrer.get("name", "Upgrade Talents Member"),
             "message": "Referral attribution captured successfully"
         }
 
@@ -331,16 +331,29 @@ class ReferralService:
 
         web_link = cls.build_website_referral_link(code)
         app_link = cls.build_app_referral_link(code)
+        config = await cls.get_config()
+        coin_val = config.get("coin_valuation", {}).get("value_per_coin", 0.50)
+        referrer_coins = config.get("referrer_reward", {}).get("coins", 100) if config.get("referrer_reward", {}).get("enabled", True) else 0
+        welcome_coins = config.get("welcome_reward", {}).get("coins", 50) if config.get("welcome_reward", {}).get("enabled", True) else 0
+
+        user = await user_collection.find_one({"email": user_email})
+        user_name = user.get("name") if user else "Talent Artist"
+
         return {
             "referral_code": code,
             "website_referral_link": web_link,
             "app_referral_link": app_link,
             "referral_link": web_link,
+            "user_name": user_name,
             "total_referrals": total_referrals,
             "qualified_referrals": qualified_referrals,
             "pending_referrals": pending_referrals,
             "total_referrer_rewards_earned": total_referrer_rewards,
             "total_welcome_rewards_received": welcome_received,
+            "referrer_coins_per_invite": referrer_coins,
+            "welcome_coins_per_invite": welcome_coins,
+            "coin_value_inr": coin_val,
+            "rewards_earned_inr": round(total_referrer_rewards * coin_val, 2),
             "referral_history": history
         }
 

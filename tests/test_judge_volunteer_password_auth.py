@@ -18,8 +18,8 @@ from app.services.ticket import TicketService
 @pytest.mark.asyncio
 async def test_full_admin_invitation_to_judge_password_flow():
     unique_id = str(ObjectId())
-    admin_email = f"admin_{unique_id}@eventora.com"
-    judge_email = f"invited_judge_{unique_id}@eventora.com"
+    admin_email = f"admin_{unique_id}@upgradetalentsindia.in"
+    judge_email = f"invited_judge_{unique_id}@upgradetalentsindia.in"
 
     # Clean up DB
     await user_collection.delete_many({"email": {"$in": [judge_email, admin_email]}})
@@ -124,8 +124,8 @@ async def test_full_admin_invitation_to_judge_password_flow():
 @pytest.mark.asyncio
 async def test_full_admin_invitation_to_volunteer_password_flow():
     unique_id = str(ObjectId())
-    admin_email = f"admin_vol_{unique_id}@eventora.com"
-    volunteer_email = f"invited_volunteer_{unique_id}@eventora.com"
+    admin_email = f"admin_vol_{unique_id}@upgradetalentsindia.in"
+    volunteer_email = f"invited_volunteer_{unique_id}@upgradetalentsindia.in"
 
     # Clean up DB
     await user_collection.delete_many({"email": {"$in": [volunteer_email, admin_email]}})
@@ -221,7 +221,7 @@ async def test_full_admin_invitation_to_volunteer_password_flow():
 @pytest.mark.asyncio
 async def test_volunteer_gate_ticket_checkin():
     unique_id = str(ObjectId())
-    volunteer_email = f"gate_scanner_{unique_id}@eventora.com"
+    volunteer_email = f"gate_scanner_{unique_id}@upgradetalentsindia.in"
     ticket_ref = f"TCK-{unique_id[:8]}"
     booking_ref = f"BKG-{unique_id[:8]}"
 

@@ -390,7 +390,7 @@ async def test_cash_withdrawal_prohibited():
 # --- 11. FASTAPI HTTP ENDPOINT TESTS (ADMIN & USER ROUTERS) ---
 
 async def test_admin_config_endpoints():
-    admin_token = create_access_token({"sub": "admin@eventora.com", "role": "super_admin", "type": "admin"})
+    admin_token = create_access_token({"sub": "admin@upgradetalentsindia.in", "role": "super_admin", "type": "admin"})
     headers = {"Authorization": f"Bearer {admin_token}"}
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:

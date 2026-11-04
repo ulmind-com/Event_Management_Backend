@@ -11,7 +11,7 @@ async def run_test():
     client = AsyncIOMotorClient(settings.MONGODB_URI)
     db = client.eventora_db
     
-    admin_token = create_access_token({"sub": "admin@eventora.com", "type": "admin"})
+    admin_token = create_access_token({"sub": "admin@upgradetalentsindia.in", "type": "admin"})
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
     
     vol_email = f"vol_{uuid.uuid4().hex[:6]}@test.com"

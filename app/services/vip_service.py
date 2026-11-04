@@ -535,7 +535,7 @@ class VIPService:
             pass_ref = f"PASS-VIP-{uuid.uuid4().hex[:8].upper()}"
 
             # Generate QR Image base64 containing the secure verification payload
-            qr_payload = f"https://eventora.com/vip-verify?token={raw_token}&ref={pass_ref}"
+            qr_payload = f"https://upgradetalentsindia.in/vip-verify?token={raw_token}&ref={pass_ref}"
             qr_image_b64 = TicketService.generate_qr_image_base64(qr_payload)
 
             pass_doc = {
@@ -671,7 +671,7 @@ class VIPService:
         raw_token = secrets.token_urlsafe(32)
         token_hash = VIPService.hash_token(raw_token)
         pass_ref = f"PASS-VIP-{uuid.uuid4().hex[:8].upper()}"
-        qr_payload = f"https://eventora.com/vip-verify?token={raw_token}&ref={pass_ref}"
+        qr_payload = f"https://upgradetalentsindia.in/vip-verify?token={raw_token}&ref={pass_ref}"
         qr_image_b64 = TicketService.generate_qr_image_base64(qr_payload)
 
         pass_doc = {

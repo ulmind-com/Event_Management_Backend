@@ -699,13 +699,8 @@ async def google_login(req: GoogleLoginReq):
                 detail="Account is disabled or deleted. Contact support."
             )
 
-        # STRICT ROLE CHECK: Only standard USER role permitted
+        # Verified Google Identity is authentic and permitted for accounts
         role = existing_user.get("role", "USER")
-        if role != "USER":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Google authentication is only permitted for regular User accounts. Staff and Admin accounts must log in with their credentials."
-            )
 
         is_completed, missing = check_profile_completion(existing_user)
 
@@ -760,13 +755,13 @@ async def google_login(req: GoogleLoginReq):
         except Exception:
             user_doc = await user_collection.find_one({"email": email}) or new_user_data
 
-        # Attribute referral if provided
-        if req.referral_code:
-            try:
-                await ReferralService.attribute_referral(email, req.referral_code)
-                await ReferralService.qualify_and_reward_referral(email)
-            except Exception:
-                pass
+    # Attribute referral if provided and not yet attributed
+    if req.referral_code:
+        try:
+            await ReferralService.attribute_referral(email, req.referral_code)
+            await ReferralService.qualify_and_reward_referral(email)
+        except Exception:
+            pass
 
     # Ensure referral code exists for this user
     try:
@@ -775,8 +770,10 @@ async def google_login(req: GoogleLoginReq):
     except Exception:
         pass
 
+    user_role = user_doc.get("role", "USER")
+
     # 4. Generate Eventora JWT access token
-    access_token = create_access_token(data={"sub": email, "type": "user"})
+    access_token = create_access_token(data={"sub": email, "type": "user", "role": user_role})
 
     form_schema = get_profile_form_schema(user_doc)
 
@@ -785,7 +782,7 @@ async def google_login(req: GoogleLoginReq):
         "access_token": access_token,
         "token_type": "bearer",
         "user_email": email,
-        "role": "USER",
+        "role": user_role,
         "is_new_user": is_new_user,
         "registration_complete": is_completed,
         "is_profile_completed": is_completed,
@@ -800,7 +797,7 @@ async def google_login(req: GoogleLoginReq):
         "user": {
             "email": email,
             "name": user_doc.get("name", name),
-            "role": "USER",
+            "role": user_role,
             "profile_photo": user_doc.get("profile_photo", picture),
             "phone_number": user_doc.get("phone_number"),
             "date_of_birth": user_doc.get("date_of_birth"),

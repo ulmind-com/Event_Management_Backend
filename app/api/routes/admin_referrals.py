@@ -33,7 +33,7 @@ async def get_referral_config(current_admin: dict = Depends(get_current_admin)):
 
 @router.put("/referral/config")
 async def update_referral_config(
-    payload: ReferralProgramConfigUpdate,
+    payload: Dict[str, Any],
     current_admin: dict = Depends(get_current_admin)
 ):
     """
@@ -41,8 +41,7 @@ async def update_referral_config(
     Controls referrer & welcome reward toggles, coin amounts, valuation, expiry, and redemption rules.
     """
     admin_email = current_admin.get("email", "admin")
-    update_data = payload.model_dump()
-    updated = await ReferralService.update_config(update_data, admin_email=admin_email)
+    updated = await ReferralService.update_config(payload, admin_email=admin_email)
     updated["_id"] = str(updated["_id"])
     await log_admin_action(admin_email, "update_referral_config", "referral_program", outcome="success")
     return {"message": "Referral program configuration updated successfully", "config": updated}

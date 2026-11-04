@@ -118,12 +118,44 @@ class ReferralService:
         return config
 
     @classmethod
+    def _flatten_dict(cls, d: Dict[str, Any], parent_key: str = '') -> Dict[str, Any]:
+        items = {}
+        for k, v in d.items():
+            if k == "_id":
+                continue
+            new_key = f"{parent_key}.{k}" if parent_key else k
+            if isinstance(v, dict) and not k.startswith("$"):
+                items.update(cls._flatten_dict(v, new_key))
+            else:
+                items[new_key] = v
+        return items
+
+    @classmethod
     async def update_config(cls, update_data: Dict[str, Any], admin_email: str) -> Dict[str, Any]:
-        update_data["updated_at"] = datetime.now(timezone.utc)
-        update_data["updated_by"] = admin_email
+        data = dict(update_data)
+        # Support convenience/legacy top-level keys
+        if "referrer_coins" in data:
+            data.setdefault("referrer_reward", {})["coins"] = int(data.pop("referrer_coins"))
+        if "referee_reward" in data and not isinstance(data["referee_reward"], dict):
+            data.setdefault("welcome_reward", {})["coins"] = int(data.pop("referee_reward"))
+        if "welcome_coins" in data:
+            data.setdefault("welcome_reward", {})["coins"] = int(data.pop("welcome_coins"))
+        if "coin_to_currency_ratio" in data:
+            ratio = float(data.pop("coin_to_currency_ratio"))
+            if ratio > 0:
+                data.setdefault("coin_valuation", {})["value_per_coin"] = round(1.0 / ratio, 4)
+        if "value_per_coin" in data:
+            data.setdefault("coin_valuation", {})["value_per_coin"] = float(data.pop("value_per_coin"))
+        if "expiry_days" in data:
+            data.setdefault("coin_expiry", {})["duration_value"] = int(data.pop("expiry_days"))
+
+        flat_updates = cls._flatten_dict(data)
+        flat_updates["updated_at"] = datetime.now(timezone.utc)
+        flat_updates["updated_by"] = admin_email
+
         await referral_program_config_collection.update_one(
             {"_id": "current_config"},
-            {"$set": update_data},
+            {"$set": flat_updates},
             upsert=True
         )
         return await cls.get_config()

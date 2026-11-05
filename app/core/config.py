@@ -33,6 +33,16 @@ class Settings:
     # CORS
     CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 
+    # WebAuthn — admin fingerprint / passkey sign-in.
+    # WEBAUTHN_ORIGINS is a comma-separated allowlist of exact origins the admin
+    # panel is served from; the rp_id is derived per request from the Origin host,
+    # so one backend serves both production and localhost without redeploys.
+    WEBAUTHN_RP_NAME = os.getenv("WEBAUTHN_RP_NAME", "Upgrade Talents India Admin")
+    WEBAUTHN_ORIGINS = os.getenv(
+        "WEBAUTHN_ORIGINS",
+        "https://upgrade-talents-admin.vercel.app,http://localhost:3001,http://localhost:3000",
+    )
+
     # Razorpay & Payment Gateway Configuration (from .env only - never hardcode)
     RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
     RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")

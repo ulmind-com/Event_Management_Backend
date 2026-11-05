@@ -10,7 +10,7 @@ from app.api.routes import (
     admin_merchandise, user_merchandise, merchandise_webhooks,
     notifications, admin_notifications, notification_ws,
     admin_kyc, user_kyc,
-    admin_analytics
+    admin_analytics, admin_webauthn
 )
 
 api_router = APIRouter()
@@ -41,6 +41,7 @@ api_router.include_router(admin_checkin.router, prefix="/volunteer/tickets", tag
 
 # ── Admin APIs ──
 api_router.include_router(admin_auth.router, prefix="/admin", tags=["admin-auth"])
+api_router.include_router(admin_webauthn.router, prefix="/admin", tags=["admin-webauthn"])
 api_router.include_router(admin_cms.router, prefix="/admin", tags=["admin-cms"])
 api_router.include_router(admin_courses.router, prefix="/admin/courses", tags=["admin-courses"])
 api_router.include_router(admin_workshops.router, prefix="/admin/workshops", tags=["admin-workshops"])

@@ -106,4 +106,8 @@ notification_announcement_collection = db["notification_announcements"]
 # ── Aadhaar KYC Verification Collection ──
 kyc_verification_collection = db["kyc_verifications"]
 
+# ── Admin WebAuthn (fingerprint / passkey) Collections ──
+admin_webauthn_credential_collection = db["admin_webauthn_credentials"]
+admin_webauthn_challenge_collection = db["admin_webauthn_challenges"]
+
 

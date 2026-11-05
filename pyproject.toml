@@ -28,6 +28,7 @@ dependencies = [
     "pytesseract>=0.3.10",
     "uvicorn>=0.54.0",
     "websockets>=17.2",
+    "webauthn>=2.0.0",
 ]
 
 [project.scripts]

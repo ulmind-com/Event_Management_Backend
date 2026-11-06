@@ -35,6 +35,7 @@ from app.core.profile_lifecycle import (
     check_profile_completion,
     get_profile_form_schema,
     enrich_user_with_profile_status,
+    assert_dob_modification_allowed,
 )
 
 logger = logging.getLogger(__name__)
@@ -915,6 +916,7 @@ async def auth_complete_profile(
 
     if date_of_birth is not None and date_of_birth.strip():
         dob_str = date_of_birth.strip()
+        assert_dob_modification_allowed(user, dob_str)
         try:
             parsed_dob = parse_date(dob_str)
             update_data["date_of_birth"] = parsed_dob.strftime("%Y-%m-%d")
@@ -1011,6 +1013,7 @@ async def auth_complete_profile_json(
         except Exception:
             update_data["phone_number"] = cleaned_phone
     if req.date_of_birth and req.date_of_birth.strip():
+        assert_dob_modification_allowed(user, req.date_of_birth.strip())
         try:
             parsed_dob = parse_date(req.date_of_birth.strip())
             update_data["date_of_birth"] = parsed_dob.strftime("%Y-%m-%d")

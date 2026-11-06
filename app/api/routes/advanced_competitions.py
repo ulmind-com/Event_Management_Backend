@@ -6,19 +6,27 @@ from app.core.database import (
     competition_collection, 
     competition_registration_collection,
     competition_submission_collection,
-    registration_collection
+    registration_collection,
+    user_collection,
 )
 from app.schemas.booking import PaymentStatus
-from app.schemas.competition import RegistrationStatus, SubmissionStatus
+from app.schemas.competition import (
+    RegistrationStatus,
+    SubmissionStatus,
+    CompetitionRegisterReq,
+    parse_age_limit,
+)
 from app.services.payment import PaymentService
 from datetime import datetime, timezone, date
 from typing import Optional, Any, Dict, List
 import uuid
 import os
 import json
+import re
 
 from app.services.audio_validator import AudioValidator, VIDEO_EXTENSIONS
 from app.services.cloudinary_srv import upload_image
+from app.core.profile_lifecycle import check_profile_completion, assert_dob_modification_allowed
 from app.services.competition_lifecycle import (
     assert_registration_allowed,
     evaluate_competition_registration_status,
@@ -54,27 +62,33 @@ def extract_fee(comp_dict: Optional[dict], fallback_fee: float = 0.0) -> float:
 
 
 def calculate_age(dob_val: Any) -> int:
-    """Calculates age safely from string (YYYY-MM-DD or ISO), date, or datetime object."""
+    """Calculates age safely from string (YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY, or ISO), date, or datetime object."""
     if not dob_val:
         return -1
     try:
+        dob = None
         if isinstance(dob_val, datetime):
             dob = dob_val
         elif isinstance(dob_val, date):
             dob = datetime(dob_val.year, dob_val.month, dob_val.day)
         else:
-            s = str(dob_val).strip()[:10]
-            dob = datetime.strptime(s, "%Y-%m-%d")
+            s = str(dob_val).strip()
+            iso_match = re.search(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', s)
+            if iso_match:
+                y, m, d = int(iso_match.group(1)), int(iso_match.group(2)), int(iso_match.group(3))
+                dob = datetime(y, m, d)
+            else:
+                dmy_match = re.search(r'(\d{1,2})[-/](\d{1,2})[-/](\d{4})', s)
+                if dmy_match:
+                    d, m, y = int(dmy_match.group(1)), int(dmy_match.group(2)), int(dmy_match.group(3))
+                    dob = datetime(y, m, d)
+                else:
+                    return -1
         today = datetime.now(timezone.utc)
         age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
         return age
     except Exception:
         return -1
-
-
-class CompetitionRegisterReq(BaseModel):
-    rules_accepted: Optional[bool] = None
-    payment_method: Optional[str] = "ONLINE"
 
 
 @router.get("/v1/competitions/{comp_id}")
@@ -121,8 +135,15 @@ async def get_competition_registration_status(comp_id: str):
     }
 
 @router.get("/v1/competitions/{comp_id}/eligibility")
-async def check_eligibility(comp_id: str, user: dict = Depends(get_current_user)):
-    """Checks user eligibility based on age."""
+@router.get("/v1/competitions/{comp_id}/categories/{category_name}/eligibility")
+async def check_eligibility(
+    comp_id: str,
+    category: Optional[str] = Query(None),
+    category_name: Optional[str] = None,
+    date_of_birth: Optional[str] = Query(None),
+    user: dict = Depends(get_current_user_allow_incomplete)
+):
+    """Checks user eligibility based on age, supporting specific category requirements and date of birth calculation."""
     c_id = safe_object_id(comp_id)
     if not c_id:
         raise HTTPException(status_code=400, detail="Invalid competition ID format.")
@@ -130,9 +151,6 @@ async def check_eligibility(comp_id: str, user: dict = Depends(get_current_user)
     comp = await competition_collection.find_one({"_id": c_id, "is_published": True})
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
-
-    min_age = comp.get("min_age")
-    max_age = comp.get("max_age")
 
     # First check if competition registration is currently open
     reg_lifecycle = evaluate_competition_registration_status(comp)
@@ -145,37 +163,118 @@ async def check_eligibility(comp_id: str, user: dict = Depends(get_current_user)
             "can_register": False,
         }
 
-    if min_age is None and max_age is None:
+    target_cat_query = category_name or category
+    comp_categories = comp.get("categories") or []
+    target_category = None
+
+    if target_cat_query and target_cat_query.strip():
+        c_clean = target_cat_query.strip()
+        target_category = next(
+            (c for c in comp_categories if isinstance(c, dict) and c.get("name", "").strip().lower() == c_clean.lower()),
+            None
+        )
+        if not target_category and comp_categories:
+            valid_names = [c.get("name") for c in comp_categories if isinstance(c, dict) and c.get("name")]
+            return {
+                "eligible": False,
+                "status": "INVALID_CATEGORY",
+                "reason": f"Category '{c_clean}' does not exist for this competition. Available categories: {', '.join(valid_names)}",
+                "registration_status": reg_lifecycle["registration_status"],
+                "can_register": False,
+                "available_categories": valid_names,
+            }
+    elif len(comp_categories) == 1:
+        target_category = comp_categories[0]
+
+    min_age = None
+    max_age = None
+    age_limit_str = None
+
+    if target_category:
+        min_age = target_category.get("min_age")
+        max_age = target_category.get("max_age")
+        age_limit_str = target_category.get("age_limit")
+        if (min_age is None or max_age is None) and age_limit_str:
+            p_min, p_max = parse_age_limit(age_limit_str)
+            if min_age is None:
+                min_age = p_min
+            if max_age is None:
+                max_age = p_max
+        if not age_limit_str:
+            if min_age is not None and max_age is not None:
+                age_limit_str = f"{min_age}-{max_age} years"
+            elif min_age is not None:
+                age_limit_str = f"{min_age}+ years"
+            elif max_age is not None:
+                age_limit_str = f"Up to {max_age} years"
+            else:
+                age_limit_str = "Open for all ages"
+    else:
+        min_age = comp.get("min_age")
+        max_age = comp.get("max_age")
+        age_limit_str = comp.get("age_limit")
+        if (min_age is None or max_age is None) and age_limit_str:
+            p_min, p_max = parse_age_limit(age_limit_str)
+            if min_age is None:
+                min_age = p_min
+            if max_age is None:
+                max_age = p_max
+        if not age_limit_str:
+            if min_age is not None and max_age is not None:
+                age_limit_str = f"{min_age}-{max_age} years"
+            elif min_age is not None:
+                age_limit_str = f"{min_age}+ years"
+            elif max_age is not None:
+                age_limit_str = f"Up to {max_age} years"
+            else:
+                age_limit_str = "Open for all ages"
+
+    cat_display_name = target_category.get("name") if target_category else comp.get("category", "General")
+
+    if min_age is None and max_age is None and not comp_categories:
         return {
             "eligible": True,
             "status": "ELIGIBLE",
             "reason": "User is eligible.",
+            "category": cat_display_name,
+            "age_limit": "Open for all ages",
             "registration_status": reg_lifecycle["registration_status"],
             "can_register": True,
         }
 
-    dob = user.get("date_of_birth")
-    age = calculate_age(dob)
+    raw_dob = date_of_birth or user.get("date_of_birth") or user.get("dob")
+    age = calculate_age(raw_dob)
     if age < 0 and user.get("age") is not None:
         try:
             age = int(user["age"])
         except (ValueError, TypeError):
             pass
 
+    dob_display = str(raw_dob)[:10] if raw_dob else None
+
     if age < 0:
         return {
             "eligible": False,
             "status": "PROFILE_INCOMPLETE",
-            "reason": "Date of birth or age is required in your profile for eligibility verification.",
+            "reason": f"Date of birth or age is required in your profile for eligibility verification for category '{cat_display_name}'.",
+            "category": cat_display_name,
+            "age_limit": age_limit_str,
             "registration_status": reg_lifecycle["registration_status"],
             "can_register": True,
         }
 
+    cat_name_str = f" for category '{cat_display_name}'" if cat_display_name else ""
     if min_age is not None and age < min_age:
         return {
             "eligible": False,
             "status": "NOT_ELIGIBLE",
-            "reason": f"Minimum age requirement is {min_age}.",
+            "reason": f"Minimum age requirement{cat_name_str} is {min_age}. This category requires age {age_limit_str}, but your calculated age is {age} years (Date of birth: {dob_display}).",
+            "category": cat_display_name,
+            "calculated_age": age,
+            "date_of_birth": dob_display,
+            "min_age": min_age,
+            "max_age": max_age,
+            "age_limit": age_limit_str,
             "registration_status": reg_lifecycle["registration_status"],
             "can_register": False,
         }
@@ -183,15 +282,43 @@ async def check_eligibility(comp_id: str, user: dict = Depends(get_current_user)
         return {
             "eligible": False,
             "status": "NOT_ELIGIBLE",
-            "reason": f"Maximum age requirement is {max_age}.",
+            "reason": f"Maximum age requirement{cat_name_str} is {max_age}. This category requires age {age_limit_str}, but your calculated age is {age} years (Date of birth: {dob_display}).",
+            "category": cat_display_name,
+            "calculated_age": age,
+            "date_of_birth": dob_display,
+            "min_age": min_age,
+            "max_age": max_age,
+            "age_limit": age_limit_str,
             "registration_status": reg_lifecycle["registration_status"],
             "can_register": False,
         }
+
+    eligible_categories = []
+    for cat in comp_categories:
+        if not isinstance(cat, dict):
+            continue
+        c_min = cat.get("min_age")
+        c_max = cat.get("max_age")
+        c_lim = cat.get("age_limit")
+        if (c_min is None or c_max is None) and c_lim:
+            p_min, p_max = parse_age_limit(c_lim)
+            if c_min is None:
+                c_min = p_min
+            if c_max is None:
+                c_max = p_max
+        if (c_min is None or age >= c_min) and (c_max is None or age <= c_max):
+            eligible_categories.append(cat.get("name"))
 
     return {
         "eligible": True,
         "status": "ELIGIBLE",
         "reason": "User is eligible.",
+        "category": cat_display_name,
+        "calculated_age": age,
+        "date_of_birth": dob_display,
+        "age_limit": age_limit_str,
+        "eligible_categories": eligible_categories,
+        "categories": [c.get("name") for c in comp_categories if isinstance(c, dict) and c.get("name")],
         "registration_status": reg_lifecycle["registration_status"],
         "can_register": True,
     }
@@ -247,6 +374,7 @@ async def get_my_competition_registration_status(
         "status": existing.get("status", "PENDING"),
         "payment_status": existing.get("payment_status", "PENDING"),
         "payment_method": existing.get("payment_method", "ONLINE"),
+        "category": existing.get("category") or "General",
         "cash_payment": bool(existing.get("cash_payment", False)),
         "cash_status": existing.get("cash_status", ""),
         "registration_reference": existing.get("registration_reference") or existing.get("order_reference"),
@@ -256,14 +384,20 @@ async def get_my_competition_registration_status(
     }
 
 @router.post("/v1/competitions/{comp_id}/register")
+@router.post("/v1/competitions/{comp_id}/participate")
+@router.post("/v1/competitions/{comp_id}/categories/{category_name}/participate")
+@router.post("/v1/competitions/{comp_id}/categories/{category_name}/register")
 async def register_competition(
     comp_id: str,
+    category_name: Optional[str] = None,
     rules_accepted: Optional[bool] = Query(None),
     payment_method: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    date_of_birth: Optional[str] = Query(None),
     body: Optional[CompetitionRegisterReq] = Body(None),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user_allow_incomplete)
 ):
-    """Registers the user for a competition with fee safety, cash, and online payment support."""
+    """Registers / participates the user for a competition with age limit, fee safety, cash, and category verification."""
     is_rules_accepted = (
         rules_accepted if rules_accepted is not None
         else (body.rules_accepted if body and body.rules_accepted is not None else False)
@@ -274,6 +408,20 @@ async def register_competition(
     ).strip().upper()
     if pay_method not in ["ONLINE", "CASH", "OFFLINE"]:
         pay_method = "ONLINE"
+
+    selected_category = (
+        category_name if category_name is not None
+        else (category if category is not None
+        else (body.category if body and body.category is not None else None))
+    )
+    if selected_category:
+        selected_category = selected_category.strip()
+
+    dob_input = (
+        date_of_birth if date_of_birth is not None
+        else (body.date_of_birth if body and body.date_of_birth is not None
+        else (body.dob if body and body.dob is not None else None))
+    )
 
     if not is_rules_accepted:
         raise HTTPException(status_code=400, detail="You must accept the competition rules.")
@@ -289,14 +437,66 @@ async def register_competition(
     # Real-time registration deadline, capacity, and lifecycle enforcement
     assert_registration_allowed(comp)
 
-    # Check eligibility
-    eligibility = await check_eligibility(comp_id, user)
-    if not eligibility.get("eligible"):
-        raise HTTPException(status_code=403, detail=eligibility.get("reason"))
+    # Resolve category selection
+    comp_categories = comp.get("categories") or []
+    if not selected_category:
+        if comp_categories and len(comp_categories) == 1:
+            selected_category = comp_categories[0].get("name")
+        elif comp.get("category"):
+            selected_category = comp.get("category")
+        elif comp_categories:
+            selected_category = comp_categories[0].get("name")
+        else:
+            selected_category = "General"
+    else:
+        if comp_categories:
+            cat_match = next(
+                (c for c in comp_categories if isinstance(c, dict) and c.get("name", "").strip().lower() == selected_category.lower()),
+                None
+            )
+            if not cat_match:
+                valid_names = [c.get("name") for c in comp_categories if isinstance(c, dict) and c.get("name")]
+                raise HTTPException(status_code=400, detail=f"Category '{selected_category}' is invalid. Available categories: {', '.join(valid_names)}")
+            selected_category = cat_match.get("name")
 
     user_email = user.get("email")
     if not user_email:
         raise HTTPException(status_code=401, detail="User email not found in session.")
+
+    # If date_of_birth provided in registration request, verify verified user DOB immutability
+    if dob_input:
+        assert_dob_modification_allowed(user, dob_input)
+        if not user.get("date_of_birth"):
+            user["date_of_birth"] = dob_input
+            try:
+                await user_collection.update_one(
+                    {"email": user_email},
+                    {"$set": {"date_of_birth": dob_input}}
+                )
+            except Exception:
+                pass
+
+    user_role = str(user.get("role") or "").upper().strip()
+    if user_role not in ["JUDGE", "ADMIN", "SUPER_ADMIN", "VOLUNTEER"]:
+        is_completed, missing = check_profile_completion(user)
+        if not is_completed:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Registration incomplete. Please complete your profile details first (Missing: {', '.join(missing)})."
+            )
+
+    # Check eligibility for this specific category based on date_of_birth
+    eligibility = await check_eligibility(
+        comp_id=comp_id,
+        category=selected_category,
+        date_of_birth=dob_input,
+        user=user
+    )
+    if not eligibility.get("eligible"):
+        raise HTTPException(status_code=403, detail=eligibility.get("reason"))
+
+    calc_age = eligibility.get("calculated_age") if eligibility.get("calculated_age") is not None else user.get("age")
+    resolved_dob = eligibility.get("date_of_birth") or dob_input or user.get("date_of_birth") or user.get("dob") or ""
 
     # Check duplicate or pending registration
     existing = await competition_registration_collection.find_one({
@@ -342,6 +542,10 @@ async def register_competition(
                     "payment_status": PaymentStatus.NOT_REQUIRED.value,
                     "payment_status_display": "SUCCESS",
                     "payment_method": pay_method,
+                    "category": selected_category,
+                    "date_of_birth": resolved_dob,
+                    "age": calc_age,
+                    "eligibility_status": "ELIGIBLE",
                     "registered_at": datetime.now(timezone.utc)
                 }}
             )
@@ -352,7 +556,7 @@ async def register_competition(
                 )
             except Exception:
                 pass
-            return {"message": "Registration confirmed.", "status": RegistrationStatus.CONFIRMED.value, "payment_status": PaymentStatus.NOT_REQUIRED.value, "payment_method": pay_method, "reference": reg_ref}
+            return {"message": "Registration confirmed.", "status": RegistrationStatus.CONFIRMED.value, "payment_status": PaymentStatus.NOT_REQUIRED.value, "payment_method": pay_method, "category": selected_category, "reference": reg_ref}
 
         if pay_method in ["CASH", "OFFLINE"]:
             await competition_registration_collection.update_one(
@@ -362,6 +566,10 @@ async def register_competition(
                     "payment_status": PaymentStatus.PENDING.value,
                     "payment_status_display": "PENDING",
                     "payment_method": "CASH",
+                    "category": selected_category,
+                    "date_of_birth": resolved_dob,
+                    "age": calc_age,
+                    "eligibility_status": "ELIGIBLE",
                     "cash_payment": True,
                     "cash_status": "PENDING",
                     "registered_at": datetime.now(timezone.utc)
@@ -380,10 +588,20 @@ async def register_competition(
                 "payment_status": PaymentStatus.PENDING.value,
                 "payment_status_display": "PENDING",
                 "payment_method": "CASH",
+                "category": selected_category,
                 "reference": reg_ref
             }
 
-        # If registration is pending payment, re-initiate payment gateway order
+        # If registration is pending payment, update category & re-initiate payment gateway order
+        await competition_registration_collection.update_one(
+            {"_id": existing["_id"]},
+            {"$set": {
+                "category": selected_category,
+                "date_of_birth": resolved_dob,
+                "age": calc_age,
+                "eligibility_status": "ELIGIBLE"
+            }}
+        )
         payment_info = await PaymentService.initiate_payment(
             booking_reference=reg_ref,
             amount=fee,
@@ -392,6 +610,7 @@ async def register_competition(
                 "type": "competition_registration",
                 "competition_id": str(comp_id),
                 "user_email": user_email,
+                "category": selected_category,
                 "registration_reference": reg_ref
             }
         )
@@ -401,6 +620,7 @@ async def register_competition(
             "payment_status": PaymentStatus.PENDING.value,
             "payment_status_display": "PENDING",
             "payment_method": "ONLINE",
+            "category": selected_category,
             "payment_info": payment_info,
             "reference": reg_ref
         }
@@ -415,8 +635,8 @@ async def register_competition(
         "user_name": user.get("name") or user.get("full_name") or "",
         "user_phone": user.get("phone_number") or user.get("phone") or "",
         "user_id": str(user.get("_id")) if user.get("_id") else "",
-        "date_of_birth": user.get("date_of_birth") or user.get("dob") or "",
-        "age": user.get("age"),
+        "date_of_birth": resolved_dob,
+        "age": calc_age,
         "address": user.get("address") or user.get("full_address") or "",
         "parent_phone_number": user.get("parent_phone_number") or user.get("parent_phone") or user.get("emergency_contact") or "",
         "profile_photo": user.get("profile_photo") or user.get("avatar") or "",
@@ -424,6 +644,7 @@ async def register_competition(
         "govt_id_type": user.get("govt_id_type") or "AADHAAR",
         "is_verified": bool(user.get("is_verified") or user.get("verified_badge")),
         "verified_badge": bool(user.get("is_verified") or user.get("verified_badge")),
+        "category": selected_category,
         "eligibility_status": "ELIGIBLE",
         "rules_accepted": is_rules_accepted,
         "fee": fee,
@@ -443,7 +664,7 @@ async def register_competition(
             )
         except Exception:
             pass
-        return {"message": "Registration confirmed.", "status": RegistrationStatus.CONFIRMED.value, "payment_status": PaymentStatus.NOT_REQUIRED.value, "payment_method": pay_method, "reference": reg_ref}
+        return {"message": "Registration confirmed.", "status": RegistrationStatus.CONFIRMED.value, "payment_status": PaymentStatus.NOT_REQUIRED.value, "payment_method": pay_method, "category": selected_category, "reference": reg_ref}
     elif pay_method in ["CASH", "OFFLINE"]:
         doc["status"] = RegistrationStatus.CONFIRMED.value
         doc["payment_status"] = PaymentStatus.PENDING.value
@@ -465,6 +686,7 @@ async def register_competition(
             "payment_status": PaymentStatus.PENDING.value,
             "payment_status_display": "PENDING",
             "payment_method": "CASH",
+            "category": selected_category,
             "reference": reg_ref
         }
     else:
@@ -481,6 +703,7 @@ async def register_competition(
                 "type": "competition_registration",
                 "competition_id": str(comp_id),
                 "user_email": user_email,
+                "category": selected_category,
                 "registration_reference": reg_ref
             }
         )
@@ -490,6 +713,7 @@ async def register_competition(
             "payment_status": PaymentStatus.PENDING.value,
             "payment_status_display": "PENDING",
             "payment_method": "ONLINE",
+            "category": selected_category,
             "payment_info": payment_info,
             "reference": reg_ref
         }
@@ -550,6 +774,7 @@ async def submit_files(
         })
         if not legacy_reg:
             raise HTTPException(status_code=403, detail="Confirmed registration required to submit.")
+        reg = legacy_reg
 
     # Dynamic Fields and Competition Submission Settings Check
     comp = enrich_competition_submission_config(comp)
@@ -718,11 +943,17 @@ async def submit_files(
         "user_email": user_email
     })
 
+    sub_category = reg.get("category") or comp.get("category") or "General"
+    sub_dob = reg.get("date_of_birth") or user.get("date_of_birth") or user.get("dob")
+    sub_age = reg.get("age") or user.get("age")
     if existing_sub:
         await competition_submission_collection.update_one(
             {"_id": existing_sub["_id"]},
             {"$set": {
                 "files": uploaded_urls,
+                "category": sub_category,
+                "date_of_birth": sub_dob,
+                "age": sub_age,
                 "status": SubmissionStatus.SUBMITTED.value,
                 "updated_at": datetime.now(timezone.utc)
             }}
@@ -732,6 +963,9 @@ async def submit_files(
         doc = {
             "competition_id": str(comp_id),
             "user_email": user_email,
+            "category": sub_category,
+            "date_of_birth": sub_dob,
+            "age": sub_age,
             "files": uploaded_urls,
             "status": SubmissionStatus.SUBMITTED.value,
             "submitted_at": datetime.now(timezone.utc)
@@ -739,7 +973,7 @@ async def submit_files(
         res = await competition_submission_collection.insert_one(doc)
         sub_id = str(res.inserted_id)
 
-    return {"message": "Submission successful", "submission_id": sub_id, "files": uploaded_urls}
+    return {"message": "Submission successful", "submission_id": sub_id, "files": uploaded_urls, "category": sub_category}
 
 
 class CompetitionPaymentVerifyReq(BaseModel):
@@ -818,4 +1052,33 @@ async def verify_competition_payment(
         "message": "Payment verified and competition registration confirmed successfully.",
         "reference": req.registration_reference,
         "payment_id": req.razorpay_payment_id
+    }
+
+
+@router.get("/v1/competitions/by-category")
+async def get_competitions_grouped_by_category():
+    """Returns all published competitions grouped by category."""
+    comps = await competition_collection.find({"is_published": True}).sort("created_at", -1).to_list(length=200)
+    by_cat: Dict[str, List[Dict[str, Any]]] = {}
+    for c in comps:
+        c["_id"] = str(c["_id"])
+        reg_eval = evaluate_competition_registration_status(c)
+        c["registration_status"] = reg_eval["registration_status"]
+        c["is_registration_open"] = reg_eval["is_registration_open"]
+        c["can_register"] = reg_eval["can_register"]
+        enrich_competition_submission_config(c)
+        
+        cats = [cat.get("name") for cat in c.get("categories", []) if isinstance(cat, dict) and cat.get("name")]
+        if not cats and c.get("category"):
+            cats = [c["category"]]
+        if not cats:
+            cats = ["General"]
+            
+        for cat_name in cats:
+            by_cat.setdefault(cat_name, []).append(c)
+            
+    return {
+        "categories": list(by_cat.keys()),
+        "by_category": by_cat,
+        "grouped": [{"category": k, "count": len(v), "competitions": v} for k, v in by_cat.items()]
     }

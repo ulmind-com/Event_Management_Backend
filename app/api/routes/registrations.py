@@ -179,7 +179,29 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
             raise HTTPException(status_code=400, detail="Activity is full")
 
     # Determine Payment Status & Apply Course/Workshop Coin Discounts
-    price = float(activity.get("price", 0.0))
+    category_name = None
+    if req.activity_type == "event":
+        cats = activity.get("categories", [])
+        if req.category and req.category.strip():
+            matched_cat = next((c for c in cats if isinstance(c, dict) and c.get("name", "").strip().lower() == req.category.strip().lower()), None)
+            if matched_cat:
+                category_name = matched_cat.get("name")
+                price = float(matched_cat.get("price", activity.get("price", 0.0)))
+            else:
+                category_name = req.category.strip()
+                price = float(activity.get("price", 0.0))
+        else:
+            category_name = activity.get("category") or (cats[0].get("name") if cats and isinstance(cats[0], dict) else "General")
+            if cats and isinstance(cats[0], dict) and "price" in cats[0]:
+                price = float(cats[0].get("price", activity.get("price", 0.0)))
+            else:
+                price = float(activity.get("price", 0.0))
+    elif req.activity_type == "competition":
+        category_name = req.category or activity.get("category", "General")
+        price = float(activity.get("entry_fee", activity.get("price", 0.0)))
+    else:
+        price = float(activity.get("price", 0.0))
+
     discount_amount = 0.0
     coins_applied = 0
     order_ref = req.order_reference or f"ORD_{req.activity_type}_{int(now.timestamp())}_{ObjectId()}"
@@ -241,6 +263,8 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
         "participant_email": email,
         "activity_id": req.activity_id,
         "activity_type": req.activity_type,
+        "activity_title": activity.get("title") or activity.get("name") or req.activity_type.capitalize(),
+        "category": category_name,
         "price_snapshot": price,
         "original_price": price,
         "coins_applied": coins_applied,

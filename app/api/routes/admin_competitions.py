@@ -19,6 +19,7 @@ from app.schemas.competition import (
     CompetitionUpdateReq,
     StagePerformerSetReq,
     StageOrderUpdateReq,
+    parse_age_limit,
 )
 from app.services.cloudinary_srv import upload_image
 from app.services.audit import log_admin_action
@@ -33,12 +34,103 @@ from app.services.competition_submission_config import (
 from app.services.competition_stage_service import CompetitionStageService
 from datetime import datetime, timezone
 
+def normalize_competition_categories(comp_dict: dict) -> dict:
+    """
+    Ensures categories list is populated, normalized with age_limit strings,
+    and backwards compatible with category string.
+    """
+    raw_categories = comp_dict.get("categories") or []
+    normalized_cats = []
+
+    for cat in raw_categories:
+        if isinstance(cat, dict):
+            c_name = str(cat.get("name") or "").strip()
+            min_a = cat.get("min_age")
+            max_a = cat.get("max_age")
+            age_lim = cat.get("age_limit")
+            desc = cat.get("description")
+        elif hasattr(cat, "name"):
+            c_name = str(getattr(cat, "name") or "").strip()
+            min_a = getattr(cat, "min_age", None)
+            max_a = getattr(cat, "max_age", None)
+            age_lim = getattr(cat, "age_limit", None)
+            desc = getattr(cat, "description", None)
+        else:
+            continue
+
+        if not c_name:
+            continue
+
+        if (min_a is None or max_a is None) and age_lim:
+            p_min, p_max = parse_age_limit(age_lim)
+            if min_a is None and p_min is not None:
+                min_a = p_min
+            if max_a is None and p_max is not None:
+                max_a = p_max
+
+        if not age_lim:
+            if min_a is not None and max_a is not None:
+                age_lim = f"{min_a}-{max_a} years"
+            elif min_a is not None:
+                age_lim = f"{min_a}+ years"
+            elif max_a is not None:
+                age_lim = f"Up to {max_a} years"
+            else:
+                age_lim = "Open for all ages"
+
+        normalized_cats.append({
+            "name": c_name,
+            "min_age": min_a,
+            "max_age": max_a,
+            "age_limit": age_lim,
+            "description": desc,
+        })
+
+    # If categories was not provided, but category string exists
+    if not normalized_cats:
+        c_str = str(comp_dict.get("category") or "General").strip() or "General"
+        min_a = comp_dict.get("min_age")
+        max_a = comp_dict.get("max_age")
+        age_lim = comp_dict.get("age_limit")
+        if (min_a is None or max_a is None) and age_lim:
+            p_min, p_max = parse_age_limit(age_lim)
+            if min_a is None and p_min is not None:
+                min_a = p_min
+            if max_a is None and p_max is not None:
+                max_a = p_max
+        if not age_lim:
+            if min_a is not None and max_a is not None:
+                age_lim = f"{min_a}-{max_a} years"
+            elif min_a is not None:
+                age_lim = f"{min_a}+ years"
+            elif max_a is not None:
+                age_lim = f"Up to {max_a} years"
+            else:
+                age_lim = "Open for all ages"
+        normalized_cats.append({
+            "name": c_str,
+            "min_age": min_a,
+            "max_age": max_a,
+            "age_limit": age_lim,
+            "description": None,
+        })
+
+    comp_dict["categories"] = normalized_cats
+    if normalized_cats and (not comp_dict.get("category") or comp_dict.get("category") == "General"):
+        comp_dict["category"] = normalized_cats[0]["name"]
+
+    return comp_dict
+
 router = APIRouter()
 
 @router.post("/")
 async def create_competition(req: CompetitionCreateReq, admin: dict = Depends(get_current_admin)):
     """Creates a new advanced competition with rules, criteria, dynamic fields, and card/banner images."""
     comp_dict = req.model_dump()
+    comp_dict = normalize_competition_categories(comp_dict)
+
+    # Normalize category configurations (multiple categories with category-specific age limits)
+    comp_dict = normalize_competition_categories(comp_dict)
 
     # Normalize submission fields according to enabled options (file, video link, audio mp3)
     comp_dict = normalize_submission_settings(comp_dict, is_update=False)
@@ -95,6 +187,7 @@ async def create_competition_with_media(
         raise HTTPException(status_code=400, detail=f"Invalid competition data JSON: {exc}")
 
     comp_dict = req.model_dump()
+    comp_dict = normalize_competition_categories(comp_dict)
 
     # Upload Card Image if provided
     if card_image and card_image.filename:
@@ -269,6 +362,49 @@ async def update_competition(comp_id: str, req: CompetitionUpdateReq, admin: dic
         update_data["banner_url"] = update_data["banner_image_url"]
     elif "banner_url" in update_data and "banner_image_url" not in update_data:
         update_data["banner_image_url"] = update_data["banner_url"]
+
+    # Handle categories normalization
+    if "categories" in update_data:
+        normalized_cats = []
+        for cat in update_data["categories"] or []:
+            if isinstance(cat, dict):
+                c_name = str(cat.get("name") or "").strip()
+                min_a = cat.get("min_age")
+                max_a = cat.get("max_age")
+                age_lim = cat.get("age_limit")
+                desc = cat.get("description")
+            elif hasattr(cat, "name"):
+                c_name = str(getattr(cat, "name") or "").strip()
+                min_a = getattr(cat, "min_age", None)
+                max_a = getattr(cat, "max_age", None)
+                age_lim = getattr(cat, "age_limit", None)
+                desc = getattr(cat, "description", None)
+            else:
+                continue
+
+            if not c_name:
+                continue
+
+            if not age_lim:
+                if min_a is not None and max_a is not None:
+                    age_lim = f"{min_a}-{max_a} years"
+                elif min_a is not None:
+                    age_lim = f"{min_a}+ years"
+                elif max_a is not None:
+                    age_lim = f"Up to {max_a} years"
+                else:
+                    age_lim = "Open for all ages"
+
+            normalized_cats.append({
+                "name": c_name,
+                "min_age": min_a,
+                "max_age": max_a,
+                "age_limit": age_lim,
+                "description": desc,
+            })
+        update_data["categories"] = normalized_cats
+        if normalized_cats and "category" not in update_data:
+            update_data["category"] = normalized_cats[0]["name"]
 
     # Handle submission field toggles / formats update
     submission_keys = [
@@ -454,20 +590,26 @@ async def recalculate_rankings(comp_id: str, admin: dict = Depends(get_current_a
     
     docs = []
     for s in score_agg:
-        # Here we could fetch audience votes and apply audience_vote_weight
-        # For simplicity in this abstraction, we just use judge scores
+        sub = await competition_submission_collection.find_one({"_id": ObjectId(s["_id"]) if ObjectId.is_valid(s["_id"]) else s["_id"]})
+        user_email = sub.get("user_email") if sub else ""
+        reg = await competition_registration_collection.find_one({"competition_id": comp_id, "user_email": user_email}) if user_email else None
+        cat = (reg.get("category") if reg else None) or (sub.get("category") if sub else None) or comp.get("category") or "General"
         
         docs.append({
             "competition_id": comp_id,
             "submission_id": s["_id"],
+            "participant_id": user_email,
+            "category": cat,
             "total_score": s["total_judge_score"],
-            "rank": 0 # Will be assigned
+            "final_score": s["total_judge_score"],
+            "rank": 0,
+            "category_rank": 0,
         })
         
     if not docs:
         return {"message": "No scores to calculate."}
         
-    # Sort and rank
+    # Sort and rank overall
     docs.sort(key=lambda x: x["total_score"], reverse=True)
     current_rank = 1
     for i, doc in enumerate(docs):
@@ -476,6 +618,21 @@ async def recalculate_rankings(comp_id: str, admin: dict = Depends(get_current_a
         else:
             doc["rank"] = current_rank
         current_rank += 1
+
+    # Category-specific ranking
+    cat_groups: Dict[str, list] = {}
+    for doc in docs:
+        c_k = doc.get("category") or "General"
+        cat_groups.setdefault(c_k, []).append(doc)
+    for c_k, c_docs in cat_groups.items():
+        c_docs.sort(key=lambda x: x["total_score"], reverse=True)
+        c_rank = 1
+        for i, cd in enumerate(c_docs):
+            if i > 0 and cd["total_score"] == c_docs[i-1]["total_score"]:
+                cd["category_rank"] = c_docs[i-1]["category_rank"]
+            else:
+                cd["category_rank"] = c_rank
+            c_rank += 1
             
     await leaderboard_result_collection.insert_many(docs)
     return {"message": "Rankings recalculated successfully", "total_ranked": len(docs)}
@@ -521,6 +678,8 @@ async def approve_results(comp_id: str, admin: dict = Depends(get_current_admin)
         user_email = sub.get("user_email") if sub else ""
         user_info = await user_collection.find_one({"email": user_email}) if user_email else None
         p_name = (user_info.get("full_name") or user_info.get("name") or sub.get("name") or user_email.split("@")[0].title()) if user_email else "Contestant"
+        reg = await competition_registration_collection.find_one({"competition_id": comp_id, "user_email": user_email}) if user_email else None
+        cat = (reg.get("category") if reg else None) or (sub.get("category") if sub else None) or comp.get("category") or "General"
         
         docs.append({
             "competition_id": comp_id,
@@ -528,11 +687,15 @@ async def approve_results(comp_id: str, admin: dict = Depends(get_current_admin)
             "participant_id": user_email,
             "email": user_email,
             "name": p_name,
+            "category": cat,
             "total_score": s["total_judge_score"],
+            "final_score": s["total_judge_score"],
             "rank": 0,
+            "category_rank": 0,
             "status": "APPROVED"
         })
         
+    category_leaderboards = {}
     if docs:
         docs.sort(key=lambda x: x["total_score"], reverse=True)
         current_rank = 1
@@ -542,6 +705,25 @@ async def approve_results(comp_id: str, admin: dict = Depends(get_current_admin)
             else:
                 doc["rank"] = current_rank
             current_rank += 1
+
+        # Calculate category-wise leaderboards
+        cat_groups = {}
+        for d in docs:
+            c_k = d.get("category") or "General"
+            cat_groups.setdefault(c_k, []).append(d)
+        for c_k, c_docs in cat_groups.items():
+            c_docs.sort(key=lambda x: x["total_score"], reverse=True)
+            c_rank = 1
+            for i, cd in enumerate(c_docs):
+                if i > 0 and cd["total_score"] == c_docs[i-1]["total_score"]:
+                    cd["category_rank"] = c_docs[i-1]["category_rank"]
+                else:
+                    cd["category_rank"] = c_rank
+                c_rank += 1
+            category_leaderboards[c_k] = [
+                {**x, "rank": x["category_rank"]} for x in c_docs
+            ]
+
         await leaderboard_result_collection.insert_many(docs)
 
     # Approve snapshot if exists
@@ -551,14 +733,32 @@ async def approve_results(comp_id: str, admin: dict = Depends(get_current_admin)
     if snapshot:
         await result_snapshots.update_one(
             {"_id": snapshot["_id"]},
-            {"$set": {"is_approved": True, "approved_by": admin.get("email"), "approved_at": datetime.now(timezone.utc)}}
+            {"$set": {
+                "is_approved": True,
+                "approved_by": admin.get("email"),
+                "approved_at": datetime.now(timezone.utc),
+                "leaderboard": docs,
+                "category_leaderboards": category_leaderboards,
+                "categories": list(category_leaderboards.keys())
+            }}
         )
+    else:
+        await result_snapshots.insert_one({
+            "competition_id": comp_id,
+            "is_approved": True,
+            "is_published": False,
+            "approved_by": admin.get("email"),
+            "approved_at": datetime.now(timezone.utc),
+            "leaderboard": docs,
+            "category_leaderboards": category_leaderboards,
+            "categories": list(category_leaderboards.keys())
+        })
     
     await competition_collection.update_one(
         {"_id": ObjectId(comp_id)},
         {"$set": {"result_status": "APPROVED", "results_approved_at": datetime.now(timezone.utc)}}
     )
-    return {"message": "Results approved and Leaderboard generated successfully.", "total_ranked": len(docs)}
+    return {"message": "Results approved and Leaderboard generated successfully.", "total_ranked": len(docs), "category_leaderboards": category_leaderboards}
 
 @router.post("/{comp_id}/results/publish")
 async def publish_results(comp_id: str, admin: dict = Depends(get_current_admin)):
@@ -1004,13 +1204,18 @@ async def start_finalization(comp_id: str, admin: dict = Depends(get_current_adm
                 total_judge += sum(s.get("scores", {}).values())
             total_judge = total_judge / len(scores)
             
+        reg = await competition_registration_collection.find_one({"competition_id": comp_id, "user_email": user_email})
+        cat = (reg.get("category") if reg else None) or sub.get("category") or comp.get("category") or "General"
+
         participants_data.append({
             "participant_id": user_email,
+            "category": cat,
             "audience_votes": votes,
             "judge_score": total_judge
         })
         
     final_leaderboard = RankingService.calculate_leaderboard(participants_data, max_audience_votes, max_judge_score, comp)
+    category_leaderboards = RankingService.calculate_category_leaderboards(final_leaderboard)
     
     # Store Snapshot
     from app.core.database import db
@@ -1021,6 +1226,8 @@ async def start_finalization(comp_id: str, admin: dict = Depends(get_current_adm
         "calculated_at": datetime.now(timezone.utc),
         "ranking_mode": final_leaderboard[0]["ranking_mode"] if final_leaderboard else "UNKNOWN",
         "leaderboard": final_leaderboard,
+        "category_leaderboards": category_leaderboards,
+        "categories": list(category_leaderboards.keys()),
         "is_approved": False,
         "is_published": False,
         "approved_by": None,
@@ -1080,6 +1287,7 @@ async def list_competition_participants(
     status: Optional[str] = None,
     payment_status: Optional[str] = None,
     payment_method: Optional[str] = None,
+    category: Optional[str] = None,
     search: Optional[str] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
@@ -1110,6 +1318,9 @@ async def list_competition_participants(
         query["status"] = status
     if payment_status and payment_status != "ALL":
         query["payment_status"] = payment_status
+
+    if category and category.strip() and category.upper() != "ALL":
+        query["category"] = category.strip()
 
     if payment_method and payment_method != "ALL":
         pm = payment_method.upper()
@@ -1310,6 +1521,7 @@ async def list_competition_participants(
             "cash_collected_at": r.get("cash_collected_at"),
             "cash_collected_by": r.get("cash_collected_by"),
             "fee": fee_val,
+            "category": r.get("category") or comp.get("category") or "General",
             "registered_at": r.get("registered_at"),
             "rules_accepted": bool(r.get("rules_accepted", True)),
             "submission": sub,
@@ -1318,9 +1530,15 @@ async def list_competition_participants(
             "stage_order": r.get("stage_order", 0)
         })
 
+    all_comp_categories = [c.get("name") for c in comp.get("categories", []) if isinstance(c, dict) and c.get("name")]
+    if not all_comp_categories and comp.get("category"):
+        all_comp_categories = [comp.get("category")]
+
     return {
         "competition_id": str(comp_id),
         "competition_title": comp.get("title", "Competition"),
+        "category": category,
+        "categories": all_comp_categories,
         "total": total,
         "total_registered": len(all_regs),
         "confirmed_count": confirmed_count,

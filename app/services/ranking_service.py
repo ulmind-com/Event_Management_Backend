@@ -121,6 +121,7 @@ class RankingService:
             if "is_verified" in p: result["is_verified"] = p["is_verified"]
             if "verified_badge" in p: result["verified_badge"] = p["verified_badge"]
             if "verified_tick" in p: result["verified_tick"] = p["verified_tick"]
+            if "category" in p: result["category"] = p["category"]
             result["total_score"] = result.get("total_score", result["final_score"])
             result["score"] = result.get("score", result["final_score"])
             result["points"] = result.get("points", result["final_score"])
@@ -135,3 +136,30 @@ class RankingService:
             item["rank"] = idx
             
         return leaderboard
+
+    @staticmethod
+    def calculate_category_leaderboards(leaderboard: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Groups participants by category and calculates category-specific ranks.
+        Returns a dict mapping category name to sorted participant list with rank 1, 2, 3...
+        """
+        category_map: Dict[str, List[Dict[str, Any]]] = {}
+        for p in leaderboard:
+            cat = p.get("category") or "General"
+            if cat not in category_map:
+                category_map[cat] = []
+            category_map[cat].append(dict(p))
+
+        for cat, participants in category_map.items():
+            participants.sort(key=lambda x: x.get("final_score", 0.0), reverse=True)
+            current_rank = 1
+            for idx, item in enumerate(participants):
+                if idx > 0 and item.get("final_score") == participants[idx - 1].get("final_score"):
+                    item["category_rank"] = participants[idx - 1]["category_rank"]
+                    item["rank"] = participants[idx - 1]["rank"]
+                else:
+                    item["category_rank"] = current_rank
+                    item["rank"] = current_rank
+                current_rank += 1
+
+        return category_map

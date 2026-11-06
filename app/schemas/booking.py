@@ -16,10 +16,19 @@ class PaymentStatus(str, Enum):
     FAILED = "FAILED"
     REFUNDED = "REFUNDED"
 
+class BookingCategoryItem(BaseModel):
+    ticket_id: Optional[str] = None
+    category: Optional[str] = None
+    quantity: int = Field(1, gt=0, le=10)
+    holder_names: Optional[List[str]] = None
+
 class BookingCreateReq(BaseModel):
     event_id: str
-    ticket_id: str
-    quantity: int = Field(..., gt=0, le=10)
+    ticket_id: Optional[str] = None
+    category: Optional[str] = None
+    quantity: Optional[int] = Field(None, gt=0, le=10)
+    items: Optional[List[BookingCategoryItem]] = None
+    categories: Optional[List[str]] = None
     holder_names: Optional[List[str]] = None
     payment_method: Optional[str] = "ONLINE"  # "ONLINE" or "CASH"
 
@@ -27,7 +36,9 @@ class BookingResponse(BaseModel):
     id: str
     booking_reference: str
     event_id: str
-    ticket_id: str
+    ticket_id: Optional[str] = None
+    category: Optional[str] = None
+    categories: Optional[List[str]] = None
     user_email: str
     quantity: int
     unit_price: float

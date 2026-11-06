@@ -517,6 +517,7 @@ async def unverify_user_govt_id(
         "verified_badge": False,
         "verified_tick": False,
         "verification_status": "REVOKED",
+        "kyc_status": "REVOKED",
         "unverified_at": now,
         "unverified_by": admin.get("email", "admin@upgradetalentsindia.in"),
         "unverified_reason": reason,

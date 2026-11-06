@@ -5,6 +5,7 @@ class RegistrationReq(BaseModel):
     activity_id: str
     # 'event', 'competition', 'course', 'workshop'
     activity_type: str
+    category: Optional[str] = None
     coins_to_use: Optional[int] = None
     order_reference: Optional[str] = None
     payment_method: Optional[str] = "ONLINE"  # "ONLINE" or "CASH"

@@ -1,5 +1,6 @@
 import re
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Optional, List, Dict, Any
 from bson import ObjectId
 from app.api.deps import get_current_user
 from app.core.database import (
@@ -159,7 +160,11 @@ def extract_submission_url(sub: dict) -> str:
 
 
 @router.get("/{comp_id}/contestants")
-async def list_contestants(comp_id: str, judge: dict = Depends(get_current_judge)):
+async def list_contestants(
+    comp_id: str,
+    category: Optional[str] = Query(None),
+    judge: dict = Depends(get_current_judge)
+):
     """
     Returns approved submissions for this competition with scoring status and enriched contestant profiles:
     - User Table Join: full_name, profile_photo / avatar
@@ -336,6 +341,7 @@ async def list_contestants(comp_id: str, judge: dict = Depends(get_current_judge
         sub_url = extract_submission_url(s)
         s["submission_url"] = sub_url
         s["media_url"] = sub_url
+        s["category"] = r_info.get("category") or s.get("category") or (comp_doc.get("category") if comp_doc else None) or "General"
 
         # Format title and description
         s["title"] = s.get("title") or r_info.get("entry_title") or s.get("submission_title") or "Contestant Entry"
@@ -485,7 +491,12 @@ async def list_contestants(comp_id: str, judge: dict = Depends(get_current_judge
                 "on_stage": is_curr,
                 "stage_status": stage_stat,
                 "stage_order": r.get("stage_order", len(subs) + 1),
+                "category": r.get("category") or (comp_doc.get("category") if comp_doc else None) or "General",
             })
+
+    if category and category.strip():
+        c_clean = category.strip().lower()
+        subs = [x for x in subs if (x.get("category") or "").strip().lower() == c_clean]
 
     return subs
 

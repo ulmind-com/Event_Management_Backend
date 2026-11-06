@@ -52,6 +52,12 @@ class WebsiteSettingsUpdate(BaseModel):
         return check_no_fake_cloudinary(v)
 
 # ── Events ──
+class EventCategory(BaseModel):
+    name: str
+    price: float = 0.0
+    capacity: Optional[int] = None
+    description: Optional[str] = None
+
 class EventCreate(BaseModel):
     title: str
     description: str
@@ -61,6 +67,8 @@ class EventCreate(BaseModel):
     venue: str
     capacity: int = 100
     price: float = 0.0
+    category: Optional[str] = "General"
+    categories: List[EventCategory] = []
     registration_deadline: Optional[str] = None
     event_status: str = "upcoming"  # upcoming, live, completed, cancelled
     is_published: bool = False
@@ -83,6 +91,8 @@ class EventUpdate(BaseModel):
     venue: Optional[str] = None
     capacity: Optional[int] = None
     price: Optional[float] = None
+    category: Optional[str] = None
+    categories: Optional[List[EventCategory]] = None
     registration_deadline: Optional[str] = None
     event_status: Optional[str] = None
     is_published: Optional[bool] = None
@@ -258,7 +268,9 @@ class CourseUpdate(BaseModel):
 class TicketCreate(BaseModel):
     event_id: str
     type: str = "general"  # general, vip, early_bird
-    price: float
+    category: Optional[str] = None
+    categories: Optional[List[Any]] = None
+    price: float = 0.0
     total_quantity: int
     available: Optional[int] = None
     sale_start: Optional[str] = None
@@ -268,6 +280,8 @@ class TicketCreate(BaseModel):
 
 class TicketUpdate(BaseModel):
     type: Optional[str] = None
+    category: Optional[str] = None
+    categories: Optional[List[Any]] = None
     price: Optional[float] = None
     total_quantity: Optional[int] = None
     available: Optional[int] = None

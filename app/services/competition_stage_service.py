@@ -87,11 +87,29 @@ class CompetitionStageService:
             return str(existing["_id"])
 
         # Auto-create approved live-stage submission
+        reg_cat = None
+        reg_dob = None
+        reg_age = None
+        if reg_id:
+            try:
+                reg_doc = await competition_registration_collection.find_one({
+                    "_id": ObjectId(reg_id) if ObjectId.is_valid(reg_id) else reg_id
+                })
+                if reg_doc:
+                    reg_cat = reg_doc.get("category")
+                    reg_dob = reg_doc.get("date_of_birth")
+                    reg_age = reg_doc.get("age")
+            except Exception:
+                pass
+
         doc = {
             "competition_id": c_str,
             "user_email": clean_email,
             "user_name": user_name or clean_email.split("@")[0],
             "registration_id": str(reg_id) if reg_id else None,
+            "category": reg_cat or "General",
+            "date_of_birth": reg_dob,
+            "age": reg_age,
             "title": f"Live Stage Performance - {user_name or clean_email.split('@')[0]}",
             "status": "APPROVED",
             "files": {

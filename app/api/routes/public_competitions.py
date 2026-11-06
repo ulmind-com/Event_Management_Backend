@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
+from typing import Optional, List, Dict, Any
 from bson import ObjectId
 from app.core.database import judge_feedback_collection, competition_collection, leaderboard_result_collection
 from app.services.competition_stage_service import CompetitionStageService
@@ -16,7 +17,7 @@ async def get_public_competition_live_stage(comp_id: str):
 
 
 @router.get("/competitions/{comp_id}/results")
-async def public_results(comp_id: str):
+async def public_results(comp_id: str, category: Optional[str] = Query(None)):
     """Public API: Returns official leaderboard ONLY if results are published."""
     comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
     if not comp:
@@ -32,6 +33,20 @@ async def public_results(comp_id: str):
         raise HTTPException(status_code=404, detail="Official result snapshot not found.")
         
     snapshot["_id"] = str(snapshot["_id"])
+    cat_lbs = snapshot.get("category_leaderboards") or {}
+    all_cats = snapshot.get("categories") or list(cat_lbs.keys()) or [c.get("name") for c in comp.get("categories", []) if isinstance(c, dict) and c.get("name")]
+    snapshot["categories"] = all_cats
+    snapshot["category_leaderboards"] = cat_lbs
+    if category and category.strip():
+        c_clean = category.strip()
+        if c_clean in cat_lbs:
+            snapshot["leaderboard"] = cat_lbs[c_clean]
+        else:
+            snapshot["leaderboard"] = [
+                x for x in snapshot.get("leaderboard", [])
+                if (x.get("category") or "").strip().lower() == c_clean.lower()
+            ]
+        snapshot["category"] = c_clean
     return snapshot
 
 @router.get("/competitions/{comp_id}/contestants/{submission_id}/feedbacks")
@@ -251,8 +266,8 @@ async def submit_audience_vote(comp_id: str, req: VoteReq, user: dict = Depends(
     return {"message": "Vote submitted successfully"}
 
 @router.get("/competitions/{comp_id}/leaderboard")
-async def provisional_leaderboard(comp_id: str):
-    """Returns the real-time provisional leaderboard calculated by the ranking service."""
+async def provisional_leaderboard(comp_id: str, category: Optional[str] = Query(None)):
+    """Returns the real-time provisional leaderboard calculated by the ranking service, supporting category filtering and grouping."""
     from app.services.ranking_service import RankingService
     from app.core.database import (
         judge_score_collection,
@@ -274,10 +289,22 @@ async def provisional_leaderboard(comp_id: str):
     if comp.get("result_status") == "PUBLISHED" or comp.get("results_published"):
         snapshot = await db["result_snapshots"].find_one({"competition_id": comp_id, "is_published": True})
         if snapshot and snapshot.get("leaderboard"):
+            cat_lbs = snapshot.get("category_leaderboards") or {}
+            all_cats = snapshot.get("categories") or list(cat_lbs.keys()) or [c.get("name") for c in comp.get("categories", []) if isinstance(c, dict) and c.get("name")]
+            target_lb = snapshot["leaderboard"]
+            if category and category.strip():
+                c_clean = category.strip()
+                if c_clean in cat_lbs:
+                    target_lb = cat_lbs[c_clean]
+                else:
+                    target_lb = [x for x in target_lb if (x.get("category") or "").strip().lower() == c_clean.lower()]
             return {
                 "ranking_mode": snapshot.get("ranking_mode", "FINAL"),
                 "is_published": True,
-                "leaderboard": snapshot["leaderboard"]
+                "category": category,
+                "categories": all_cats,
+                "leaderboard": target_lb,
+                "category_leaderboards": cat_lbs
             }
 
     # Gather all participant candidates from submissions, registrations, and existing leaderboard docs
@@ -299,27 +326,38 @@ async def provisional_leaderboard(comp_id: str):
                 "user_email": email,
                 "submission_id": str(sub["_id"]),
                 "sub_name": sub.get("name"),
+                "category": sub.get("category"),
             }
 
     for reg in registrations:
         email = reg.get("user_email") or reg.get("email")
-        if email and email not in participants_map:
-            participants_map[email] = {
-                "user_email": email,
-                "submission_id": str(reg.get("submission_id") or ""),
-                "sub_name": reg.get("name") or reg.get("participant_name"),
-            }
+        if email:
+            if email in participants_map:
+                if reg.get("category"):
+                    participants_map[email]["category"] = reg.get("category")
+            else:
+                participants_map[email] = {
+                    "user_email": email,
+                    "submission_id": str(reg.get("submission_id") or ""),
+                    "sub_name": reg.get("name") or reg.get("participant_name"),
+                    "category": reg.get("category"),
+                }
 
     # Also check if leaderboard_result_collection already has ranked entries
     lb_docs = await leaderboard_result_collection.find({"competition_id": comp_id}).to_list(length=1000)
     for lb in lb_docs:
         email = lb.get("email") or lb.get("participant_id") or lb.get("user_email")
-        if email and email not in participants_map:
-            participants_map[email] = {
-                "user_email": email,
-                "submission_id": str(lb.get("submission_id") or ""),
-                "sub_name": lb.get("name"),
-            }
+        if email:
+            if email in participants_map:
+                if lb.get("category") and not participants_map[email].get("category"):
+                    participants_map[email]["category"] = lb.get("category")
+            else:
+                participants_map[email] = {
+                    "user_email": email,
+                    "submission_id": str(lb.get("submission_id") or ""),
+                    "sub_name": lb.get("name"),
+                    "category": lb.get("category"),
+                }
 
     max_judge_score = sum(crit.get("max_score", 0) for crit in comp.get("judging_criteria", []))
     participants_data = []
@@ -392,11 +430,13 @@ async def provisional_leaderboard(comp_id: str):
             or user_doc.get("kyc_status") == "VERIFIED"
         )
 
+        p_category = p_info.get("category") or comp.get("category") or "General"
         participants_data.append({
             "participant_id": email,
             "email": email,
             "name": display_name,
             "profile_photo": avatar,
+            "category": p_category,
             "audience_votes": votes,
             "judge_score": total_judge,
             "is_verified": is_user_verified,
@@ -405,7 +445,24 @@ async def provisional_leaderboard(comp_id: str):
         })
 
     final_leaderboard = RankingService.calculate_leaderboard(participants_data, max_audience_votes, max_judge_score, comp)
+    category_leaderboards = RankingService.calculate_category_leaderboards(final_leaderboard)
+    all_cats = [c.get("name") for c in comp.get("categories", []) if isinstance(c, dict) and c.get("name")]
+    for k in category_leaderboards.keys():
+        if k not in all_cats:
+            all_cats.append(k)
+
+    target_lb = final_leaderboard
+    if category and category.strip():
+        c_clean = category.strip()
+        target_lb = category_leaderboards.get(c_clean, [
+            x for x in final_leaderboard if (x.get("category") or "").strip().lower() == c_clean.lower()
+        ])
+
     return {
         "ranking_mode": final_leaderboard[0]["ranking_mode"] if final_leaderboard else "UNKNOWN",
-        "leaderboard": final_leaderboard
+        "is_published": False,
+        "category": category,
+        "categories": all_cats,
+        "leaderboard": target_lb,
+        "category_leaderboards": category_leaderboards
     }

@@ -8,7 +8,7 @@ from app.core.database import (
     certificate_collection, reward_collection, user_badge_award_collection,
     competition_collection, competition_registration_collection,
     competition_submission_collection, judge_score_collection, merchandise_order_collection,
-    coin_ledger_collection, course_collection, leaderboard_result_collection
+    coin_ledger_collection, course_collection, leaderboard_result_collection, event_collection
 )
 from app.schemas.profile import ProfileUpdateReq, ProfileUpdateRes, DashboardRes
 from app.services.cloudinary_srv import upload_image
@@ -21,6 +21,7 @@ from app.core.profile_lifecycle import (
     check_profile_completion,
     get_profile_form_schema,
     enrich_user_with_profile_status,
+    assert_dob_modification_allowed,
 )
 
 router = APIRouter()
@@ -65,6 +66,7 @@ async def update_my_profile(
 
     if date_of_birth is not None and date_of_birth.strip():
         dob_str = date_of_birth.strip()
+        assert_dob_modification_allowed(current_user, dob_str)
         parsed_dob = parse_date(dob_str)
         if parsed_dob:
             update_data["date_of_birth"] = parsed_dob.strftime("%Y-%m-%d")
@@ -148,6 +150,7 @@ async def complete_profile_json(
         except Exception:
             update_data["phone_number"] = req.phone_number
     if req.date_of_birth and req.date_of_birth.strip():
+        assert_dob_modification_allowed(current_user, req.date_of_birth.strip())
         parsed_dob = parse_date(req.date_of_birth.strip())
         if parsed_dob:
             update_data["date_of_birth"] = parsed_dob.strftime("%Y-%m-%d")
@@ -207,6 +210,26 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user_allow_i
     events = await registration_collection.find({"email": email, "activity_type": "event"}).to_list(length=100)
     for ev in events:
         ev["is_confirmed"] = (ev.get("status") == "CONFIRMED" or ev.get("payment_status") in ("PAID", "NOT_REQUIRED"))
+        act_id = ev.get("activity_id")
+        if act_id:
+            try:
+                e_doc = await event_collection.find_one({"_id": ObjectId(str(act_id))})
+            except Exception:
+                e_doc = await event_collection.find_one({"_id": act_id})
+            if e_doc:
+                ev["title"] = e_doc.get("title")
+                ev["activity_title"] = e_doc.get("title")
+                ev["event_date"] = e_doc.get("date")
+                ev["date"] = e_doc.get("date")
+                ev["event_time"] = e_doc.get("time")
+                ev["time"] = e_doc.get("time")
+                ev["venue"] = e_doc.get("venue")
+                ev["image_url"] = e_doc.get("image_url")
+                ev["categories"] = e_doc.get("categories", [])
+                if not ev.get("category"):
+                    ev["category"] = e_doc.get("category") or "General"
+                if "price" not in ev:
+                    ev["price"] = ev.get("payable_amount") or ev.get("original_price") or e_doc.get("price", 0.0)
 
     # Workshops are a kind of course on the backend, so surface both under my_courses.
     courses = await registration_collection.find({"email": email, "activity_type": {"$in": ["course", "workshop"]}}).to_list(length=100)
@@ -272,6 +295,8 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user_allow_i
                 "competition_id": comp_id_str,
                 "title": c_title,
                 "name": c_title,
+                "category": ar.get("category") or (c_info.get("category") if c_info else None) or "General",
+                "categories": c_info.get("categories", []) if c_info else [],
                 "status": ar.get("status"),
                 "payment_status": ar.get("payment_status"),
                 "is_confirmed": is_confirmed,
@@ -298,6 +323,26 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user_allow_i
     tickets = await booking_collection.find({"$or": [{"user_email": email}, {"email": email}]}).to_list(length=100)
     for t in tickets:
         t["is_confirmed"] = (t.get("booking_status") == "CONFIRMED" or t.get("payment_status") in ("PAID", "NOT_REQUIRED"))
+        ev_id = t.get("event_id")
+        if ev_id:
+            try:
+                e_doc = await event_collection.find_one({"_id": ObjectId(str(ev_id))})
+            except Exception:
+                e_doc = await event_collection.find_one({"_id": ev_id})
+            if e_doc:
+                t["title"] = e_doc.get("title")
+                t["event_title"] = e_doc.get("title")
+                t["event_date"] = e_doc.get("date")
+                t["date"] = e_doc.get("date")
+                t["event_time"] = e_doc.get("time")
+                t["time"] = e_doc.get("time")
+                t["venue"] = e_doc.get("venue")
+                t["image_url"] = e_doc.get("image_url")
+                t["categories"] = e_doc.get("categories", [])
+                if not t.get("category"):
+                    t["category"] = t.get("ticket_type") or e_doc.get("category") or "General"
+                if "price" not in t:
+                    t["price"] = t.get("unit_price") or t.get("total_amount") or 0.0
     
     # 4. Fetch Merchandise Orders
     orders = await order_collection.find({"$or": [{"user_email": email}, {"email": email}]}).to_list(length=100)
@@ -349,6 +394,75 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user_allow_i
     if "_id" in current_user:
         del current_user["_id"]
 
+    my_competitions_by_category = {}
+    for comp_item in competitions:
+        cat_key = comp_item.get("category") or "General"
+        my_competitions_by_category.setdefault(cat_key, []).append(comp_item)
+
+    my_events_by_category = {}
+    combined_user_events = []
+
+    for ev in events:
+        cat_key = ev.get("category") or "General"
+        my_events_by_category.setdefault(cat_key, []).append(ev)
+        combined_user_events.append(ev)
+
+    for t in tickets:
+        if t.get("items") and isinstance(t["items"], list) and len(t["items"]) > 1:
+            for it in t["items"]:
+                it_cat = it.get("category") or t.get("category") or "General"
+                ev_entry = {
+                    "_id": f"{t['_id']}_{it_cat}",
+                    "booking_id": str(t["_id"]),
+                    "activity_id": str(t.get("event_id")),
+                    "event_id": str(t.get("event_id")),
+                    "activity_type": "event",
+                    "title": t.get("title") or t.get("event_title") or "Event",
+                    "activity_title": t.get("title") or t.get("event_title") or "Event",
+                    "category": it_cat,
+                    "categories": t.get("categories", [it_cat]),
+                    "price": it.get("unit_price") or t.get("price") or 0.0,
+                    "unit_price": it.get("unit_price") or 0.0,
+                    "total_amount": it.get("subtotal") or (float(it.get("unit_price", 0.0)) * int(it.get("quantity", 1))),
+                    "quantity": it.get("quantity", 1),
+                    "booking_reference": t.get("booking_reference"),
+                    "status": t.get("booking_status"),
+                    "payment_status": t.get("payment_status"),
+                    "is_confirmed": t.get("is_confirmed", False),
+                    "date": t.get("date"),
+                    "time": t.get("time"),
+                    "venue": t.get("venue"),
+                    "created_at": t.get("booked_at")
+                }
+                my_events_by_category.setdefault(it_cat, []).append(ev_entry)
+                combined_user_events.append(ev_entry)
+        else:
+            ev_entry = {
+                "_id": str(t["_id"]),
+                "activity_id": str(t.get("event_id")),
+                "event_id": str(t.get("event_id")),
+                "activity_type": "event",
+                "title": t.get("title") or t.get("event_title") or "Event",
+                "activity_title": t.get("title") or t.get("event_title") or "Event",
+                "category": t.get("category") or "General",
+                "categories": t.get("categories", []),
+                "price": t.get("price") or t.get("unit_price") or 0.0,
+                "unit_price": t.get("unit_price", 0.0),
+                "total_amount": t.get("total_amount", 0.0),
+                "quantity": t.get("quantity", 1),
+                "booking_reference": t.get("booking_reference"),
+                "status": t.get("booking_status"),
+                "payment_status": t.get("payment_status"),
+                "is_confirmed": t.get("is_confirmed", False),
+                "date": t.get("date"),
+                "time": t.get("time"),
+                "venue": t.get("venue"),
+                "created_at": t.get("booked_at")
+            }
+            cat_key = ev_entry.get("category") or "General"
+            my_events_by_category.setdefault(cat_key, []).append(ev_entry)
+            combined_user_events.append(ev_entry)
+
     return {
         "profile": current_user,
         "is_profile_completed": is_completed,
@@ -359,9 +473,11 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user_allow_i
         "next_step": "COMPLETE_PROFILE" if not is_completed else "DASHBOARD",
         "redirect_url": "/complete-profile" if not is_completed else "/dashboard",
         "profile_form": form_schema,
-        "my_events": events,
+        "my_events": combined_user_events,
+        "my_events_by_category": my_events_by_category,
         "my_tickets": tickets,
         "my_competitions": competitions,
+        "my_competitions_by_category": my_competitions_by_category,
         "my_ranks": my_ranks,
         "my_courses": courses,
         "my_certificates": certs,
@@ -375,4 +491,181 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user_allow_i
             "coin_history": ledger_txns
         },
         "my_merchandise_orders": orders
+    }
+
+
+@router.get("/my-competitions")
+async def get_my_competitions_categorized(current_user: dict = Depends(get_current_user_allow_incomplete)):
+    """Returns the user's registered competitions, with both flat list and category-wise grouping."""
+    email = current_user["email"]
+    competitions = []
+    try:
+        adv_regs = await competition_registration_collection.find({"user_email": email}).to_list(length=100)
+        for ar in adv_regs:
+            comp_id_str = str(ar.get("competition_id", ""))
+            c_info = None
+            if ObjectId.is_valid(comp_id_str):
+                c_info = await competition_collection.find_one({"_id": ObjectId(comp_id_str)})
+            
+            sub = await competition_submission_collection.find_one({"competition_id": comp_id_str, "user_email": email})
+            c_title = c_info.get("title") if c_info else "Competition"
+            cat_val = ar.get("category") or (c_info.get("category") if c_info else None) or "General"
+            
+            competitions.append({
+                "_id": str(ar["_id"]),
+                "registration_reference": ar.get("registration_reference"),
+                "competition_id": comp_id_str,
+                "title": c_title,
+                "name": c_title,
+                "category": cat_val,
+                "categories": c_info.get("categories", []) if c_info else [],
+                "status": ar.get("status"),
+                "payment_status": ar.get("payment_status"),
+                "is_confirmed": (ar.get("status") == "CONFIRMED" or ar.get("payment_status") in ("PAID", "NOT_REQUIRED")),
+                "fee": ar.get("fee", 0),
+                "has_submitted": bool(sub),
+                "submission_id": str(sub["_id"]) if sub else None,
+                "registered_at": ar.get("registered_at"),
+            })
+    except Exception:
+        pass
+        
+    by_category = {}
+    for c in competitions:
+        by_category.setdefault(c.get("category") or "General", []).append(c)
+        
+    return {
+        "competitions": competitions,
+        "by_category": by_category,
+        "categories": list(by_category.keys())
+    }
+
+
+@router.get("/my-events")
+async def get_my_events_categorized(current_user: dict = Depends(get_current_user_allow_incomplete)):
+    """Returns the user's registered and booked events, with both flat list and category-wise grouping."""
+    email = current_user["email"]
+    events = await registration_collection.find({"email": email, "activity_type": "event"}).to_list(length=100)
+    for ev in events:
+        ev["is_confirmed"] = (ev.get("status") == "CONFIRMED" or ev.get("payment_status") in ("PAID", "NOT_REQUIRED"))
+        act_id = ev.get("activity_id")
+        if act_id:
+            try:
+                e_doc = await event_collection.find_one({"_id": ObjectId(str(act_id))})
+            except Exception:
+                e_doc = await event_collection.find_one({"_id": act_id})
+            if e_doc:
+                ev["title"] = e_doc.get("title")
+                ev["activity_title"] = e_doc.get("title")
+                ev["event_date"] = e_doc.get("date")
+                ev["date"] = e_doc.get("date")
+                ev["event_time"] = e_doc.get("time")
+                ev["time"] = e_doc.get("time")
+                ev["venue"] = e_doc.get("venue")
+                ev["image_url"] = e_doc.get("image_url")
+                ev["categories"] = e_doc.get("categories", [])
+                if not ev.get("category"):
+                    ev["category"] = e_doc.get("category") or "General"
+                if "price" not in ev:
+                    ev["price"] = ev.get("payable_amount") or ev.get("original_price") or e_doc.get("price", 0.0)
+
+    tickets = await booking_collection.find({"$or": [{"user_email": email}, {"email": email}]}).to_list(length=100)
+    for t in tickets:
+        t["is_confirmed"] = (t.get("booking_status") == "CONFIRMED" or t.get("payment_status") in ("PAID", "NOT_REQUIRED"))
+        ev_id = t.get("event_id")
+        if ev_id:
+            try:
+                e_doc = await event_collection.find_one({"_id": ObjectId(str(ev_id))})
+            except Exception:
+                e_doc = await event_collection.find_one({"_id": ev_id})
+            if e_doc:
+                t["title"] = e_doc.get("title")
+                t["event_title"] = e_doc.get("title")
+                t["event_date"] = e_doc.get("date")
+                t["date"] = e_doc.get("date")
+                t["event_time"] = e_doc.get("time")
+                t["time"] = e_doc.get("time")
+                t["venue"] = e_doc.get("venue")
+                t["image_url"] = e_doc.get("image_url")
+                t["categories"] = e_doc.get("categories", [])
+                if not t.get("category"):
+                    t["category"] = t.get("ticket_type") or e_doc.get("category") or "General"
+                if "price" not in t:
+                    t["price"] = t.get("unit_price") or t.get("total_amount") or 0.0
+
+    for lst in [events, tickets]:
+        for item in lst:
+            if "_id" in item:
+                item["_id"] = str(item["_id"])
+            if "activity_id" in item and type(item["activity_id"]) != str:
+                item["activity_id"] = str(item["activity_id"])
+
+    my_events_by_category = {}
+    combined_user_events = []
+
+    for ev in events:
+        cat_key = ev.get("category") or "General"
+        my_events_by_category.setdefault(cat_key, []).append(ev)
+        combined_user_events.append(ev)
+
+    for t in tickets:
+        if t.get("items") and isinstance(t["items"], list) and len(t["items"]) > 1:
+            for it in t["items"]:
+                it_cat = it.get("category") or t.get("category") or "General"
+                ev_entry = {
+                    "_id": f"{t['_id']}_{it_cat}",
+                    "booking_id": str(t["_id"]),
+                    "activity_id": str(t.get("event_id")),
+                    "event_id": str(t.get("event_id")),
+                    "activity_type": "event",
+                    "title": t.get("title") or t.get("event_title") or "Event",
+                    "activity_title": t.get("title") or t.get("event_title") or "Event",
+                    "category": it_cat,
+                    "categories": t.get("categories", [it_cat]),
+                    "price": it.get("unit_price") or t.get("price") or 0.0,
+                    "unit_price": it.get("unit_price") or 0.0,
+                    "total_amount": it.get("subtotal") or (float(it.get("unit_price", 0.0)) * int(it.get("quantity", 1))),
+                    "quantity": it.get("quantity", 1),
+                    "booking_reference": t.get("booking_reference"),
+                    "status": t.get("booking_status"),
+                    "payment_status": t.get("payment_status"),
+                    "is_confirmed": t.get("is_confirmed", False),
+                    "date": t.get("date"),
+                    "time": t.get("time"),
+                    "venue": t.get("venue"),
+                    "created_at": t.get("booked_at")
+                }
+                my_events_by_category.setdefault(it_cat, []).append(ev_entry)
+                combined_user_events.append(ev_entry)
+        else:
+            ev_entry = {
+                "_id": str(t["_id"]),
+                "activity_id": str(t.get("event_id")),
+                "event_id": str(t.get("event_id")),
+                "activity_type": "event",
+                "title": t.get("title") or t.get("event_title") or "Event",
+                "activity_title": t.get("title") or t.get("event_title") or "Event",
+                "category": t.get("category") or "General",
+                "categories": t.get("categories", []),
+                "price": t.get("price") or t.get("unit_price") or 0.0,
+                "unit_price": t.get("unit_price", 0.0),
+                "total_amount": t.get("total_amount", 0.0),
+                "quantity": t.get("quantity", 1),
+                "booking_reference": t.get("booking_reference"),
+                "status": t.get("booking_status"),
+                "payment_status": t.get("payment_status"),
+                "is_confirmed": t.get("is_confirmed", False),
+                "date": t.get("date"),
+                "time": t.get("time"),
+                "venue": t.get("venue"),
+                "created_at": t.get("booked_at")
+            }
+            cat_key = ev_entry.get("category") or "General"
+            my_events_by_category.setdefault(cat_key, []).append(ev_entry)
+            combined_user_events.append(ev_entry)
+
+    return {
+        "events": combined_user_events,
+        "by_category": my_events_by_category,
+        "categories": list(my_events_by_category.keys())
     }

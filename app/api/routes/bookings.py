@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from typing import Optional, List, Dict, Any
 from bson import ObjectId
 from app.api.deps import get_current_user
 from app.core.database import booking_collection, ticket_collection, event_collection, issued_ticket_collection
@@ -11,7 +12,7 @@ import uuid
 
 router = APIRouter()
 
-async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, ticket_type: str, user_email: str, quantity: int, names: list, payment_method: str = "ONLINE", payment_status: str = "PENDING"):
+async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, ticket_type: str, user_email: str, quantity: int, names: list, payment_method: str = "ONLINE", payment_status: str = "PENDING", category: Optional[str] = None):
     """Background task to generate digital admission pass once confirmed with multi-person quantity."""
     docs = []
     ticket_ref = f"TKT-{uuid.uuid4().hex[:8].upper()}"
@@ -19,12 +20,14 @@ async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, tic
     holder_names_list = [n for n in (names or []) if n]
     primary_name = holder_names_list[0] if holder_names_list else "Attendee"
     holder_display = primary_name + (f" (+{quantity - 1} Guests)" if quantity > 1 else "")
+    cat_val = category or ticket_type or "General"
     
     docs.append({
         "ticket_ref": ticket_ref,
         "booking_id": booking_id,
         "booking_ref": booking_ref,
         "event_id": event_id,
+        "category": cat_val,
         "ticket_type": ticket_type,
         "holder_email": user_email,
         "holder_name": holder_display,
@@ -159,10 +162,9 @@ def check_event_deadline(event: dict) -> None:
 @router.post("/", response_model=dict)
 async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
     try:
-        t_id = ObjectId(req.ticket_id)
         e_id = ObjectId(req.event_id)
     except:
-        raise HTTPException(status_code=400, detail="Invalid IDs")
+        raise HTTPException(status_code=400, detail="Invalid event ID")
 
     event = await event_collection.find_one({"_id": e_id, "is_published": True})
     if not event:
@@ -174,20 +176,121 @@ async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, curre
 
     check_event_deadline(event)
 
-    update_result = await ticket_collection.update_one(
-        {"_id": t_id, "event_id": str(e_id), "available": {"$gte": req.quantity}},
-        {"$inc": {"available": -req.quantity}}
-    )
-    
-    if update_result.modified_count == 0:
-        t_check = await ticket_collection.find_one({"_id": t_id})
-        if not t_check:
-            raise HTTPException(status_code=404, detail="Ticket not found")
-        raise HTTPException(status_code=409, detail="Insufficient tickets available")
-    
-    ticket = await ticket_collection.find_one({"_id": t_id})
-    unit_price = float(ticket.get("price", 0.0))
-    total_amount = unit_price * req.quantity
+    raw_items = []
+    if req.items:
+        raw_items = [it.model_dump() for it in req.items if it.quantity > 0]
+    elif req.categories and len(req.categories) > 1:
+        raw_items = [{"category": c, "quantity": 1} for c in req.categories]
+    else:
+        qty = req.quantity if req.quantity is not None else 1
+        raw_items = [{
+            "ticket_id": req.ticket_id,
+            "category": req.category,
+            "quantity": qty,
+            "holder_names": req.holder_names or []
+        }]
+
+    if not raw_items:
+        raise HTTPException(status_code=400, detail="Please select at least one ticket category")
+
+    booked_items = []
+    total_amount = 0.0
+    total_quantity = 0
+    reserved_tickets = []
+
+    try:
+        for it in raw_items:
+            it_qty = it.get("quantity", 1)
+            it_ticket_id = it.get("ticket_id")
+            it_category = (it.get("category") or "").strip()
+
+            item_ticket = None
+            item_tid = None
+
+            if it_ticket_id and ObjectId.is_valid(it_ticket_id):
+                item_tid = ObjectId(it_ticket_id)
+                item_ticket = await ticket_collection.find_one({"_id": item_tid, "event_id": str(e_id)})
+
+            if not item_ticket and it_category:
+                cat_regex = {"$regex": f"^{re.escape(it_category)}$", "$options": "i"}
+                item_ticket = await ticket_collection.find_one({
+                    "event_id": str(e_id),
+                    "$or": [{"category": cat_regex}, {"type": cat_regex}, {"categories": cat_regex}]
+                })
+                if item_ticket:
+                    item_tid = item_ticket["_id"]
+
+            if not item_ticket and it_category:
+                match_cat = next((c for c in event.get("categories", []) if c.get("name", "").strip().lower() == it_category.lower()), None)
+                if match_cat:
+                    c_price = float(match_cat.get("price", 0.0))
+                    c_cap = int(match_cat.get("capacity") or event.get("capacity") or 100)
+                    new_tier = {
+                        "event_id": str(e_id),
+                        "type": match_cat["name"],
+                        "category": match_cat["name"],
+                        "categories": [match_cat["name"]],
+                        "price": c_price,
+                        "total_quantity": c_cap,
+                        "available": c_cap,
+                        "sale_start": None,
+                        "sale_end": None,
+                        "is_visible": True,
+                        "display_order": 0,
+                        "created_at": datetime.now(timezone.utc)
+                    }
+                    res_tier = await ticket_collection.insert_one(new_tier)
+                    item_ticket = new_tier
+                    item_tid = res_tier.inserted_id
+
+            if not item_ticket:
+                avail_tickets = await ticket_collection.find({"event_id": str(e_id)}).to_list(length=10)
+                if len(avail_tickets) == 1:
+                    item_ticket = avail_tickets[0]
+                    item_tid = item_ticket["_id"]
+                elif not it_ticket_id and not it_category:
+                    raise HTTPException(status_code=400, detail="Please select a ticket tier or category")
+                else:
+                    raise HTTPException(status_code=404, detail=f"Ticket tier not found for category '{it_category}'")
+
+            final_cat = it_category or item_ticket.get("category") or item_ticket.get("type") or "General"
+            
+            # Atomic inventory decrement
+            up_res = await ticket_collection.update_one(
+                {"_id": item_tid, "event_id": str(e_id), "available": {"$gte": it_qty}},
+                {"$inc": {"available": -it_qty}}
+            )
+            if up_res.modified_count == 0:
+                t_check = await ticket_collection.find_one({"_id": item_tid})
+                if not t_check:
+                    raise HTTPException(status_code=404, detail="Ticket not found")
+                raise HTTPException(status_code=409, detail=f"Insufficient tickets available for category '{final_cat}'")
+            
+            reserved_tickets.append((item_tid, it_qty))
+            unit_p = float(item_ticket.get("price", 0.0))
+            subtotal = unit_p * it_qty
+            total_amount += subtotal
+            total_quantity += it_qty
+
+            booked_items.append({
+                "ticket_id": str(item_tid),
+                "category": final_cat,
+                "ticket_type": item_ticket.get("type") or final_cat,
+                "quantity": it_qty,
+                "unit_price": unit_p,
+                "subtotal": subtotal,
+                "holder_names": it.get("holder_names") or []
+            })
+    except Exception as e:
+        for r_tid, r_qty in reserved_tickets:
+            await ticket_collection.update_one({"_id": r_tid}, {"$inc": {"available": r_qty}})
+        raise e
+
+    distinct_categories = list(dict.fromkeys([b_it["category"] for b_it in booked_items]))
+    primary_category = distinct_categories[0] if len(distinct_categories) == 1 else ", ".join(distinct_categories)
+    first_tid = booked_items[0]["ticket_id"]
+    unit_price = booked_items[0]["unit_price"] if len(booked_items) == 1 else (total_amount / max(1, total_quantity))
+
     booking_ref = f"BKG-{uuid.uuid4().hex[:10].upper()}"
     now_utc = datetime.now(timezone.utc)
     expires_at = now_utc + timedelta(minutes=15)
@@ -199,12 +302,16 @@ async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, curre
     booking = {
         "booking_reference": booking_ref,
         "event_id": str(e_id),
-        "ticket_id": str(t_id),
+        "ticket_id": first_tid,
+        "category": primary_category,
+        "categories": distinct_categories,
+        "items": booked_items,
+        "ticket_type": booked_items[0]["ticket_type"],
         "user_email": current_user["email"],
         "user_name": current_user.get("name") or current_user.get("full_name") or "Attendee",
         "user_phone": current_user.get("phone_number") or current_user.get("phone") or "",
         "holder_names": req.holder_names or [],
-        "quantity": req.quantity,
+        "quantity": total_quantity,
         "unit_price": unit_price,
         "total_amount": total_amount,
         "booked_at": now_utc,
@@ -216,6 +323,10 @@ async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, curre
     response_data = {
         "message": "",
         "booking_reference": booking_ref,
+        "category": primary_category,
+        "categories": distinct_categories,
+        "items": booked_items,
+        "unit_price": unit_price,
         "total_amount": total_amount,
         "payment_method": payment_method
     }
@@ -226,10 +337,12 @@ async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, curre
         booking["payment_status_display"] = "SUCCESS"
         booking["confirmed_at"] = now_utc
         res = await booking_collection.insert_one(booking)
-        bg_tasks.add_task(
-            generate_tickets, str(res.inserted_id), booking_ref, str(e_id), ticket.get("type"), current_user["email"], req.quantity, req.holder_names, payment_method, "NOT_REQUIRED"
-        )
-        await event_collection.update_one({"_id": e_id}, {"$inc": {"registered_count": req.quantity}})
+        for b_it in booked_items:
+            it_names = b_it.get("holder_names") or req.holder_names or []
+            bg_tasks.add_task(
+                generate_tickets, str(res.inserted_id), booking_ref, str(e_id), b_it["ticket_type"], current_user["email"], b_it["quantity"], it_names, payment_method, "NOT_REQUIRED", category=b_it["category"]
+            )
+        await event_collection.update_one({"_id": e_id}, {"$inc": {"registered_count": total_quantity}})
         response_data["message"] = "Free ticket booked and confirmed successfully."
         response_data["booking_status"] = BookingStatus.CONFIRMED.value
         response_data["payment_status"] = PaymentStatus.NOT_REQUIRED.value
@@ -244,10 +357,12 @@ async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, curre
         booking["cash_status"] = "PENDING"
         booking["confirmed_at"] = now_utc
         res = await booking_collection.insert_one(booking)
-        bg_tasks.add_task(
-            generate_tickets, str(res.inserted_id), booking_ref, str(e_id), ticket.get("type"), current_user["email"], req.quantity, req.holder_names, "CASH", "PENDING"
-        )
-        await event_collection.update_one({"_id": e_id}, {"$inc": {"registered_count": req.quantity}})
+        for b_it in booked_items:
+            it_names = b_it.get("holder_names") or req.holder_names or []
+            bg_tasks.add_task(
+                generate_tickets, str(res.inserted_id), booking_ref, str(e_id), b_it["ticket_type"], current_user["email"], b_it["quantity"], it_names, "CASH", "PENDING", category=b_it["category"]
+            )
+        await event_collection.update_one({"_id": e_id}, {"$inc": {"registered_count": total_quantity}})
         response_data["message"] = f"Registration successful! Cash payment of ₹{total_amount:.2f} is pending at the event venue."
         response_data["booking_status"] = BookingStatus.CONFIRMED.value
         response_data["payment_status"] = PaymentStatus.PENDING.value
@@ -269,17 +384,17 @@ async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, curre
         response_data["payment_method"] = "ONLINE"
         response_data["payment_info"] = payment_info
 
-    # Fetch updated ticket metrics to return real-time remaining count
-    updated_ticket = await ticket_collection.find_one({"_id": t_id})
+    # Fetch primary updated ticket metrics to return real-time remaining count
+    updated_ticket = await ticket_collection.find_one({"_id": ObjectId(first_tid)})
     norm = TicketService.normalize_ticket_data(updated_ticket) if updated_ticket else {}
     response_data.update({
         "booking_id": str(res.inserted_id),
-        "ticket_id": str(t_id),
+        "ticket_id": first_tid,
         "total_tickets": norm.get("total_quantity", 0),
         "remaining_tickets": norm.get("available", 0),
         "available": norm.get("available", 0),
         "sold_count": norm.get("sold_count", 0),
-        "quantity_booked": req.quantity,
+        "quantity_booked": total_quantity,
         "expires_at": expires_at.isoformat() if total_amount > 0.0 else None,
     })
     return response_data
@@ -298,8 +413,13 @@ async def get_my_bookings(current_user: dict = Depends(get_current_user)):
                     b["event_time"] = ev.get("time")
                     b["event_venue"] = ev.get("venue")
                     b["event_cover"] = ev.get("cover_image")
+                    b["event_categories"] = ev.get("categories", [])
+                    if not b.get("category"):
+                        b["category"] = ev.get("category") or b.get("ticket_type") or "General"
             except Exception:
                 pass
+        if not b.get("category"):
+            b["category"] = b.get("ticket_type") or "General"
         try:
             tix = await issued_ticket_collection.find({
                 "$or": [
@@ -388,8 +508,13 @@ async def get_my_tickets(current_user: dict = Depends(get_current_user)):
                     t["event_venue"] = e.get("venue")
                     t["event_cover"] = e.get("cover_image")
                     t["base_price"] = e.get("base_price")
+                    t["categories"] = e.get("categories", [])
+                    if not t.get("category"):
+                        t["category"] = e.get("category") or t.get("ticket_type") or "General"
             except Exception:
                 pass
+        if not t.get("category"):
+            t["category"] = t.get("ticket_type") or "General"
         if t.get("booking_id"):
             try:
                 b = await booking_collection.find_one({"_id": ObjectId(t["booking_id"])})

@@ -7,7 +7,77 @@ profile input form schemas, and onboarding lifecycle for all user logins (Email 
 
 from datetime import datetime, date, timezone
 from typing import Tuple, List, Optional, Dict, Any
+from fastapi import HTTPException, status
 import re
+
+
+def is_user_verified(user: Optional[Dict[str, Any]]) -> bool:
+    """Returns True if the user account has been verified by an admin."""
+    if not user or not isinstance(user, dict):
+        return False
+    return bool(
+        user.get("is_verified")
+        or user.get("is_id_verified")
+        or user.get("is_govt_id_verified")
+        or user.get("verified_badge")
+        or user.get("verified_tick")
+        or str(user.get("kyc_status") or "").upper() == "VERIFIED"
+        or str(user.get("verification_status") or "").upper() == "VERIFIED"
+    )
+
+
+def normalize_dob(dob_val: Any) -> Optional[str]:
+    """Normalizes any date of birth string/date/datetime into YYYY-MM-DD string."""
+    if not dob_val:
+        return None
+    if isinstance(dob_val, datetime):
+        return dob_val.strftime("%Y-%m-%d")
+    if isinstance(dob_val, date):
+        return dob_val.strftime("%Y-%m-%d")
+    s = str(dob_val).strip()
+    if not s:
+        return None
+    # ISO / YYYY-MM-DD
+    m = re.search(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', s)
+    if m:
+        try:
+            return f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+        except Exception:
+            pass
+    # DD-MM-YYYY or DD/MM/YYYY
+    m = re.search(r'(\d{1,2})[-/](\d{1,2})[-/](\d{4})', s)
+    if m:
+        try:
+            return f"{int(m.group(3)):04d}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
+        except Exception:
+            pass
+    return s[:10]
+
+
+def assert_dob_modification_allowed(current_user: Optional[Dict[str, Any]], new_dob_val: Any) -> None:
+    """
+    Enforces that an admin-verified user cannot alter their date of birth.
+    Raises HTTPException(400) if an admin-verified user attempts to change their DOB.
+    """
+    if not current_user or not is_user_verified(current_user):
+        return
+
+    existing_dob_norm = normalize_dob(current_user.get("date_of_birth") or current_user.get("dob"))
+    if not existing_dob_norm:
+        return  # No prior DOB was set
+
+    if new_dob_val is None:
+        return
+
+    new_dob_norm = normalize_dob(new_dob_val)
+    if not new_dob_norm:
+        return
+
+    if new_dob_norm != existing_dob_norm:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Your profile has been verified by admin. You cannot modify your date of birth once verified."
+        )
 
 
 def calculate_age(dob: date) -> int:
@@ -133,6 +203,8 @@ def get_profile_form_schema(user: Optional[Dict[str, Any]] = None) -> Dict[str, 
                 "required": True,
                 "value": user_data.get("date_of_birth") or "",
                 "is_missing": "date_of_birth" in missing,
+                "is_locked": bool(is_user_verified(user_data) and (user_data.get("date_of_birth") or user_data.get("dob"))),
+                "read_only": bool(is_user_verified(user_data) and (user_data.get("date_of_birth") or user_data.get("dob"))),
             },
             {
                 "name": "address",
@@ -184,12 +256,7 @@ def enrich_user_with_profile_status(user: Dict[str, Any]) -> Dict[str, Any]:
     user["profile_form"] = form_schema
 
     # ── Government ID & Profile Verification Badges ──
-    is_verified = bool(
-        user.get("is_verified")
-        or user.get("is_id_verified")
-        or user.get("is_govt_id_verified")
-        or user.get("kyc_status") == "VERIFIED"
-    )
+    is_verified = is_user_verified(user)
     user["is_verified"] = is_verified
     user["is_id_verified"] = is_verified
     user["is_govt_id_verified"] = is_verified
@@ -198,6 +265,10 @@ def enrich_user_with_profile_status(user: Dict[str, Any]) -> Dict[str, Any]:
     user["verification_status"] = "VERIFIED" if is_verified else user.get("verification_status", "NOT_VERIFIED")
     if is_verified:
         user["badge_label"] = "Verified Profile"
+
+    # Flag indicating whether DOB is locked due to admin verification
+    has_dob = bool(user.get("date_of_birth") or user.get("dob"))
+    user["is_dob_locked"] = bool(is_verified and has_dob)
 
     return user
 

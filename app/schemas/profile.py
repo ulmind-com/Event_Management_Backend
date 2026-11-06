@@ -1,4 +1,4 @@
-﻿from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl
 from typing import Optional, List
 
 class ProfileUpdateReq(BaseModel):
@@ -15,8 +15,10 @@ class ProfileUpdateRes(BaseModel):
 class DashboardRes(BaseModel):
     profile: dict
     events: List[dict]
+    my_events_by_category: Optional[dict] = None
     tickets: List[dict]
     competitions: List[dict]
+    my_competitions_by_category: Optional[dict] = None
     courses: List[dict]
     merchandise_orders: List[dict]
     certificates: List[dict]

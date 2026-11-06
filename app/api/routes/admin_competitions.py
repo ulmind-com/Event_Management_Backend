@@ -32,6 +32,7 @@ from app.services.competition_submission_config import (
     enrich_competition_submission_config,
 )
 from app.services.competition_stage_service import CompetitionStageService
+from app.services.share_service import ShareService
 from datetime import datetime, timezone
 
 def normalize_competition_categories(comp_dict: dict) -> dict:
@@ -167,6 +168,7 @@ async def create_competition(req: CompetitionCreateReq, admin: dict = Depends(ge
     
     res = await competition_collection.insert_one(comp_dict)
     comp_dict["_id"] = str(res.inserted_id)
+    ShareService.enrich_competition(comp_dict)
     return comp_dict
 
 
@@ -250,6 +252,7 @@ async def create_competition_with_media(
 
     res = await competition_collection.insert_one(comp_dict)
     comp_dict["_id"] = str(res.inserted_id)
+    ShareService.enrich_competition(comp_dict)
     return comp_dict
 
 
@@ -323,6 +326,7 @@ async def list_competitions(admin: dict = Depends(get_current_admin)):
     for c in comps:
         c["_id"] = str(c["_id"])
         enrich_competition_submission_config(c)
+        ShareService.enrich_competition(c)
     return comps
 
 @router.get("/{comp_id}")
@@ -337,6 +341,7 @@ async def get_competition(comp_id: str, admin: dict = Depends(get_current_admin)
         raise HTTPException(status_code=404, detail="Competition not found")
     comp["_id"] = str(comp["_id"])
     comp = enrich_competition_submission_config(comp)
+    ShareService.enrich_competition(comp)
     return comp
 
 @router.patch("/{comp_id}")

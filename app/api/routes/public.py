@@ -1,12 +1,16 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request, HTTPException, status
+from fastapi.responses import RedirectResponse
 from typing import Optional
 from datetime import datetime, timezone
+from bson import ObjectId
 from app.core.database import (
     website_settings_collection, event_collection, live_event_collection,
     ticket_collection, banner_collection, testimonial_collection,
     course_collection, contest_promotion_collection, app_promotion_collection,
     important_link_collection, competition_collection,
 )
+from app.services.share_service import ShareService
+from app.schemas.share import ShareLinkResponse
 
 router = APIRouter()
 
@@ -77,6 +81,8 @@ async def get_homepage():
     events = await event_collection.find({
         "is_published": True, "is_visible": True, "is_deleted": {"$ne": True}
     }).sort("display_order", 1).to_list(length=20)
+    for ev in events:
+        ShareService.enrich_event(ev)
     clean_list(events)
 
     # Live Events (published + visible, hide private stream_url)
@@ -352,3 +358,57 @@ async def get_public_contact():
 async def get_public_links():
     docs = await important_link_collection.find({"is_enabled": True}).sort("display_order", 1).to_list(length=50)
     return clean_list(docs)
+
+
+@router.get("/share/event/{event_id}", response_model=ShareLinkResponse, tags=["share", "public"])
+async def share_event_redirect_or_data(
+    event_id: str,
+    request: Request,
+    json: Optional[bool] = Query(False, description="Set true to return JSON payload instead of redirecting")
+):
+    """
+    Universal Event Share Resolver:
+    - If accessed from browser, mobile link, or social app: redirects (HTTP 307) directly to event ticket booking.
+    - If queried with '?json=true' or 'Accept: application/json': returns structured share links & metadata.
+    """
+    ev = None
+    if ObjectId.is_valid(event_id):
+        ev = await event_collection.find_one({"_id": ObjectId(event_id), "is_deleted": {"$ne": True}})
+    if not ev:
+        ev = await event_collection.find_one({"_id": event_id, "is_deleted": {"$ne": True}})
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+        
+    share_data = ShareService.build_event_share_data(ev)
+    accept_header = request.headers.get("accept", "")
+    if json or "application/json" in accept_header:
+        return ShareLinkResponse(**share_data)
+        
+    return RedirectResponse(url=share_data["direct_booking_url"], status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+
+@router.get("/share/competition/{comp_id}", response_model=ShareLinkResponse, tags=["share", "public"])
+async def share_competition_redirect_or_data(
+    comp_id: str,
+    request: Request,
+    json: Optional[bool] = Query(False, description="Set true to return JSON payload instead of redirecting")
+):
+    """
+    Universal Competition Share Resolver:
+    - If accessed from browser, mobile link, or social app: redirects (HTTP 307) directly to competition registration.
+    - If queried with '?json=true' or 'Accept: application/json': returns structured share links & metadata.
+    """
+    comp = None
+    if ObjectId.is_valid(comp_id):
+        comp = await competition_collection.find_one({"_id": ObjectId(comp_id), "is_deleted": {"$ne": True}})
+    if not comp:
+        comp = await competition_collection.find_one({"_id": comp_id, "is_deleted": {"$ne": True}})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+        
+    share_data = ShareService.build_competition_share_data(comp)
+    accept_header = request.headers.get("accept", "")
+    if json or "application/json" in accept_header:
+        return ShareLinkResponse(**share_data)
+        
+    return RedirectResponse(url=share_data["direct_registration_url"], status_code=status.HTTP_307_TEMPORARY_REDIRECT)

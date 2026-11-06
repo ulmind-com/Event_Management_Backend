@@ -32,6 +32,8 @@ from app.services.competition_lifecycle import (
     evaluate_competition_registration_status,
 )
 from app.services.competition_submission_config import enrich_competition_submission_config
+from app.services.share_service import ShareService
+from app.schemas.share import ShareLinkResponse
 
 router = APIRouter()
 
@@ -91,6 +93,36 @@ def calculate_age(dob_val: Any) -> int:
         return -1
 
 
+@router.get("/v1/competitions/by-category")
+async def get_competitions_grouped_by_category():
+    """Returns all published competitions grouped by category."""
+    comps = await competition_collection.find({"is_published": True}).sort("created_at", -1).to_list(length=200)
+    by_cat: Dict[str, List[Dict[str, Any]]] = {}
+    for c in comps:
+        c["_id"] = str(c["_id"])
+        reg_eval = evaluate_competition_registration_status(c)
+        c["registration_status"] = reg_eval["registration_status"]
+        c["is_registration_open"] = reg_eval["is_registration_open"]
+        c["can_register"] = reg_eval["can_register"]
+        enrich_competition_submission_config(c)
+        ShareService.enrich_competition(c)
+        
+        cats = [cat.get("name") for cat in c.get("categories", []) if isinstance(cat, dict) and cat.get("name")]
+        if not cats and c.get("category"):
+            cats = [c["category"]]
+        if not cats:
+            cats = ["General"]
+            
+        for cat_name in cats:
+            by_cat.setdefault(cat_name, []).append(c)
+            
+    return {
+        "categories": list(by_cat.keys()),
+        "by_category": by_cat,
+        "grouped": [{"category": k, "count": len(v), "competitions": v} for k, v in by_cat.items()]
+    }
+
+
 @router.get("/v1/competitions/{comp_id}")
 async def get_competition_by_id(comp_id: str):
     """Fetch single competition details with real-time registration status and configured submission fields."""
@@ -111,7 +143,25 @@ async def get_competition_by_id(comp_id: str):
 
     # Enrich with explicit submission field configuration
     comp = enrich_competition_submission_config(comp)
+    ShareService.enrich_competition(comp)
     return comp
+
+
+@router.get("/v1/competitions/{comp_id}/share", response_model=ShareLinkResponse)
+async def get_competition_v1_share_links(comp_id: str):
+    """
+    Public/User endpoint: returns shareable deep-link, direct registration link,
+    pre-composed share text, and social share links (WhatsApp, Facebook, Twitter, LinkedIn, Telegram).
+    """
+    c_id = safe_object_id(comp_id)
+    comp = None
+    if c_id:
+        comp = await competition_collection.find_one({"_id": c_id})
+    if not comp:
+        comp = await competition_collection.find_one({"_id": comp_id})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+    return ShareService.build_competition_share_data(comp)
 
 
 @router.get("/v1/competitions/{comp_id}/registration-status")
@@ -1052,33 +1102,4 @@ async def verify_competition_payment(
         "message": "Payment verified and competition registration confirmed successfully.",
         "reference": req.registration_reference,
         "payment_id": req.razorpay_payment_id
-    }
-
-
-@router.get("/v1/competitions/by-category")
-async def get_competitions_grouped_by_category():
-    """Returns all published competitions grouped by category."""
-    comps = await competition_collection.find({"is_published": True}).sort("created_at", -1).to_list(length=200)
-    by_cat: Dict[str, List[Dict[str, Any]]] = {}
-    for c in comps:
-        c["_id"] = str(c["_id"])
-        reg_eval = evaluate_competition_registration_status(c)
-        c["registration_status"] = reg_eval["registration_status"]
-        c["is_registration_open"] = reg_eval["is_registration_open"]
-        c["can_register"] = reg_eval["can_register"]
-        enrich_competition_submission_config(c)
-        
-        cats = [cat.get("name") for cat in c.get("categories", []) if isinstance(cat, dict) and cat.get("name")]
-        if not cats and c.get("category"):
-            cats = [c["category"]]
-        if not cats:
-            cats = ["General"]
-            
-        for cat_name in cats:
-            by_cat.setdefault(cat_name, []).append(c)
-            
-    return {
-        "categories": list(by_cat.keys()),
-        "by_category": by_cat,
-        "grouped": [{"category": k, "count": len(v), "competitions": v} for k, v in by_cat.items()]
     }

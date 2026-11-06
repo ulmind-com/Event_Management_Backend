@@ -7,6 +7,8 @@ from app.core.database import event_collection, ticket_collection, competition_c
 from app.services.ticket import TicketService
 from app.services.competition_lifecycle import evaluate_competition_registration_status
 from app.services.competition_submission_config import enrich_competition_submission_config
+from app.services.share_service import ShareService
+from app.schemas.share import ShareLinkResponse
 
 router = APIRouter()
 
@@ -33,6 +35,8 @@ async def get_events(
             {"categories.name": cat_regex}
         ]
     events = await event_collection.find(query).sort("display_order", 1).skip(skip).limit(limit).to_list(length=limit)
+    for ev in events:
+        ShareService.enrich_event(ev)
     return clean_ids(events)
 
 @router.get("/events/by-category")
@@ -41,6 +45,7 @@ async def get_events_by_category():
     events = await event_collection.find({"is_published": True, "is_deleted": {"$ne": True}}).sort("display_order", 1).to_list(length=200)
     by_category = {}
     for ev in events:
+        ShareService.enrich_event(ev)
         cats = [cat.get("name") for cat in ev.get("categories", []) if isinstance(cat, dict) and cat.get("name")]
         if not cats and ev.get("category"):
             cats = [ev["category"]]
@@ -59,6 +64,21 @@ async def get_events_by_category():
         "grouped": [{"category": k, "count": len(v), "events": v} for k, v in by_category.items()]
     }
 
+@router.get("/events/{event_id}/share", response_model=ShareLinkResponse)
+async def get_event_share_links(event_id: str):
+    """
+    Public API: returns shareable deep-link, direct ticket booking link,
+    pre-composed share text, and social share links (WhatsApp, Facebook, Twitter, LinkedIn, Telegram).
+    """
+    ev = None
+    if ObjectId.is_valid(event_id):
+        ev = await event_collection.find_one({"_id": ObjectId(event_id), "is_deleted": {"$ne": True}})
+    if not ev:
+        ev = await event_collection.find_one({"_id": event_id, "is_deleted": {"$ne": True}})
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return ShareService.build_event_share_data(ev)
+
 @router.get("/events/{event_id}")
 async def get_event_by_id(event_id: str):
     ev = None
@@ -69,6 +89,7 @@ async def get_event_by_id(event_id: str):
     if not ev:
         raise HTTPException(status_code=404, detail="Event not found")
     ev["_id"] = str(ev["_id"])
+    ShareService.enrich_event(ev)
     return ev
 
 @router.get("/tickets")
@@ -158,6 +179,7 @@ async def get_competitions_by_category():
         comp["can_register"] = reg_eval["can_register"]
         comp["registration_reason"] = reg_eval["reason"]
         enrich_competition_submission_config(comp)
+        ShareService.enrich_competition(comp)
 
         cats = [cat.get("name") for cat in comp.get("categories", []) if isinstance(cat, dict) and cat.get("name")]
         if not cats and comp.get("category"):
@@ -177,6 +199,21 @@ async def get_competitions_by_category():
         "grouped": [{"category": k, "count": len(v), "competitions": v} for k, v in by_category.items()]
     }
 
+@router.get("/competitions/{comp_id}/share", response_model=ShareLinkResponse)
+async def get_competition_share_links(comp_id: str):
+    """
+    Public API: returns shareable deep-link, direct registration link,
+    pre-composed share text, and social share links (WhatsApp, Facebook, Twitter, LinkedIn, Telegram).
+    """
+    comp = None
+    if ObjectId.is_valid(comp_id):
+        comp = await competition_collection.find_one({"_id": ObjectId(comp_id), "is_deleted": {"$ne": True}})
+    if not comp:
+        comp = await competition_collection.find_one({"_id": comp_id, "is_deleted": {"$ne": True}})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+    return ShareService.build_competition_share_data(comp)
+
 @router.get("/competitions")
 async def get_competitions(
     skip: int = 0,
@@ -194,7 +231,7 @@ async def get_competitions(
             {"category": cat_regex},
             {"categories.name": cat_regex}
         ]
-    competitions = await competition_collection.find(query).skip(skip).limit(limit).to_list(length=limit)
+    competitions = await competition_collection.find(query).sort("created_at", -1).skip(skip).limit(limit).to_list(length=limit)
     for comp in competitions:
         reg_eval = evaluate_competition_registration_status(comp)
         comp["registration_status"] = reg_eval["registration_status"]
@@ -202,6 +239,7 @@ async def get_competitions(
         comp["can_register"] = reg_eval["can_register"]
         comp["registration_reason"] = reg_eval["reason"]
         enrich_competition_submission_config(comp)
+        ShareService.enrich_competition(comp)
     return clean_ids(competitions)
 
 @router.get("/competitions/{comp_id}")
@@ -220,6 +258,7 @@ async def get_competition_activity(comp_id: str):
     comp["can_register"] = reg_eval["can_register"]
     comp["registration_reason"] = reg_eval["reason"]
     comp = enrich_competition_submission_config(comp)
+    ShareService.enrich_competition(comp)
     return comp
 
 @router.get("/courses")

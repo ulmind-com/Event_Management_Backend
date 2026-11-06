@@ -23,6 +23,7 @@ from app.schemas.cms import (
 )
 from app.services.audit import log_admin_action
 from app.services.ticket import TicketService
+from app.services.share_service import ShareService
 from datetime import datetime, timezone
 
 router = APIRouter()
@@ -228,6 +229,8 @@ async def list_events(skip: int = 0, limit: int = 50, search: Optional[str] = No
     if search:
         q["title"] = {"$regex": search, "$options": "i"}
     docs = await event_collection.find(q).sort("display_order", 1).skip(skip).limit(limit).to_list(length=limit)
+    for d in docs:
+        ShareService.enrich_event(d)
     return clean_list(docs)
 
 @router.post("/events", tags=["admin-events"])
@@ -242,6 +245,7 @@ async def create_event(data: EventCreate, admin=Depends(get_current_admin)):
     event_id = str(result.inserted_id)
     await log_admin_action(admin["email"], "create", "event", event_id)
     doc["_id"] = event_id
+    ShareService.enrich_event(doc)
 
     # Auto-create initial ticket tiers if ticketing is enabled
     if doc.get("ticket_enabled", True):
@@ -342,6 +346,8 @@ async def update_event(event_id: str, data: EventUpdate, admin=Depends(get_curre
                 tier_update["updated_at"] = datetime.now(timezone.utc)
                 await ticket_collection.update_one({"_id": existing_tiers[0]["_id"]}, {"$set": tier_update})
 
+    if doc:
+        ShareService.enrich_event(doc)
     return clean(doc)
 
 @router.delete("/events/{event_id}", tags=["admin-events"])

@@ -60,6 +60,7 @@ api_router.include_router(admin_analytics.router, prefix="/admin/analytics", tag
 
 # ── Public APIs ──
 api_router.include_router(public.router, prefix="/v1", tags=["public"])
+api_router.include_router(public.router, prefix="/public", tags=["public"])
 api_router.include_router(public_competitions.router, prefix="/v1", tags=["public-competitions"])
 api_router.include_router(public_competitions.router, prefix="/public", tags=["public-competitions"])
 api_router.include_router(public_live.router, prefix="/v1", tags=["public-live"])

@@ -23,6 +23,7 @@ from app.schemas.competition import (
 )
 from app.core.websocket import ws_manager
 from app.services.competition_stage_service import CompetitionStageService
+from app.services.competition_round_service import CompetitionRoundService
 from datetime import datetime, timezone
 
 router = APIRouter()
@@ -164,6 +165,7 @@ async def list_contestants(
     comp_id: str,
     category: Optional[str] = Query(None),
     only_present: bool = Query(False, description="Filter strictly to confirmed present participants from final list"),
+    round_number: Optional[int] = Query(None, description="Round number, defaults to active competition round"),
     judge: dict = Depends(get_current_judge)
 ):
     """
@@ -171,6 +173,7 @@ async def list_contestants(
     - User Table Join: full_name, profile_photo / avatar
     - Registration Table Join: registration_reference (CRG-xxxxx), participant name, phone
     - Formatted submission_url & media_url for instant preview
+    - Round-Aware: returns contestants and scoring status for the specified round (defaults to active round)
     """
     await verify_judge_assignment(judge["email"], comp_id)
 
@@ -186,6 +189,7 @@ async def list_contestants(
     curr_stage_performer = live_stage.get("current_performer") or {}
     curr_sub_id = str(curr_stage_performer.get("submission_id", "")).strip()
     curr_stage_email = (curr_stage_performer.get("user_email") or "").strip().lower()
+    target_round = int(round_number) if round_number is not None else int((comp_doc.get("current_round") if comp_doc else 1) or 1)
 
     sub_query = {
         "$or": [{"competition_id": str(comp_id)}],
@@ -196,11 +200,17 @@ async def list_contestants(
 
     subs = await competition_submission_collection.find(sub_query).to_list(length=1000)
 
-    # Fetch all scores submitted by this judge for this competition
-    existing_scores = await judge_score_collection.find({
+    # Fetch all scores submitted by this judge for this competition and round
+    score_filter: Dict[str, Any] = {
         "competition_id": str(comp_id),
         "judge_email": judge["email"]
-    }).to_list(length=1000)
+    }
+    if target_round == 1:
+        score_filter["$or"] = [{"round_number": 1}, {"round_number": {"$exists": False}}, {"round_number": None}]
+    else:
+        score_filter["round_number"] = target_round
+
+    existing_scores = await judge_score_collection.find(score_filter).to_list(length=1000)
 
     score_by_sub = {}
     score_by_user = {}
@@ -218,11 +228,17 @@ async def list_contestants(
     }).to_list(length=1000)
     coi_set = {str(c["submission_id"]) for c in coi_skips if c.get("submission_id")}
 
-    # Fetch drafts
-    drafts = await draft_score_collection.find({
+    # Fetch drafts for this round
+    draft_filter: Dict[str, Any] = {
         "competition_id": str(comp_id),
         "judge_email": judge["email"]
-    }).to_list(length=1000)
+    }
+    if target_round == 1:
+        draft_filter["$or"] = [{"round_number": 1}, {"round_number": {"$exists": False}}, {"round_number": None}]
+    else:
+        draft_filter["round_number"] = target_round
+
+    drafts = await draft_score_collection.find(draft_filter).to_list(length=1000)
     draft_set = {str(d["submission_id"]) for d in drafts if d.get("submission_id")}
 
     # Collect all emails for batch joins
@@ -392,17 +408,29 @@ async def list_contestants(
         comp_matches.append(comp_doc["_id"])
         comp_matches.append(str(comp_doc["_id"]))
 
-    all_registered = await competition_registration_collection.find({
-        "competition_id": {"$in": comp_matches}
-    }).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=1000)
+    reg_find_query: Dict[str, Any] = {"competition_id": {"$in": comp_matches}}
+    if target_round > 1:
+        reg_find_query["$or"] = [
+            {"qualified_rounds": target_round},
+            {"current_round": target_round},
+            {"highest_round": {"$gte": target_round}}
+        ]
 
-    if not all_registered:
+    all_registered = await competition_registration_collection.find(
+        reg_find_query
+    ).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=1000)
+
+    if not all_registered and target_round == 1:
         all_registered = await registration_collection.find({
             "$or": [
                 {"activity_id": {"$in": comp_matches}},
                 {"competition_id": {"$in": comp_matches}}
             ]
         }).sort([("created_at", 1)]).to_list(length=1000)
+
+    if target_round > 1:
+        qualified_emails_in_round = list({(r.get("user_email") or r.get("email") or "").strip().lower() for r in all_registered if (r.get("user_email") or r.get("email"))})
+        subs = [s for s in subs if (s.get("user_email") or "").strip().lower() in qualified_emails_in_round]
 
     # Batch pre-fetch any registered users not already in user_map
     missing_user_emails = list({
@@ -518,13 +546,40 @@ async def list_contestants(
 async def list_final_present_contestants(
     comp_id: str,
     category: Optional[str] = Query(None),
+    round_number: Optional[int] = Query(None),
     judge: dict = Depends(get_current_judge)
 ):
     """
     Returns the final confirmed list of PRESENT participants for judges on event day.
-    This is the official lineup evaluated by judges.
+    This is the official lineup evaluated by judges for the specified round.
     """
-    return await list_contestants(comp_id=comp_id, category=category, only_present=True, judge=judge)
+    return await list_contestants(comp_id=comp_id, category=category, only_present=True, round_number=round_number, judge=judge)
+
+
+@router.get("/{comp_id}/rounds")
+async def get_judge_competition_rounds(
+    comp_id: str,
+    judge: dict = Depends(get_current_judge)
+):
+    """
+    Judges inspect the multi-round sequence and active round for an assigned competition.
+    """
+    await verify_judge_assignment(judge["email"], comp_id)
+    return await CompetitionRoundService.get_rounds(comp_id)
+
+
+@router.get("/{comp_id}/rounds/{round_number}/leaderboard")
+async def get_judge_round_leaderboard(
+    comp_id: str,
+    round_number: int,
+    category: Optional[str] = Query(None),
+    judge: dict = Depends(get_current_judge)
+):
+    """
+    Judges view the independent leaderboard for a specific competition round (1st, 2nd, 3rd rankings).
+    """
+    await verify_judge_assignment(judge["email"], comp_id)
+    return await CompetitionRoundService.get_round_leaderboard(comp_id, round_number=round_number, category=category)
 
 
 # ══════════════════════════════════════════════
@@ -758,29 +813,41 @@ async def submit_score(submission_id: str, req: ScoreReq, judge: dict = Depends(
         raise HTTPException(status_code=400, detail="You have declared COI for this contestant. Cannot score.")
 
     # ══════════════════════════════════════════════
-    # STRICT SINGLE-SCORE ENFORCEMENT
-    # Once a participant has been scored by this judge, they CANNOT be scored again!
+    # STRICT SINGLE-SCORE ENFORCEMENT PER ROUND
+    # Once a participant has been scored by this judge for this round, they CANNOT be scored again in the same round!
+    # If the participant advances to subsequent rounds, they can be scored in each subsequent round.
     # ══════════════════════════════════════════════
+    target_round = req.round_number or int(comp.get("current_round") or 1)
     participant_email = (submission.get("user_email") or "").strip()
-    score_query = {
-        "competition_id": comp_id,
-        "judge_email": judge["email"],
-        "$or": [
-            {"submission_id": str(submission_id)},
-            {"submission_id": sub_id}
-        ]
-    }
+
+    sub_matches: List[Dict[str, Any]] = [
+        {"submission_id": str(submission_id)},
+        {"submission_id": sub_id}
+    ]
     if participant_email:
-        score_query["$or"].extend([
+        sub_matches.extend([
             {"participant_id": participant_email},
             {"user_email": participant_email}
         ])
+
+    score_query: Dict[str, Any] = {
+        "competition_id": comp_id,
+        "judge_email": judge["email"]
+    }
+    if target_round == 1:
+        score_query["$and"] = [
+            {"$or": [{"round_number": 1}, {"round_number": {"$exists": False}}, {"round_number": None}]},
+            {"$or": sub_matches}
+        ]
+    else:
+        score_query["round_number"] = target_round
+        score_query["$or"] = sub_matches
 
     existing_score = await judge_score_collection.find_one(score_query)
     if existing_score:
         raise HTTPException(
             status_code=400,
-            detail="You have already submitted an official score for this participant in this competition. Each participant can only be scored once."
+            detail=f"You have already submitted an official score for this participant in Round {target_round} of this competition. Each participant can only be scored once per round."
         )
 
     # Validate scores against criteria
@@ -801,6 +868,7 @@ async def submit_score(submission_id: str, req: ScoreReq, judge: dict = Depends(
     doc = {
         "submission_id": str(submission_id),
         "competition_id": comp_id,
+        "round_number": target_round,
         "participant_id": participant_email,
         "user_email": participant_email,
         "judge_email": judge["email"],
@@ -814,7 +882,7 @@ async def submit_score(submission_id: str, req: ScoreReq, judge: dict = Depends(
     }
 
     await judge_score_collection.update_one(
-        {"submission_id": str(submission_id), "judge_email": judge["email"]},
+        {"submission_id": str(submission_id), "judge_email": judge["email"], "round_number": target_round},
         {"$set": doc},
         upsert=True
     )
@@ -847,6 +915,151 @@ async def submit_score(submission_id: str, req: ScoreReq, judge: dict = Depends(
         "is_locked": True,
         "participant_id": participant_email
     }
+
+
+@router.post("/{comp_id}/scores")
+async def submit_competition_score(
+    comp_id: str,
+    req: ScoreReq,
+    judge: dict = Depends(get_current_judge)
+):
+    """
+    Submits score directly for a competition contestant (by participant_id / registration_id / email / submission_id).
+    Enforces single score per judge per round.
+    Ideal for offline stage performances and multi-round evaluations.
+    """
+    pid = (req.participant_id or "").strip()
+    if not pid:
+        raise HTTPException(status_code=400, detail="participant_id is required.")
+
+    comp = await CompetitionRoundService.get_competition_or_404(comp_id)
+    c_str = str(comp["_id"])
+    c_matches = CompetitionRoundService._get_comp_matches(c_str, comp)
+
+    await verify_judge_assignment(judge["email"], c_str)
+
+    if not comp.get("judge_scoring_enabled", False):
+        raise HTTPException(status_code=400, detail="Judge scoring is disabled for this competition.")
+    if comp.get("judging_status", "OPEN") == "CLOSED":
+        raise HTTPException(status_code=400, detail="Judging phase is closed for this competition.")
+
+    sub_conditions: List[Dict[str, Any]] = [{"user_email": pid}, {"_id": pid}]
+    if ObjectId.is_valid(pid):
+        sub_conditions.append({"_id": ObjectId(pid)})
+    submission = await competition_submission_collection.find_one({
+        "competition_id": {"$in": c_matches},
+        "$or": sub_conditions
+    })
+
+    participant_email = ""
+    sub_id_str = ""
+    if submission:
+        participant_email = (submission.get("user_email") or "").strip()
+        sub_id_str = str(submission["_id"])
+    else:
+        reg_conditions: List[Dict[str, Any]] = [{"user_email": pid}, {"email": pid}, {"_id": pid}]
+        if ObjectId.is_valid(pid):
+            reg_conditions.append({"_id": ObjectId(pid)})
+        reg = await competition_registration_collection.find_one({
+            "competition_id": {"$in": c_matches},
+            "$or": reg_conditions
+        })
+        if not reg:
+            reg = await registration_collection.find_one({
+                "$or": [{"activity_id": {"$in": c_matches}}, {"competition_id": {"$in": c_matches}}],
+                "$or": [{"user_email": pid}, {"email": pid}]
+            })
+        if not reg:
+            raise HTTPException(status_code=404, detail="Contestant not found in this competition.")
+        participant_email = (reg.get("user_email") or reg.get("email") or pid).strip()
+        sub_id_str = str(reg["_id"])
+
+    target_round = req.round_number or int(comp.get("current_round") or 1)
+
+    sub_matches: List[Dict[str, Any]] = [{"participant_id": participant_email}, {"user_email": participant_email}]
+    if sub_id_str:
+        sub_matches.append({"submission_id": sub_id_str})
+        if ObjectId.is_valid(sub_id_str):
+            sub_matches.append({"submission_id": ObjectId(sub_id_str)})
+
+    score_query: Dict[str, Any] = {
+        "competition_id": {"$in": c_matches},
+        "judge_email": judge["email"]
+    }
+    if target_round == 1:
+        score_query["$and"] = [
+            {"$or": [{"round_number": 1}, {"round_number": {"$exists": False}}, {"round_number": None}]},
+            {"$or": sub_matches}
+        ]
+    else:
+        score_query["round_number"] = target_round
+        score_query["$or"] = sub_matches
+
+    existing_score = await judge_score_collection.find_one(score_query)
+    if existing_score:
+        raise HTTPException(
+            status_code=400,
+            detail=f"You have already submitted an official score for this participant in Round {target_round} of this competition. Each participant can only be scored once per round."
+        )
+
+    criteria = comp.get("judging_criteria", [])
+    if not criteria:
+        criteria = [{"name": k, "max_score": 100.0, "weight": 1.0} for k in req.scores.keys()] or [{"name": "Overall", "max_score": 100.0, "weight": 1.0}]
+    valid_names = {c["name"]: c.get("max_score", 100.0) for c in criteria}
+
+    total_score = 0.0
+    for crit_name, score_val in req.scores.items():
+        if crit_name not in valid_names:
+            raise HTTPException(status_code=400, detail=f"Unknown criterion: {crit_name}")
+        if score_val < 0 or score_val > valid_names[crit_name]:
+            raise HTTPException(status_code=400, detail=f"Score {score_val} for {crit_name} out of bounds (0-{valid_names[crit_name]}).")
+        weight = next((c.get("weight", 1.0) for c in criteria if c["name"] == crit_name), 1.0)
+        total_score += (score_val * weight)
+
+    doc = {
+        "submission_id": sub_id_str,
+        "competition_id": c_str,
+        "round_number": target_round,
+        "participant_id": participant_email,
+        "user_email": participant_email,
+        "judge_email": judge["email"],
+        "scores": req.scores,
+        "total_score": total_score,
+        "comments": req.comments or req.feedback,
+        "feedback": req.feedback or req.comments,
+        "scored_at": datetime.now(timezone.utc),
+        "is_locked": True,
+        "is_final": True,
+        "status": "SUBMITTED"
+    }
+
+    await judge_score_collection.insert_one(doc)
+
+    if submission:
+        await competition_submission_collection.update_one(
+            {"_id": submission["_id"]},
+            {"$addToSet": {"scored_by_judges": judge["email"]}}
+        )
+
+    await ws_manager.broadcast_to_competition(c_str, {
+        "event": "score_submitted",
+        "competition_id": c_str,
+        "submission_id": sub_id_str,
+        "participant_id": participant_email,
+        "judge_email": judge["email"],
+        "total_score": total_score,
+        "round_number": target_round,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
+
+    return {
+        "message": "Official score submitted successfully",
+        "total_score": total_score,
+        "is_locked": True,
+        "participant_id": participant_email,
+        "round_number": target_round
+    }
+
 
 # ══════════════════════════════════════════════
 # 6. JUDGE FEEDBACK FOR CONTESTANTS

@@ -185,6 +185,9 @@ class CompetitionCreateReq(BaseModel):
     submission_format_config: Optional[SubmissionFormatConfig] = None
     dynamic_submission_fields: List[DynamicFieldConfig] = []
     judging_criteria: List[JudgingCriterion] = []
+    rounds: Optional[List[Dict[str, Any]]] = None
+    current_round: Optional[int] = 1
+    total_rounds: Optional[int] = None
 
     @field_validator("image_url", "card_image_url", "banner_url", "banner_image_url", mode="before")
     @classmethod
@@ -235,6 +238,9 @@ class CompetitionUpdateReq(BaseModel):
     submission_format_config: Optional[SubmissionFormatConfig] = None
     dynamic_submission_fields: Optional[List[DynamicFieldConfig]] = None
     judging_criteria: Optional[List[JudgingCriterion]] = None
+    rounds: Optional[List[Dict[str, Any]]] = None
+    current_round: Optional[int] = None
+    total_rounds: Optional[int] = None
 
     @field_validator("image_url", "card_image_url", "banner_url", "banner_image_url", mode="before")
     @classmethod
@@ -272,13 +278,17 @@ class SubmissionStatus(str, Enum):
 
 class ScoreReq(BaseModel):
     scores: Dict[str, float]  # Mapping of criterion name to score
+    participant_id: Optional[str] = Field(None, description="Participant ID, email, registration ID or submission ID")
     comments: Optional[str] = None
+    feedback: Optional[str] = None
+    round_number: Optional[int] = Field(None, description="Round number for which score is given. Defaults to active competition round.")
     
 class VoteReq(BaseModel):
     participant_id: str
     source: str = "WEBSITE"  # WEBSITE or MOBILE_APP
     is_paid_pack: bool = False
     payment_reference: Optional[str] = None
+    round_number: Optional[int] = Field(None, description="Round number for which vote is given. Defaults to active competition round.")
 
 
 # ── Advanced Judging Schemas ──
@@ -286,6 +296,7 @@ class VoteReq(BaseModel):
 class DraftScoreReq(BaseModel):
     scores: Dict[str, float]
     comments: Optional[str] = None
+    round_number: Optional[int] = Field(None, description="Round number for draft score.")
 
 class COISkipReq(BaseModel):
     reason: str = "Conflict of Interest"

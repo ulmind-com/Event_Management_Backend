@@ -307,6 +307,9 @@ class CompetitionStageService:
                 "stage_order": r.get("stage_order", idx + 1),
                 "stage_status": stage_stat,
                 "is_current_performer": is_curr,
+                "current_round": r.get("current_round", 1),
+                "qualified_rounds": r.get("qualified_rounds", [1]),
+                "round_status": r.get("round_status", "QUALIFIED"),
                 "has_submission": bool(sub),
                 "submission_id": str(sub["_id"]) if sub else None,
                 "entry_title": r.get("entry_title") or sub.get("title") or f"Entry - {name}",
@@ -320,12 +323,14 @@ class CompetitionStageService:
         present_list = [p for p in participants_list if p["is_present"]]
         present_count = len(present_list)
         absent_count = len(participants_list) - present_count
+        curr_round = int(comp.get("current_round") or 1)
 
         return {
             "competition_id": c_str,
             "competition_title": comp.get("title", "Competition"),
             "is_offline": bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE"),
             "venue": comp.get("venue"),
+            "current_round": curr_round,
             "stage_status": live_stage.get("stage_status", "IDLE"),
             "has_active_performer": bool(curr_performer),
             "current_performer": curr_performer,
@@ -552,6 +557,7 @@ class CompetitionStageService:
             "message": f"{user_name} is now performing on stage.",
             "competition_id": c_str,
             "stage_status": "LIVE",
+            "has_performer": True,
             "current_performer": new_performer,
             "previous_performer": prev_performer
         }
@@ -590,15 +596,30 @@ class CompetitionStageService:
         if current_email:
             query["user_email"] = {"$ne": current_email}
 
-        # Offline competition / Attendance integration:
-        # If competition is offline or attendance has been taken, strictly advance only PRESENT participants from the final list!
+        # Multi-Round & Offline Attendance filtering:
+        curr_round = int(comp.get("current_round") or 1)
+        and_clauses: List[Dict[str, Any]] = []
+
+        if curr_round > 1:
+            and_clauses.append({"$or": [
+                {"qualified_rounds": curr_round},
+                {"current_round": curr_round},
+                {"highest_round": {"$gte": curr_round}}
+            ]})
+
         is_offline = bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE")
         present_count = await competition_registration_collection.count_documents({
             "competition_id": {"$in": c_matches},
             "$or": [{"is_present": True}, {"attendance_status": "PRESENT"}]
         })
         if is_offline or present_count > 0:
-            query["$or"] = [{"is_present": True}, {"attendance_status": "PRESENT"}]
+            and_clauses.append({"$or": [{"is_present": True}, {"attendance_status": "PRESENT"}]})
+
+        if and_clauses:
+            if len(and_clauses) == 1:
+                query.update(and_clauses[0])
+            else:
+                query["$and"] = and_clauses
 
         next_reg = await competition_registration_collection.find_one(
             query,

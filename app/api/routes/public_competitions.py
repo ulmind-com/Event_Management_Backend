@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Any
 from bson import ObjectId
 from app.core.database import judge_feedback_collection, competition_collection, leaderboard_result_collection
 from app.services.competition_stage_service import CompetitionStageService
+from app.services.competition_round_service import CompetitionRoundService
 
 router = APIRouter()
 
@@ -338,7 +339,9 @@ async def submit_audience_vote(comp_id: str, req: VoteReq, user: dict = Depends(
             detail="Participants of this competition are not eligible to vote. Audience voting is restricted to audience members and fans."
         )
 
-    # ── Rule 3: Prevent duplicate voting (1 vote per user per contestant) ──
+    target_round = getattr(req, "round_number", None) or comp.get("current_round") or 1
+
+    # ── Rule 3: Prevent duplicate voting (1 vote per user per contestant per round) ──
     canonical_pid = target_email or req_participant_id
     sub_id_str = str(submission["_id"]) if submission else None
 
@@ -350,13 +353,19 @@ async def submit_audience_vote(comp_id: str, req: VoteReq, user: dict = Depends(
         dup_filters.append({"participant_id": sub_id_str})
         dup_filters.append({"submission_id": sub_id_str})
 
-    existing_vote = await audience_vote_collection.find_one({
+    dup_query = {
         "competition_id": {"$in": comp_id_match},
         "$or": dup_filters,
         "voter_email": user["email"]
-    })
+    }
+    if target_round == 1:
+        dup_query["$and"] = [{"$or": [{"round_number": 1}, {"round_number": {"$exists": False}}, {"round_number": None}]}]
+    else:
+        dup_query["round_number"] = target_round
+
+    existing_vote = await audience_vote_collection.find_one(dup_query)
     if existing_vote:
-        raise HTTPException(status_code=400, detail="You have already voted for this contestant.")
+        raise HTTPException(status_code=400, detail="You have already voted for this contestant in this round.")
         
     from app.core.database import website_settings_collection
     v_settings = await website_settings_collection.find_one({"_id": "voting_settings"}) or {}
@@ -378,18 +387,56 @@ async def submit_audience_vote(comp_id: str, req: VoteReq, user: dict = Depends(
         "source": getattr(req, "source", "WEBSITE"),
         "is_paid_pack": getattr(req, "is_paid_pack", False),
         "voting_power": voting_power,
+        "round_number": target_round,
         "created_at": datetime.now(timezone.utc)
     }
     await audience_vote_collection.insert_one(vote_doc)
     
     from app.core.websocket import ws_manager
-    await ws_manager.broadcast_to_competition(comp_id_str, {"type": "LEADERBOARD_UPDATED"})
+    await ws_manager.broadcast_to_competition(comp_id_str, {"type": "LEADERBOARD_UPDATED", "round_number": target_round})
     
-    return {"message": "Vote submitted successfully"}
+    return {"message": "Vote submitted successfully", "round_number": target_round}
+
+@router.get("/competitions/{comp_id}/rounds")
+async def get_public_competition_rounds(comp_id: str):
+    """
+    Public API: Returns all configured rounds and their statuses for a competition.
+    Shows the round progression (e.g. Round 1 / Prelims -> Round 2 / Semi-Finals -> Round 3 / Finals).
+    """
+    return await CompetitionRoundService.get_rounds(comp_id)
+
+@router.get("/competitions/{comp_id}/rounds/{round_number}/leaderboard")
+async def get_public_round_leaderboard(
+    comp_id: str,
+    round_number: int,
+    category: Optional[str] = Query(None)
+):
+    """
+    Public API: Returns the independent official or provisional leaderboard for a specific round (1st, 2nd, 3rd place).
+    """
+    return await CompetitionRoundService.get_round_leaderboard(comp_id, round_number=round_number, category=category)
+
+@router.get("/competitions/{comp_id}/rounds/{round_number}/contestants")
+async def get_public_round_contestants(
+    comp_id: str,
+    round_number: int,
+    category: Optional[str] = Query(None)
+):
+    """
+    Public API: Returns the list of qualified contestants for a specific round.
+    """
+    return await CompetitionRoundService.get_round_contestants(comp_id, round_number=round_number, category=category)
 
 @router.get("/competitions/{comp_id}/leaderboard")
-async def provisional_leaderboard(comp_id: str, category: Optional[str] = Query(None)):
-    """Returns the real-time provisional leaderboard calculated by the ranking service, supporting category filtering and grouping."""
+async def provisional_leaderboard(
+    comp_id: str,
+    category: Optional[str] = Query(None),
+    round_number: Optional[int] = Query(None)
+):
+    """Returns the real-time provisional leaderboard calculated by the ranking service, supporting round and category filtering."""
+    if round_number is not None:
+        return await CompetitionRoundService.get_round_leaderboard(comp_id, round_number=round_number, category=category)
+
     from app.services.ranking_service import RankingService
     from app.core.database import (
         judge_score_collection,
@@ -406,6 +453,11 @@ async def provisional_leaderboard(comp_id: str, category: Optional[str] = Query(
         comp = await competition_collection.find_one({"_id": comp_id})
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
+
+    # If rounds are configured and current_round > 1, default to round-specific calculation
+    if comp.get("rounds") and len(comp.get("rounds", [])) > 1:
+        curr_r = int(comp.get("current_round") or 1)
+        return await CompetitionRoundService.get_round_leaderboard(comp_id, round_number=curr_r, category=category)
 
     # If officially published snapshot exists, return it
     if comp.get("result_status") == "PUBLISHED" or comp.get("results_published"):

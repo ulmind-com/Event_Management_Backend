@@ -41,6 +41,8 @@ from app.services.competition_submission_config import (
     enrich_competition_submission_config,
 )
 from app.services.competition_stage_service import CompetitionStageService
+from app.services.competition_round_service import CompetitionRoundService
+from app.schemas.round import RoundsConfigureReq, RoundUpdateReq, AdvanceContestantsReq
 from app.services.share_service import ShareService
 from datetime import datetime, timezone
 
@@ -2280,4 +2282,112 @@ async def update_stage_order(
         comp_id=comp_id,
         orders=req.orders
     )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Multi-Round Competition Management Endpoints
+# ═════════════════════════════════════════════════════════════════════════════
+
+@router.get("/{comp_id}/rounds")
+async def get_competition_rounds(
+    comp_id: str,
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Admin API: Returns all rounds configured for a competition, with active status and qualified contestant counts.
+    """
+    return await CompetitionRoundService.get_rounds(comp_id)
+
+
+@router.post("/{comp_id}/rounds")
+async def configure_competition_rounds(
+    comp_id: str,
+    req: RoundsConfigureReq,
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Admin API: Configures or updates the round hierarchy for a competition.
+    Example: Round 1 (100 contestants, advancing_count=10) -> Round 2 (10 finalists).
+    """
+    rounds_data = [r.dict() if hasattr(r, "dict") else dict(r) for r in req.rounds]
+    return await CompetitionRoundService.configure_rounds(
+        comp_id=comp_id,
+        rounds_data=rounds_data,
+        admin_email=admin.get("email", "admin@upgradetalentsindia.in")
+    )
+
+
+@router.post("/{comp_id}/rounds/{round_number}/set-active")
+async def set_active_competition_round(
+    comp_id: str,
+    round_number: int,
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Admin API: Sets the specified round as currently ACTIVE.
+    Automatically resets stage queue and broadcasts live updates.
+    """
+    return await CompetitionRoundService.set_active_round(
+        comp_id=comp_id,
+        round_number=round_number,
+        admin_email=admin.get("email", "admin@upgradetalentsindia.in")
+    )
+
+
+@router.post("/{comp_id}/rounds/{round_number}/advance")
+async def advance_round_contestants(
+    comp_id: str,
+    round_number: int,
+    req: AdvanceContestantsReq,
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Admin API: Advances top N contestants (or explicitly specified contestant IDs) from round_number to next_round_number.
+    Remaining participants are marked as ELIMINATED.
+    """
+    return await CompetitionRoundService.advance_contestants(
+        comp_id=comp_id,
+        round_number=round_number,
+        advancing_count=req.advancing_count,
+        contestant_ids=req.contestant_ids,
+        next_round_number=req.next_round_number,
+        admin_email=admin.get("email", "admin@upgradetalentsindia.in"),
+        notes=req.notes
+    )
+
+
+@router.get("/{comp_id}/rounds/{round_number}/leaderboard")
+async def get_round_leaderboard(
+    comp_id: str,
+    round_number: int,
+    category: Optional[str] = Query(None),
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Admin API: Returns the independent round leaderboard showing 1st, 2nd, 3rd rankings for round_number.
+    Includes score breakdowns, votes, and advancement zone indicators.
+    """
+    return await CompetitionRoundService.get_round_leaderboard(
+        comp_id=comp_id,
+        round_number=round_number,
+        category=category
+    )
+
+
+@router.get("/{comp_id}/rounds/{round_number}/contestants")
+async def get_round_contestants(
+    comp_id: str,
+    round_number: int,
+    category: Optional[str] = Query(None),
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Admin API: Returns all contestants qualified in round_number, with their evaluation status and stage readiness.
+    """
+    return await CompetitionRoundService.get_round_contestants(
+        comp_id=comp_id,
+        round_number=round_number,
+        category=category
+    )
+
 

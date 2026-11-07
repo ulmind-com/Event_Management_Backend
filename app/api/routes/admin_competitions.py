@@ -13,6 +13,7 @@ from app.core.database import (
     audience_vote_collection,
     leaderboard_result_collection,
     user_collection,
+    registration_collection,
 )
 from app.schemas.competition import (
     CompetitionCreateReq,
@@ -21,6 +22,14 @@ from app.schemas.competition import (
     StageOrderUpdateReq,
     parse_age_limit,
 )
+from app.schemas.attendance import (
+    AttendanceStatus,
+    AttendanceUpdateReq,
+    BulkAttendanceUpdateReq,
+    ParticipantAttendanceItem,
+    CompetitionAttendanceDashboardResponse,
+)
+from app.core.websocket import ws_manager
 from app.services.cloudinary_srv import upload_image
 from app.services.audit import log_admin_action
 from app.services.competition_lifecycle import (
@@ -1293,6 +1302,7 @@ async def list_competition_participants(
     payment_status: Optional[str] = None,
     payment_method: Optional[str] = None,
     category: Optional[str] = None,
+    attendance_status: Optional[str] = Query(None, description="Filter by attendance: 'PRESENT' or 'ABSENT'"),
     search: Optional[str] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
@@ -1300,7 +1310,7 @@ async def list_competition_participants(
 ):
     """
     Super Admin inspects all registered participants for a competition,
-    including registration details, payment verification (Cash vs Online), and file/link submissions.
+    including registration details, payment verification (Cash vs Online), file/link submissions, and attendance status.
     """
     comp = None
     if ObjectId.is_valid(comp_id):
@@ -1327,15 +1337,30 @@ async def list_competition_participants(
     if category and category.strip() and category.upper() != "ALL":
         query["category"] = category.strip()
 
+    if attendance_status and attendance_status.strip() and attendance_status.upper() != "ALL":
+        astat = attendance_status.strip().upper()
+        if astat == "PRESENT":
+            query["$or"] = [{"is_present": True}, {"attendance_status": "PRESENT"}]
+        elif astat == "ABSENT":
+            query["$or"] = [{"is_present": False}, {"is_present": {"$exists": False}}, {"attendance_status": "ABSENT"}]
+
     if payment_method and payment_method != "ALL":
         pm = payment_method.upper()
         if pm == "CASH":
-            query["$or"] = [{"payment_method": "CASH"}, {"cash_payment": True}]
+            cash_q = [{"payment_method": "CASH"}, {"cash_payment": True}]
+            if "$or" in query:
+                query["$and"] = [{"$or": query.pop("$or")}, {"$or": cash_q}]
+            else:
+                query["$or"] = cash_q
         elif pm == "ONLINE":
             query["cash_payment"] = {"$ne": True}
             query["payment_method"] = {"$nin": ["CASH", "OFFLINE"]}
         elif pm == "FREE":
-            query["$or"] = [{"fee": 0.0}, {"fee": 0}, {"payment_status": "NOT_REQUIRED"}]
+            free_q = [{"fee": 0.0}, {"fee": 0}, {"payment_status": "NOT_REQUIRED"}]
+            if "$or" in query:
+                query["$and"] = [{"$or": query.pop("$or")}, {"$or": free_q}]
+            else:
+                query["$or"] = free_q
 
     if search:
         s_reg = {"$regex": re.escape(search), "$options": "i"}
@@ -1532,16 +1557,27 @@ async def list_competition_participants(
             "submission": sub,
             "stage_status": reg_stage_status,
             "is_current_performer": is_on_stage,
-            "stage_order": r.get("stage_order", 0)
+            "stage_order": r.get("stage_order", 0),
+            "is_present": bool(r.get("is_present", False) or r.get("attendance_status") == "PRESENT"),
+            "attendance_status": r.get("attendance_status", "PRESENT" if r.get("is_present") else "ABSENT"),
+            "attended_at": r.get("attended_at"),
+            "attended_by": r.get("attended_by"),
         })
 
     all_comp_categories = [c.get("name") for c in comp.get("categories", []) if isinstance(c, dict) and c.get("name")]
     if not all_comp_categories and comp.get("category"):
         all_comp_categories = [comp.get("category")]
 
+    present_total = sum(1 for r in all_regs if r.get("is_present") or r.get("attendance_status") == "PRESENT")
+    absent_total = max(0, len(all_regs) - present_total)
+
     return {
         "competition_id": str(comp_id),
         "competition_title": comp.get("title", "Competition"),
+        "is_offline": bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE"),
+        "venue": comp.get("venue"),
+        "present_count": present_total,
+        "absent_count": absent_total,
         "category": category,
         "categories": all_comp_categories,
         "total": total,
@@ -1786,6 +1822,366 @@ async def verify_competition_participant_govt_id(
         "verified_badge": True,
         "verification_status": "VERIFIED",
         "verified_at": now.isoformat()
+    }
+
+
+# ══════════════════════════════════════════════
+# OFFLINE EVENT & COMPETITION ATTENDANCE MANAGEMENT (Admin)
+# ══════════════════════════════════════════════
+
+@router.get("/{comp_id}/attendance", response_model=CompetitionAttendanceDashboardResponse)
+async def get_competition_attendance(comp_id: str, admin: dict = Depends(get_current_admin)):
+    """
+    Returns the complete attendance roster for an offline competition.
+    Shows registered participants with their presence tick status,
+    total registered, present count, absent count, and the final present lineup.
+    """
+    comp = None
+    if ObjectId.is_valid(comp_id):
+        comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp:
+        comp = await competition_collection.find_one({"$or": [{"_id": str(comp_id)}, {"id": str(comp_id)}]})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    comp_match = [str(comp_id)]
+    if ObjectId.is_valid(comp_id):
+        comp_match.append(ObjectId(comp_id))
+    if comp.get("_id"):
+        comp_match.append(comp["_id"])
+        comp_match.append(str(comp["_id"]))
+    comp_match = list({str(x): x for x in comp_match}.values())
+
+    # Fetch all registrations
+    regs = await competition_registration_collection.find(
+        {"competition_id": {"$in": comp_match}}
+    ).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=2000)
+
+    if not regs:
+        regs = await registration_collection.find({
+            "$or": [
+                {"activity_id": {"$in": comp_match}},
+                {"competition_id": {"$in": comp_match}}
+            ]
+        }).sort([("created_at", 1)]).to_list(length=2000)
+
+    emails = list({(r.get("user_email") or r.get("email") or "").strip().lower() for r in regs if (r.get("user_email") or r.get("email"))})
+    user_map = {}
+    if emails:
+        users = await user_collection.find({"email": {"$in": emails}}).to_list(length=len(emails) * 2)
+        user_map = {(u.get("email") or "").strip().lower(): u for u in users}
+
+    all_items: List[ParticipantAttendanceItem] = []
+    final_present: List[ParticipantAttendanceItem] = []
+
+    for idx, r in enumerate(regs):
+        r_id = str(r["_id"])
+        em = (r.get("user_email") or r.get("email") or "").strip().lower()
+        usr = user_map.get(em, {})
+
+        name = (
+            r.get("user_name")
+            or usr.get("full_name")
+            or usr.get("name")
+            or r.get("participant_name")
+            or (em.split("@")[0].title() if em else f"Participant #{idx+1}")
+        )
+        phone = usr.get("phone_number") or usr.get("phone") or r.get("user_phone") or ""
+        photo = usr.get("profile_photo") or usr.get("avatar") or r.get("profile_photo") or ""
+        reg_ref = r.get("registration_reference") or f"CRG-{r_id[:8]}"
+
+        is_p = bool(r.get("is_present", False) or r.get("attendance_status") == "PRESENT")
+        att_stat = r.get("attendance_status", "PRESENT" if is_p else "ABSENT")
+
+        is_user_verified = bool(
+            usr.get("is_verified")
+            or usr.get("is_id_verified")
+            or usr.get("is_govt_id_verified")
+            or usr.get("verified_badge")
+            or usr.get("verified_tick")
+            or usr.get("kyc_status") == "VERIFIED"
+        )
+
+        item = ParticipantAttendanceItem(
+            registration_id=r_id,
+            registration_reference=reg_ref,
+            user_email=em,
+            user_name=name,
+            full_name=name,
+            user_phone=phone,
+            profile_photo=photo,
+            category=r.get("category") or comp.get("category") or "General",
+            stage_order=r.get("stage_order", idx + 1),
+            stage_status=r.get("stage_status", "NOT_STARTED"),
+            is_current_performer=bool(r.get("is_current_performer")),
+            is_present=is_p,
+            attendance_status=att_stat,
+            attended_at=r.get("attended_at"),
+            attended_by=r.get("attended_by"),
+            is_verified=is_user_verified,
+            submission_id=str(r.get("submission_id")) if r.get("submission_id") else None,
+            registered_at=r.get("registered_at") or r.get("created_at")
+        )
+        all_items.append(item)
+        if is_p:
+            final_present.append(item)
+
+    present_count = len(final_present)
+    absent_count = len(all_items) - present_count
+
+    return CompetitionAttendanceDashboardResponse(
+        competition_id=str(comp_id),
+        competition_title=comp.get("title", "Competition"),
+        is_offline=bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE"),
+        venue=comp.get("venue"),
+        total_registered=len(all_items),
+        present_count=present_count,
+        absent_count=absent_count,
+        final_present_list=final_present,
+        all_participants=all_items
+    )
+
+
+@router.patch("/{comp_id}/participants/{reg_id}/attendance")
+async def update_participant_attendance(
+    comp_id: str,
+    reg_id: str,
+    req: AttendanceUpdateReq,
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Admin toggles participant attendance (tick/untick) on competition day.
+    Marks participant as PRESENT (tick) or ABSENT (untick).
+    Synchronizes real-time across admin, judges, and stage queue via WebSocket.
+    """
+    comp = None
+    if ObjectId.is_valid(comp_id):
+        comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp:
+        comp = await competition_collection.find_one({"$or": [{"_id": str(comp_id)}, {"id": str(comp_id)}]})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    comp_match = [str(comp_id)]
+    if ObjectId.is_valid(comp_id):
+        comp_match.append(ObjectId(comp_id))
+    if comp.get("_id"):
+        comp_match.append(comp["_id"])
+        comp_match.append(str(comp["_id"]))
+    comp_match = list({str(x): x for x in comp_match}.values())
+
+    clean_id = str(reg_id).strip()
+    reg_query: Dict[str, Any] = {
+        "competition_id": {"$in": comp_match},
+        "$or": [
+            {"registration_reference": clean_id},
+            {"user_email": clean_id.lower()},
+            {"user_id": clean_id}
+        ]
+    }
+    if ObjectId.is_valid(clean_id):
+        reg_query["$or"].insert(0, {"_id": ObjectId(clean_id)})
+    else:
+        reg_query["$or"].insert(0, {"_id": clean_id})
+
+    reg = await competition_registration_collection.find_one(reg_query)
+    is_legacy = False
+    if not reg:
+        legacy_query = {
+            "$or": [
+                {"activity_id": {"$in": comp_match}},
+                {"competition_id": {"$in": comp_match}}
+            ],
+            "$or": reg_query["$or"]
+        }
+        reg = await registration_collection.find_one(legacy_query)
+        is_legacy = True
+
+    if not reg:
+        raise HTTPException(status_code=404, detail="Participant registration not found.")
+
+    is_present = bool(req.is_present)
+    stat = req.attendance_status or ("PRESENT" if is_present else "ABSENT")
+    now = datetime.now(timezone.utc)
+    admin_email = admin.get("email", "admin@upgradetalentsindia.in")
+
+    update_fields = {
+        "is_present": is_present,
+        "attendance_status": stat,
+        "updated_at": now
+    }
+    if is_present:
+        update_fields["attended_at"] = now
+        update_fields["attended_by"] = admin_email
+    else:
+        update_fields["attended_at"] = None
+        update_fields["attended_by"] = None
+
+    if req.notes:
+        update_fields["attendance_notes"] = req.notes
+
+    if not is_legacy:
+        await competition_registration_collection.update_one(
+            {"_id": reg["_id"]},
+            {"$set": update_fields}
+        )
+    else:
+        await registration_collection.update_one(
+            {"_id": reg["_id"]},
+            {"$set": update_fields}
+        )
+
+    # Compute updated counts for this competition
+    all_regs = await competition_registration_collection.find({"competition_id": {"$in": comp_match}}).to_list(length=2000)
+    if not all_regs:
+        all_regs = await registration_collection.find({
+            "$or": [
+                {"activity_id": {"$in": comp_match}},
+                {"competition_id": {"$in": comp_match}}
+            ]
+        }).to_list(length=2000)
+
+    present_count = sum(1 for r in all_regs if r.get("is_present") or r.get("attendance_status") == "PRESENT")
+    absent_count = max(0, len(all_regs) - present_count)
+
+    # Broadcast WebSocket update so judges, admins, and stage update simultaneously
+    await ws_manager.broadcast_to_competition(str(comp_id), {
+        "event": "participant_attendance_updated",
+        "competition_id": str(comp_id),
+        "registration_id": str(reg["_id"]),
+        "user_email": reg.get("user_email") or reg.get("email"),
+        "is_present": is_present,
+        "attendance_status": stat,
+        "present_count": present_count,
+        "absent_count": absent_count,
+        "timestamp": now.isoformat()
+    })
+
+    # Audit log
+    await log_admin_action(
+        admin_email,
+        "mark_attendance" if is_present else "unmark_attendance",
+        "competition_registration",
+        str(reg["_id"]),
+        metadata={"competition_id": str(comp_id), "status": stat, "is_present": is_present}
+    )
+
+    participant_name = reg.get("user_name") or reg.get("participant_name") or (reg.get("user_email") or "").split("@")[0].title()
+    status_msg = "marked PRESENT (tick)" if is_present else "marked ABSENT (untick)"
+
+    return {
+        "success": True,
+        "message": f"Participant {participant_name} {status_msg} successfully.",
+        "registration_id": str(reg["_id"]),
+        "is_present": is_present,
+        "attendance_status": stat,
+        "attended_at": now.isoformat() if is_present else None,
+        "attended_by": admin_email if is_present else None,
+        "present_count": present_count,
+        "absent_count": absent_count
+    }
+
+
+@router.post("/{comp_id}/attendance/bulk")
+async def bulk_update_attendance(
+    comp_id: str,
+    req: BulkAttendanceUpdateReq,
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Bulk marks attendance (tick/untick) for multiple registered participants.
+    """
+    comp = None
+    if ObjectId.is_valid(comp_id):
+        comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp:
+        comp = await competition_collection.find_one({"$or": [{"_id": str(comp_id)}, {"id": str(comp_id)}]})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    comp_match = [str(comp_id)]
+    if ObjectId.is_valid(comp_id):
+        comp_match.append(ObjectId(comp_id))
+    if comp.get("_id"):
+        comp_match.append(comp["_id"])
+        comp_match.append(str(comp["_id"]))
+    comp_match = list({str(x): x for x in comp_match}.values())
+
+    is_present = bool(req.is_present)
+    stat = req.attendance_status or ("PRESENT" if is_present else "ABSENT")
+    now = datetime.now(timezone.utc)
+    admin_email = admin.get("email", "admin@upgradetalentsindia.in")
+
+    target_ids = []
+    for rid in req.registration_ids:
+        s_rid = str(rid).strip()
+        target_ids.append(s_rid)
+        if ObjectId.is_valid(s_rid):
+            target_ids.append(ObjectId(s_rid))
+
+    update_fields = {
+        "is_present": is_present,
+        "attendance_status": stat,
+        "updated_at": now
+    }
+    if is_present:
+        update_fields["attended_at"] = now
+        update_fields["attended_by"] = admin_email
+    else:
+        update_fields["attended_at"] = None
+        update_fields["attended_by"] = None
+
+    res1 = await competition_registration_collection.update_many(
+        {
+            "competition_id": {"$in": comp_match},
+            "$or": [
+                {"_id": {"$in": target_ids}},
+                {"registration_reference": {"$in": [str(x) for x in req.registration_ids]}},
+                {"user_email": {"$in": [str(x).lower() for x in req.registration_ids]}}
+            ]
+        },
+        {"$set": update_fields}
+    )
+
+    res2 = await registration_collection.update_many(
+        {
+            "$or": [
+                {"activity_id": {"$in": comp_match}},
+                {"competition_id": {"$in": comp_match}}
+            ],
+            "$or": [
+                {"_id": {"$in": target_ids}},
+                {"order_reference": {"$in": [str(x) for x in req.registration_ids]}},
+                {"email": {"$in": [str(x).lower() for x in req.registration_ids]}}
+            ]
+        },
+        {"$set": update_fields}
+    )
+
+    total_modified = res1.modified_count + res2.modified_count
+
+    all_regs = await competition_registration_collection.find({"competition_id": {"$in": comp_match}}).to_list(length=2000)
+    present_count = sum(1 for r in all_regs if r.get("is_present") or r.get("attendance_status") == "PRESENT")
+    absent_count = max(0, len(all_regs) - present_count)
+
+    await ws_manager.broadcast_to_competition(str(comp_id), {
+        "event": "bulk_attendance_updated",
+        "competition_id": str(comp_id),
+        "is_present": is_present,
+        "attendance_status": stat,
+        "present_count": present_count,
+        "absent_count": absent_count,
+        "timestamp": now.isoformat()
+    })
+
+    return {
+        "success": True,
+        "message": f"Bulk attendance updated: {total_modified} participants marked {stat}.",
+        "updated_count": total_modified,
+        "is_present": is_present,
+        "attendance_status": stat,
+        "present_count": present_count,
+        "absent_count": absent_count
     }
 
 

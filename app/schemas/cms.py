@@ -74,6 +74,8 @@ class EventCreate(BaseModel):
     is_published: bool = False
     is_visible: bool = True
     registration_enabled: bool = True
+    is_offline: Optional[bool] = True
+    event_mode: Optional[str] = "OFFLINE"
     ticket_enabled: bool = False
     display_order: int = 0
 
@@ -98,6 +100,8 @@ class EventUpdate(BaseModel):
     is_published: Optional[bool] = None
     is_visible: Optional[bool] = None
     registration_enabled: Optional[bool] = None
+    is_offline: Optional[bool] = None
+    event_mode: Optional[str] = None
     ticket_enabled: Optional[bool] = None
     display_order: Optional[int] = None
 

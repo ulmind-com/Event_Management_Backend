@@ -21,6 +21,12 @@ from app.schemas.cms import (
     AppPromotionUpdate, ImportantLinkCreate, ImportantLinkUpdate,
     PublishToggle, VisibilityToggle, ReorderReq, ApprovalToggle,
 )
+from app.schemas.attendance import (
+    AttendanceStatus,
+    AttendanceUpdateReq,
+    BulkAttendanceUpdateReq,
+    EventAttendanceDashboardResponse,
+)
 from app.services.audit import log_admin_action
 from app.services.ticket import TicketService
 from app.services.share_service import ShareService
@@ -1365,3 +1371,306 @@ async def approve_admin_cash_payment(
         }
 
     raise HTTPException(status_code=404, detail="Registration or booking not found")
+
+
+# ════════════════════════════════════════════════════════════
+# OFFLINE EVENT ATTENDANCE & PARTICIPANT PRESENCE MANAGEMENT
+# ════════════════════════════════════════════════════════════
+
+@router.get("/events/{event_id}/attendance", tags=["admin-attendance"], response_model=EventAttendanceDashboardResponse)
+async def get_event_attendance_dashboard(event_id: str, admin=Depends(get_current_admin)):
+    """
+    Returns the complete attendance roster for an offline event.
+    Displays all registered attendees with presence tick status,
+    total registered, present count, absent count, and final present list.
+    """
+    clean_eid = str(event_id).strip()
+    ev = None
+    if ObjectId.is_valid(clean_eid):
+        ev = await event_collection.find_one({"_id": ObjectId(clean_eid), "is_deleted": {"$ne": True}})
+    if not ev:
+        ev = await event_collection.find_one({"$or": [{"_id": clean_eid}, {"id": clean_eid}], "is_deleted": {"$ne": True}})
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    ev_match = [clean_eid]
+    if ObjectId.is_valid(clean_eid):
+        ev_match.append(ObjectId(clean_eid))
+
+    # Fetch all bookings for this event
+    bookings = await booking_collection.find({"event_id": {"$in": ev_match}}).sort("booked_at", -1).to_list(length=3000)
+
+    # Also fetch direct registrations
+    direct_regs = await registration_collection.find({
+        "activity_id": {"$in": ev_match},
+        "activity_type": "event"
+    }).sort("created_at", -1).to_list(length=1000)
+
+    emails = list({
+        (b.get("user_email") or b.get("email") or "").strip().lower()
+        for b in (bookings + direct_regs)
+        if (b.get("user_email") or b.get("email"))
+    })
+    user_map = {}
+    if emails:
+        usrs = await user_collection.find({"email": {"$in": emails}}).to_list(length=len(emails) * 2)
+        user_map = {(u.get("email") or "").strip().lower(): u for u in usrs}
+
+    all_attendees: List[Dict[str, Any]] = []
+    final_present: List[Dict[str, Any]] = []
+    seen_refs = set()
+
+    for b in bookings:
+        b_id = str(b["_id"])
+        ref = b.get("booking_reference") or f"BKG-{b_id[:8]}"
+        if ref in seen_refs:
+            continue
+        seen_refs.add(ref)
+
+        em = (b.get("user_email") or "").strip().lower()
+        usr = user_map.get(em, {})
+        name = usr.get("full_name") or usr.get("name") or b.get("user_name") or (em.split("@")[0].title() if em else "Attendee")
+        phone = usr.get("phone_number") or usr.get("phone") or b.get("user_phone") or ""
+
+        is_p = bool(b.get("is_present", False) or b.get("attendance_status") == "PRESENT")
+        stat = b.get("attendance_status", "PRESENT" if is_p else "ABSENT")
+
+        item = {
+            "booking_id": b_id,
+            "registration_id": b_id,
+            "booking_reference": ref,
+            "event_id": clean_eid,
+            "event_title": ev.get("title", "Event"),
+            "user_email": em,
+            "user_name": name,
+            "user_phone": phone,
+            "ticket_type": b.get("ticket_type") or b.get("category") or "General",
+            "quantity": int(b.get("quantity", 1)),
+            "payment_status": b.get("payment_status", "PAID"),
+            "payment_method": b.get("payment_method", "ONLINE"),
+            "is_present": is_p,
+            "attendance_status": stat,
+            "attended_at": b.get("attended_at"),
+            "attended_by": b.get("attended_by"),
+            "booked_at": b.get("booked_at") or b.get("created_at")
+        }
+        all_attendees.append(item)
+        if is_p:
+            final_present.append(item)
+
+    for dr in direct_regs:
+        dr_id = str(dr["_id"])
+        ref = dr.get("order_reference") or f"REG-{dr_id[:8]}"
+        if ref in seen_refs:
+            continue
+        seen_refs.add(ref)
+
+        em = (dr.get("email") or dr.get("participant_email") or "").strip().lower()
+        usr = user_map.get(em, {})
+        name = dr.get("participant_name") or usr.get("full_name") or usr.get("name") or (em.split("@")[0].title() if em else "Participant")
+        phone = usr.get("phone_number") or usr.get("phone") or ""
+
+        is_p = bool(dr.get("is_present", False) or dr.get("attendance_status") == "PRESENT")
+        stat = dr.get("attendance_status", "PRESENT" if is_p else "ABSENT")
+
+        item = {
+            "booking_id": dr_id,
+            "registration_id": dr_id,
+            "booking_reference": ref,
+            "event_id": clean_eid,
+            "event_title": ev.get("title", "Event"),
+            "user_email": em,
+            "user_name": name,
+            "user_phone": phone,
+            "ticket_type": dr.get("category") or "Event Registration",
+            "quantity": 1,
+            "payment_status": dr.get("payment_status", "PAID"),
+            "payment_method": dr.get("payment_method", "ONLINE"),
+            "is_present": is_p,
+            "attendance_status": stat,
+            "attended_at": dr.get("attended_at"),
+            "attended_by": dr.get("attended_by"),
+            "booked_at": dr.get("created_at")
+        }
+        all_attendees.append(item)
+        if is_p:
+            final_present.append(item)
+
+    present_count = len(final_present)
+    absent_count = len(all_attendees) - present_count
+
+    return EventAttendanceDashboardResponse(
+        event_id=clean_eid,
+        event_title=ev.get("title", "Event"),
+        venue=ev.get("venue"),
+        total_registered=len(all_attendees),
+        present_count=present_count,
+        absent_count=absent_count,
+        final_present_list=final_present,
+        all_attendees=all_attendees
+    )
+
+
+@router.patch("/events/{event_id}/attendance/{booking_id}", tags=["admin-attendance"])
+@router.patch("/bookings/{booking_id}/attendance", tags=["admin-attendance"])
+async def update_event_attendance(
+    booking_id: str,
+    req: AttendanceUpdateReq,
+    event_id: Optional[str] = None,
+    admin=Depends(get_current_admin)
+):
+    """
+    Admin toggles presence tick for an event attendee on event day.
+    Marks attendee as PRESENT (tick) or ABSENT (untick).
+    """
+    clean_bid = str(booking_id).strip()
+    is_present = bool(req.is_present)
+    stat = req.attendance_status or ("PRESENT" if is_present else "ABSENT")
+    now = datetime.now(timezone.utc)
+    admin_email = admin.get("email", "admin@upgradetalentsindia.in")
+
+    update_fields = {
+        "is_present": is_present,
+        "attendance_status": stat,
+        "updated_at": now
+    }
+    if is_present:
+        update_fields["attended_at"] = now
+        update_fields["attended_by"] = admin_email
+    else:
+        update_fields["attended_at"] = None
+        update_fields["attended_by"] = None
+
+    if req.notes:
+        update_fields["attendance_notes"] = req.notes
+
+    # 1. Look in booking_collection
+    b_query = [{"booking_reference": clean_bid}, {"user_email": clean_bid.lower()}]
+    if ObjectId.is_valid(clean_bid):
+        b_query.insert(0, {"_id": ObjectId(clean_bid)})
+    else:
+        b_query.insert(0, {"_id": clean_bid})
+
+    b = await booking_collection.find_one({"$or": b_query})
+    matched_type = "booking"
+
+    if b:
+        await booking_collection.update_one({"_id": b["_id"]}, {"$set": update_fields})
+        # Sync with issued tickets
+        await issued_ticket_collection.update_many(
+            {"booking_id": str(b["_id"])},
+            {"$set": {
+                "is_checked_in": is_present,
+                "check_in_time": now if is_present else None
+            }}
+        )
+        target_doc = b
+    else:
+        # 2. Look in registration_collection
+        reg = await registration_collection.find_one({
+            "$or": [
+                {"_id": ObjectId(clean_bid)} if ObjectId.is_valid(clean_bid) else {"_id": clean_bid},
+                {"order_reference": clean_bid},
+                {"email": clean_bid.lower()}
+            ]
+        })
+        if not reg:
+            raise HTTPException(status_code=404, detail="Attendee booking or registration not found.")
+        await registration_collection.update_one({"_id": reg["_id"]}, {"$set": update_fields})
+        target_doc = reg
+        matched_type = "registration"
+
+    # Audit log
+    await log_admin_action(
+        admin_email,
+        "mark_attendance" if is_present else "unmark_attendance",
+        "event_booking",
+        str(target_doc["_id"]),
+        metadata={"is_present": is_present, "status": stat}
+    )
+
+    p_name = target_doc.get("user_name") or target_doc.get("participant_name") or (target_doc.get("user_email") or target_doc.get("email") or "").split("@")[0].title()
+    status_label = "marked PRESENT (tick)" if is_present else "marked ABSENT (untick)"
+
+    return {
+        "success": True,
+        "message": f"Attendee {p_name} {status_label} successfully.",
+        "booking_id": str(target_doc["_id"]),
+        "is_present": is_present,
+        "attendance_status": stat,
+        "attended_at": now.isoformat() if is_present else None,
+        "attended_by": admin_email if is_present else None
+    }
+
+
+@router.post("/events/{event_id}/attendance/bulk", tags=["admin-attendance"])
+async def bulk_update_event_attendance(
+    event_id: str,
+    req: BulkAttendanceUpdateReq,
+    admin=Depends(get_current_admin)
+):
+    """
+    Bulk marks attendance for multiple event attendees.
+    """
+    clean_eid = str(event_id).strip()
+    is_present = bool(req.is_present)
+    stat = req.attendance_status or ("PRESENT" if is_present else "ABSENT")
+    now = datetime.now(timezone.utc)
+    admin_email = admin.get("email", "admin@upgradetalentsindia.in")
+
+    target_ids = []
+    for rid in req.registration_ids:
+        s_rid = str(rid).strip()
+        target_ids.append(s_rid)
+        if ObjectId.is_valid(s_rid):
+            target_ids.append(ObjectId(s_rid))
+
+    update_fields = {
+        "is_present": is_present,
+        "attendance_status": stat,
+        "updated_at": now
+    }
+    if is_present:
+        update_fields["attended_at"] = now
+        update_fields["attended_by"] = admin_email
+    else:
+        update_fields["attended_at"] = None
+        update_fields["attended_by"] = None
+
+    ev_match = [clean_eid]
+    if ObjectId.is_valid(clean_eid):
+        ev_match.append(ObjectId(clean_eid))
+
+    res1 = await booking_collection.update_many(
+        {
+            "event_id": {"$in": ev_match},
+            "$or": [
+                {"_id": {"$in": target_ids}},
+                {"booking_reference": {"$in": [str(x) for x in req.registration_ids]}},
+                {"user_email": {"$in": [str(x).lower() for x in req.registration_ids]}}
+            ]
+        },
+        {"$set": update_fields}
+    )
+
+    res2 = await registration_collection.update_many(
+        {
+            "activity_id": {"$in": ev_match},
+            "$or": [
+                {"_id": {"$in": target_ids}},
+                {"order_reference": {"$in": [str(x) for x in req.registration_ids]}},
+                {"email": {"$in": [str(x).lower() for x in req.registration_ids]}}
+            ]
+        },
+        {"$set": update_fields}
+    )
+
+    total_modified = res1.modified_count + res2.modified_count
+
+    return {
+        "success": True,
+        "message": f"Bulk attendance updated: {total_modified} attendees marked {stat}.",
+        "updated_count": total_modified,
+        "is_present": is_present,
+        "attendance_status": stat
+    }

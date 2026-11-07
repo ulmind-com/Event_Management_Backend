@@ -283,6 +283,9 @@ class CompetitionStageService:
                 or usr.get("kyc_status") == "VERIFIED"
             )
 
+            is_present_val = bool(r.get("is_present", False) or r.get("attendance_status") == "PRESENT")
+            attendance_stat = r.get("attendance_status", "PRESENT" if is_present_val else "ABSENT")
+
             participants_list.append({
                 "registration_id": r_id,
                 "registration_reference": reg_ref,
@@ -297,6 +300,10 @@ class CompetitionStageService:
                 "verified_badge": is_user_verified,
                 "verified_tick": is_user_verified,
                 "verification_status": "VERIFIED" if is_user_verified else usr.get("verification_status", "NOT_VERIFIED"),
+                "is_present": is_present_val,
+                "attendance_status": attendance_stat,
+                "attended_at": r.get("attended_at"),
+                "attended_by": r.get("attended_by"),
                 "stage_order": r.get("stage_order", idx + 1),
                 "stage_status": stage_stat,
                 "is_current_performer": is_curr,
@@ -310,14 +317,23 @@ class CompetitionStageService:
                 "registered_at": r.get("registered_at")
             })
 
+        present_list = [p for p in participants_list if p["is_present"]]
+        present_count = len(present_list)
+        absent_count = len(participants_list) - present_count
+
         return {
             "competition_id": c_str,
             "competition_title": comp.get("title", "Competition"),
+            "is_offline": bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE"),
+            "venue": comp.get("venue"),
             "stage_status": live_stage.get("stage_status", "IDLE"),
             "has_active_performer": bool(curr_performer),
             "current_performer": curr_performer,
             "previous_performer": prev_performer,
             "total_participants": len(participants_list),
+            "present_count": present_count,
+            "absent_count": absent_count,
+            "final_present_list": present_list,
             "completed_performances": completed_count,
             "completed_count": completed_count,
             "remaining_performances": max(0, len(participants_list) - completed_count),
@@ -460,6 +476,9 @@ class CompetitionStageService:
                 or usr.get("kyc_status") == "VERIFIED"
             )
         )
+        is_perf_present = bool(reg.get("is_present", False) or reg.get("attendance_status") == "PRESENT")
+        perf_attendance_status = reg.get("attendance_status", "PRESENT" if is_perf_present else "ABSENT")
+
         new_performer = {
             "registration_id": reg_id,
             "registration_reference": reg_ref,
@@ -475,6 +494,8 @@ class CompetitionStageService:
             "verified_badge": is_user_verified,
             "verified_tick": is_user_verified,
             "verification_status": "VERIFIED" if is_user_verified else (usr.get("verification_status", "NOT_VERIFIED") if usr else "NOT_VERIFIED"),
+            "is_present": is_perf_present,
+            "attendance_status": perf_attendance_status,
             "submission_id": submission_id,
             "entry_title": reg.get("entry_title") or f"Stage Performance - {user_name}",
             "stage_status": "ON_STAGE",
@@ -569,25 +590,37 @@ class CompetitionStageService:
         if current_email:
             query["user_email"] = {"$ne": current_email}
 
+        # Offline competition / Attendance integration:
+        # If competition is offline or attendance has been taken, strictly advance only PRESENT participants from the final list!
+        is_offline = bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE")
+        present_count = await competition_registration_collection.count_documents({
+            "competition_id": {"$in": c_matches},
+            "$or": [{"is_present": True}, {"attendance_status": "PRESENT"}]
+        })
+        if is_offline or present_count > 0:
+            query["$or"] = [{"is_present": True}, {"attendance_status": "PRESENT"}]
+
         next_reg = await competition_registration_collection.find_one(
             query,
             sort=[("stage_order", 1), ("registered_at", 1)]
         )
 
         if not next_reg:
-            legacy_query = {
+            legacy_query: Dict[str, Any] = {
                 "$or": [
                     {"activity_id": {"$in": c_matches}},
                     {"competition_id": {"$in": c_matches}}
                 ],
                 "stage_status": {"$nin": ["COMPLETED", "ON_STAGE", "SKIPPED"]}
             }
-            if current_email:
-                legacy_query["$and"] = [
-                    {"$or": [{"activity_id": {"$in": c_matches}}, {"competition_id": {"$in": c_matches}}]},
-                    {"user_email": {"$ne": current_email}},
-                    {"email": {"$ne": current_email}}
+            if is_offline or present_count > 0:
+                legacy_query["$or"] = [
+                    {"activity_id": {"$in": c_matches}, "$or": [{"is_present": True}, {"attendance_status": "PRESENT"}]},
+                    {"competition_id": {"$in": c_matches}, "$or": [{"is_present": True}, {"attendance_status": "PRESENT"}]}
                 ]
+            if current_email:
+                legacy_query["user_email"] = {"$ne": current_email}
+                legacy_query["email"] = {"$ne": current_email}
             next_reg = await registration_collection.find_one(
                 legacy_query,
                 sort=[("created_at", 1)]
@@ -941,6 +974,7 @@ class CompetitionStageService:
             if is_on_stage:
                 stage_stat = "ON_STAGE"
 
+            is_p = bool(r.get("is_present", False) or r.get("attendance_status") == "PRESENT")
             lineup.append({
                 "order": r.get("stage_order", idx + 1),
                 "registration_id": str(r["_id"]),
@@ -953,19 +987,27 @@ class CompetitionStageService:
                 "entry_title": r.get("entry_title") or f"Performance - {name}",
                 "stage_status": stage_stat,
                 "is_current_performer": is_on_stage,
+                "is_present": is_p,
+                "attendance_status": r.get("attendance_status", "PRESENT" if is_p else "ABSENT"),
                 "is_verified": is_v,
                 "verified_badge": is_v,
                 "verified_tick": is_v
             })
 
+        present_lineup = [p for p in lineup if p.get("is_present")]
+
         return {
             "competition_id": c_str,
             "competition_title": comp.get("title", "Competition"),
+            "is_offline": bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE"),
+            "venue": comp.get("venue"),
             "stage_status": live_stage.get("stage_status", "IDLE"),
             "has_active_performer": bool(public_curr),
             "current_performer": public_curr,
             "previous_performer": public_prev,
             "total_participants": len(lineup),
+            "present_count": len(present_lineup),
+            "final_present_lineup": present_lineup,
             "completed_count": sum(1 for p in lineup if p.get("stage_status") == "COMPLETED"),
             "lineup": lineup,
             "updated_at": live_stage.get("updated_at")

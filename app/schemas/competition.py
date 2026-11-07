@@ -175,6 +175,9 @@ class CompetitionCreateReq(BaseModel):
     judge_score_weight: float = 0.0
     
     rules: Optional[CompetitionRules] = None
+    venue: Optional[str] = None
+    is_offline: Optional[bool] = False
+    event_mode: Optional[str] = "ONLINE"
     allow_file_upload: Optional[bool] = None
     allow_video_link: Optional[bool] = None
     allow_audio_upload: Optional[bool] = None
@@ -222,6 +225,9 @@ class CompetitionUpdateReq(BaseModel):
     judge_score_weight: Optional[float] = None
     
     rules: Optional[CompetitionRules] = None
+    venue: Optional[str] = None
+    is_offline: Optional[bool] = False
+    event_mode: Optional[str] = "ONLINE"
     allow_file_upload: Optional[bool] = None
     allow_video_link: Optional[bool] = None
     allow_audio_upload: Optional[bool] = None

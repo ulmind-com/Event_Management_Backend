@@ -16,6 +16,128 @@ async def get_public_competition_live_stage(comp_id: str):
     return await CompetitionStageService.get_public_stage_status(comp_id)
 
 
+@router.get("/competitions/{comp_id}/final-participants")
+@router.get("/competitions/{comp_id}/attendance-list")
+async def get_public_final_present_participants(comp_id: str, category: Optional[str] = Query(None)):
+    """
+    Public & User API: Returns the official final lineup of PRESENT participants for an offline competition.
+    Shows the confirmed contestants who are attending the venue and performing on stage.
+    """
+    c_str = str(comp_id).strip()
+    comp = None
+    if ObjectId.is_valid(c_str):
+        comp = await competition_collection.find_one({"_id": ObjectId(c_str)})
+    if not comp:
+        comp = await competition_collection.find_one({"$or": [{"_id": c_str}, {"id": c_str}]})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    comp_matches = [c_str]
+    if ObjectId.is_valid(c_str):
+        comp_matches.append(ObjectId(c_str))
+    if comp.get("_id"):
+        comp_matches.append(comp["_id"])
+        comp_matches.append(str(comp["_id"]))
+    comp_matches = list({str(x): x for x in comp_matches}.values())
+
+    # Fetch registrations
+    all_regs = await competition_registration_collection.find({
+        "competition_id": {"$in": comp_matches}
+    }).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=2000)
+
+    if not all_regs:
+        from app.core.database import registration_collection
+        all_regs = await registration_collection.find({
+            "$or": [
+                {"activity_id": {"$in": comp_matches}},
+                {"competition_id": {"$in": comp_matches}}
+            ]
+        }).sort([("created_at", 1)]).to_list(length=2000)
+
+    # Filter strictly to PRESENT participants
+    present_regs = [
+        r for r in all_regs
+        if r.get("is_present") or r.get("attendance_status") == "PRESENT"
+    ]
+
+    # Category filter if provided
+    if category and category.strip():
+        c_clean = category.strip().lower()
+        present_regs = [
+            r for r in present_regs
+            if (r.get("category") or comp.get("category") or "General").strip().lower() == c_clean
+        ]
+
+    from app.core.database import user_collection
+    emails = list({(r.get("user_email") or r.get("email") or "").strip().lower() for r in present_regs if (r.get("user_email") or r.get("email"))})
+    users_map = {}
+    if emails:
+        usrs = await user_collection.find({"email": {"$in": emails}}).to_list(length=len(emails) * 2)
+        users_map = {(u.get("email") or "").strip().lower(): u for u in usrs}
+
+    live_stage = comp.get("live_stage") or {}
+    curr_performer = live_stage.get("current_performer") or {}
+    curr_email = (curr_performer.get("user_email") or "").strip().lower()
+
+    final_list = []
+    for idx, r in enumerate(present_regs):
+        em = (r.get("user_email") or r.get("email") or "").strip().lower()
+        usr = users_map.get(em, {})
+
+        name = (
+            r.get("user_name")
+            or usr.get("full_name")
+            or usr.get("name")
+            or r.get("participant_name")
+            or (em.split("@")[0].title() if em else f"Participant #{idx+1}")
+        )
+        photo = usr.get("profile_photo") or usr.get("avatar") or r.get("profile_photo") or ""
+        is_v = bool(
+            usr.get("is_verified")
+            or usr.get("is_id_verified")
+            or usr.get("is_govt_id_verified")
+            or usr.get("verified_badge")
+            or usr.get("verified_tick")
+            or usr.get("kyc_status") == "VERIFIED"
+        )
+
+        stage_stat = r.get("stage_status", "NOT_STARTED")
+        is_on_stage = bool(curr_email and em == curr_email)
+        if is_on_stage:
+            stage_stat = "ON_STAGE"
+
+        final_list.append({
+            "registration_id": str(r["_id"]),
+            "registration_reference": r.get("registration_reference") or f"CRG-{str(r['_id'])[:8]}",
+            "participant_name": name,
+            "user_name": name,
+            "user_email": em,
+            "user_photo": photo,
+            "avatar": photo,
+            "category": r.get("category") or comp.get("category") or "General",
+            "stage_order": r.get("stage_order", idx + 1),
+            "stage_status": stage_stat,
+            "is_current_performer": is_on_stage,
+            "is_present": True,
+            "attendance_status": "PRESENT",
+            "is_verified": is_v,
+            "verified_badge": is_v,
+            "verified_tick": is_v
+        })
+
+    return {
+        "competition_id": c_str,
+        "competition_title": comp.get("title", "Competition"),
+        "is_offline": bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE"),
+        "venue": comp.get("venue"),
+        "total_registered": len(all_regs),
+        "present_count": len(final_list),
+        "category": category,
+        "final_participants": final_list,
+        "final_present_list": final_list
+    }
+
+
 @router.get("/competitions/{comp_id}/results")
 async def public_results(comp_id: str, category: Optional[str] = Query(None)):
     """Public API: Returns official leaderboard ONLY if results are published."""

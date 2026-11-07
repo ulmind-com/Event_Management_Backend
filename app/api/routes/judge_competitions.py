@@ -163,6 +163,7 @@ def extract_submission_url(sub: dict) -> str:
 async def list_contestants(
     comp_id: str,
     category: Optional[str] = Query(None),
+    only_present: bool = Query(False, description="Filter strictly to confirmed present participants from final list"),
     judge: dict = Depends(get_current_judge)
 ):
     """
@@ -375,6 +376,12 @@ async def list_contestants(
         s["on_stage"] = is_current
         s["stage_status"] = "ON_STAGE" if is_current else r_info.get("stage_status", "NOT_STARTED")
 
+        # Attendance status integration
+        is_p = bool(r_info.get("is_present", False) or r_info.get("attendance_status") == "PRESENT" or s.get("is_present"))
+        s["is_present"] = is_p
+        s["attendance_status"] = r_info.get("attendance_status", "PRESENT" if is_p else "ABSENT")
+        s["attended_at"] = r_info.get("attended_at")
+
     # Ensure all registered participants for this competition appear in the judge's list
     existing_emails = {(s.get("user_email") or "").strip().lower() for s in subs if s.get("user_email")}
 
@@ -491,6 +498,9 @@ async def list_contestants(
                 "on_stage": is_curr,
                 "stage_status": stage_stat,
                 "stage_order": r.get("stage_order", len(subs) + 1),
+                "is_present": bool(r.get("is_present", False) or r.get("attendance_status") == "PRESENT"),
+                "attendance_status": r.get("attendance_status", "PRESENT" if (r.get("is_present") or r.get("attendance_status") == "PRESENT") else "ABSENT"),
+                "attended_at": r.get("attended_at"),
                 "category": r.get("category") or (comp_doc.get("category") if comp_doc else None) or "General",
             })
 
@@ -498,7 +508,23 @@ async def list_contestants(
         c_clean = category.strip().lower()
         subs = [x for x in subs if (x.get("category") or "").strip().lower() == c_clean]
 
+    if only_present:
+        subs = [x for x in subs if x.get("is_present")]
+
     return subs
+
+
+@router.get("/{comp_id}/final-contestants")
+async def list_final_present_contestants(
+    comp_id: str,
+    category: Optional[str] = Query(None),
+    judge: dict = Depends(get_current_judge)
+):
+    """
+    Returns the final confirmed list of PRESENT participants for judges on event day.
+    This is the official lineup evaluated by judges.
+    """
+    return await list_contestants(comp_id=comp_id, category=category, only_present=True, judge=judge)
 
 
 # ══════════════════════════════════════════════

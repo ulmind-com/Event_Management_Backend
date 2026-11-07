@@ -161,6 +161,13 @@ async def assign_judge(req: JudgeAssignmentReq, bg_tasks: BackgroundTasks, admin
     judge_name = judge.get("full_name") or judge.get("name") or "Judge"
     judge_email = judge.get("email") or clean_email
 
+    # Automatically activate judge scoring and open judging status for this competition
+    if comp and not comp.get("judge_scoring_enabled"):
+        await competition_collection.update_one(
+            {"_id": comp["_id"]},
+            {"$set": {"judge_scoring_enabled": True, "judging_status": comp.get("judging_status") or "OPEN"}}
+        )
+
     # Dispatches official appointment email immediately upon assignment
     bg_tasks.add_task(EmailService.send_judge_invitation, judge_email, judge_name, comp_name)
 

@@ -15,6 +15,7 @@ from app.core.security import (
     get_password_hash,
     verify_password,
 )
+import re
 import random
 import string
 from datetime import datetime, timedelta, timezone
@@ -28,43 +29,53 @@ def generate_otp(length: int = 6) -> str:
 @router.post("/login/step1")
 async def judge_login_step1(req: EmailRequest):
     """Step 1: Check if Judge exists, generate and send OTP."""
-    judge = await user_collection.find_one({"email": req.email, "role": "JUDGE"})
+    clean_email = req.email.strip().lower()
+    judge = await user_collection.find_one({
+        "email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"},
+        "role": "JUDGE"
+    })
     if not judge:
         raise HTTPException(status_code=404, detail="Judge account not found. Please contact administration.")
     
+    canonical_email = judge.get("email") or clean_email
     otp_code = generate_otp()
     expire_at = datetime.now(timezone.utc) + timedelta(minutes=10)
     
     await otp_collection.update_one(
-        {"email": req.email},
+        {"email": canonical_email},
         {"$set": {"otp": otp_code, "expireAt": expire_at, "verified": False}},
         upsert=True
     )
     
-    send_otp_email(req.email, otp_code)
+    send_otp_email(canonical_email, otp_code)
     return {"message": "OTP sent to your email successfully."}
 
 @router.post("/login/step2")
 async def judge_login_step2(req: OTPVerifyRequest):
     """Step 2: Verify OTP and login. Returns has_password flag to prompt password setup."""
-    record = await otp_collection.find_one({"email": req.email})
-    if not record or record.get("otp") != req.otp:
-        raise HTTPException(status_code=400, detail="Invalid OTP")
-    
-    judge = await user_collection.find_one({"email": req.email, "role": "JUDGE"})
+    clean_email = req.email.strip().lower()
+    judge = await user_collection.find_one({
+        "email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"},
+        "role": "JUDGE"
+    })
     if not judge:
         raise HTTPException(status_code=404, detail="Judge account not found. Please contact administration.")
 
+    canonical_email = judge.get("email") or clean_email
+    record = await otp_collection.find_one({"email": canonical_email})
+    if not record or record.get("otp") != req.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
     # Clean up OTP
-    await otp_collection.delete_one({"email": req.email})
+    await otp_collection.delete_one({"email": canonical_email})
     
     has_password = bool(judge.get("password_hash"))
-    access_token = create_access_token(data={"sub": req.email, "type": "user"})
+    access_token = create_access_token(data={"sub": canonical_email, "type": "user"})
     return {
         "message": "Login successful",
         "access_token": access_token,
         "token_type": "bearer",
-        "user_email": req.email,
+        "user_email": canonical_email,
         "role": "JUDGE",
         "has_password": has_password
     }
@@ -95,6 +106,8 @@ async def judge_set_password(
             "$set": {
                 "password_hash": hashed_pwd,
                 "has_password": True,
+                "status": "ACTIVE",
+                "is_active": True,
                 "updated_at": datetime.now(timezone.utc),
             }
         },
@@ -136,6 +149,8 @@ async def judge_change_password(
             "$set": {
                 "password_hash": hashed_pwd,
                 "has_password": True,
+                "status": "ACTIVE",
+                "is_active": True,
                 "updated_at": datetime.now(timezone.utc),
             }
         },
@@ -146,10 +161,15 @@ async def judge_change_password(
 @router.post("/login")
 async def judge_login_password(req: UserLoginReq):
     """Direct login with Email and Password for Judges."""
-    judge = await user_collection.find_one({"email": req.email, "role": "JUDGE"})
+    clean_email = req.email.strip().lower()
+    judge = await user_collection.find_one({
+        "email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"},
+        "role": "JUDGE"
+    })
     if not judge:
         raise HTTPException(status_code=404, detail="Judge account not found. Please contact administration.")
         
+    canonical_email = judge.get("email") or clean_email
     if not judge.get("password_hash"):
         raise HTTPException(
             status_code=400,
@@ -159,12 +179,12 @@ async def judge_login_password(req: UserLoginReq):
     if not verify_password(req.password, judge["password_hash"]):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
         
-    access_token = create_access_token(data={"sub": req.email, "type": "user"})
+    access_token = create_access_token(data={"sub": canonical_email, "type": "user"})
     return {
         "message": "Login successful",
         "access_token": access_token,
         "token_type": "bearer",
-        "user_email": req.email,
+        "user_email": canonical_email,
         "role": "JUDGE",
         "has_password": True,
     }

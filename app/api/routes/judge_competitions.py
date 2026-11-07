@@ -708,7 +708,13 @@ async def submit_score(submission_id: str, req: ScoreReq, judge: dict = Depends(
     if submission.get("status") not in [SubmissionStatus.SUBMITTED.value, SubmissionStatus.APPROVED.value, "Scored"]:
         raise HTTPException(status_code=400, detail="Submission is not in a scorable state.")
 
-    comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    comp = None
+    if ObjectId.is_valid(comp_id):
+        comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp:
+        comp = await competition_collection.find_one({"_id": comp_id})
+    if not comp:
+        comp = await competition_collection.find_one({"id": comp_id})
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
         
@@ -753,7 +759,9 @@ async def submit_score(submission_id: str, req: ScoreReq, judge: dict = Depends(
 
     # Validate scores against criteria
     criteria = comp.get("judging_criteria", [])
-    valid_names = {c["name"]: c["max_score"] for c in criteria}
+    if not criteria:
+        criteria = [{"name": k, "max_score": 100.0, "weight": 1.0} for k in req.scores.keys()] or [{"name": "Overall", "max_score": 100.0, "weight": 1.0}]
+    valid_names = {c["name"]: c.get("max_score", 100.0) for c in criteria}
 
     total_score = 0.0
     for crit_name, score_val in req.scores.items():

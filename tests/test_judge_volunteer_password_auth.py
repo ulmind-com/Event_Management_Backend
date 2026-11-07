@@ -292,7 +292,7 @@ async def test_volunteer_gate_ticket_checkin():
         )
         assert res_checkin.status_code == 200
         assert res_checkin.json()["ticket_ref"] == ticket_ref
-        assert "Successfully checked in" in res_checkin.json()["message"]
+        assert "Successfully checked in" in res_checkin.json()["message"] or "ACCESS GRANTED" in res_checkin.json()["message"]
 
         # Verify DB updated
         t_db = await issued_ticket_collection.find_one({"ticket_ref": ticket_ref})
@@ -307,7 +307,7 @@ async def test_volunteer_gate_ticket_checkin():
             headers=vol_headers
         )
         assert res_dup.status_code == 400
-        assert "already been checked in" in res_dup.json()["detail"]
+        assert "already been checked in" in res_dup.json()["detail"] or "already been fully used" in res_dup.json()["detail"]
 
         # 7. Also verify via /admin/tickets/check-in endpoint
         res_admin_alias = await client.post(

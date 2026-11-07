@@ -63,3 +63,4 @@ class EventAttendanceDashboardResponse(BaseModel):
     absent_count: int
     final_present_list: List[Dict[str, Any]]
     all_attendees: List[Dict[str, Any]]
+

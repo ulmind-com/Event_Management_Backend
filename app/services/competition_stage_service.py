@@ -949,10 +949,15 @@ class CompetitionStageService:
                 "verified_tick": is_v
             }
 
-        # Build serial performance lineup
-        c_matches = [c_str, ObjectId(c_str)] if ObjectId.is_valid(c_str) else [c_str]
+        # Build serial performance lineup: only contestants confirmed after payment (or free/present)
         regs = await competition_registration_collection.find({
-            "competition_id": {"$in": c_matches}
+            "competition_id": {"$in": c_matches},
+            "$or": [
+                {"status": {"$in": ["CONFIRMED", "REGISTERED", "ATTENDED"]}},
+                {"payment_status": {"$in": ["PAID", "NOT_REQUIRED"]}},
+                {"cash_status": "COLLECTED"},
+                {"is_present": True}
+            ]
         }).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=500)
 
         if not regs:

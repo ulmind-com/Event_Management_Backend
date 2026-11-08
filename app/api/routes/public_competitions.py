@@ -475,6 +475,7 @@ async def provisional_leaderboard(
             return {
                 "ranking_mode": snapshot.get("ranking_mode", "FINAL"),
                 "is_published": True,
+                "score_visible_for_public": True,
                 "category": category,
                 "categories": all_cats,
                 "leaderboard": target_lb,
@@ -632,9 +633,11 @@ async def provisional_leaderboard(
             x for x in final_leaderboard if (x.get("category") or "").strip().lower() == c_clean.lower()
         ])
 
+    is_score_pub = bool(comp.get("score_visible_for_public", comp.get("results_published", False)) or comp.get("result_status") == "PUBLISHED")
     return {
         "ranking_mode": final_leaderboard[0]["ranking_mode"] if final_leaderboard else "UNKNOWN",
-        "is_published": False,
+        "is_published": is_score_pub,
+        "score_visible_for_public": is_score_pub,
         "category": category,
         "categories": all_cats,
         "leaderboard": target_lb,

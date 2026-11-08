@@ -258,6 +258,7 @@ async def get_competition_activity(comp_id: str):
     comp["can_register"] = reg_eval["can_register"]
     comp["registration_reason"] = reg_eval["reason"]
     comp = enrich_competition_submission_config(comp)
+    comp["score_visible_for_public"] = bool(comp.get("score_visible_for_public", comp.get("results_published", False)) or comp.get("result_status") == "PUBLISHED")
     ShareService.enrich_competition(comp)
     return comp
 

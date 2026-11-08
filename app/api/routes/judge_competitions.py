@@ -415,6 +415,14 @@ async def list_contestants(
             {"current_round": target_round},
             {"highest_round": {"$gte": target_round}}
         ]
+    else:
+        # Contestant lineup after confirmation by admin after payment
+        reg_find_query["$or"] = [
+            {"status": {"$in": ["CONFIRMED", "REGISTERED", "ATTENDED"]}},
+            {"payment_status": {"$in": ["PAID", "NOT_REQUIRED"]}},
+            {"cash_status": "COLLECTED"},
+            {"is_present": True}
+        ]
 
     all_registered = await competition_registration_collection.find(
         reg_find_query

@@ -508,6 +508,8 @@ class CompetitionRoundService:
             "total_rounds": len(rounds),
             "total_participants": len(leaderboard),
             "total_participants_in_round": len(leaderboard),
+            "is_published": bool(comp.get("score_visible_for_public", comp.get("results_published", False)) or comp.get("result_status") == "PUBLISHED"),
+            "score_visible_for_public": bool(comp.get("score_visible_for_public", comp.get("results_published", False)) or comp.get("result_status") == "PUBLISHED"),
             "rounds": rounds,
             "category": category,
             "categories": all_cats,

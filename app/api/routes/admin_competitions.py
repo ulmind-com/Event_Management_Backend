@@ -830,6 +830,50 @@ async def publish_results(comp_id: str, admin: dict = Depends(get_current_admin)
 
     return {"message": "Results published successfully."}
 
+
+@router.patch("/{comp_id}/toggle-public-scores")
+@router.post("/{comp_id}/toggle-public-scores")
+async def toggle_public_scores(
+    comp_id: str,
+    enabled: Optional[bool] = Query(None),
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Super Admin switch: Score visible for public (ON / OFF).
+    When OFF: Scores remain private to individual contestants; public leaderboard hides scores.
+    When ON: The complete official leaderboard and scores are public for everyone.
+    """
+    try:
+        c_oid = ObjectId(comp_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid competition ID")
+
+    comp = await competition_collection.find_one({"_id": c_oid})
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    current_val = bool(comp.get("score_visible_for_public", comp.get("results_published", False)))
+    new_val = (not current_val) if enabled is None else bool(enabled)
+
+    await competition_collection.update_one(
+        {"_id": c_oid},
+        {
+            "$set": {
+                "score_visible_for_public": new_val,
+                "results_published": new_val,
+                "result_status": "PUBLISHED" if new_val else "PENDING",
+                "scores_visibility_updated_at": datetime.now(timezone.utc).isoformat(),
+                "scores_visibility_updated_by": admin.get("email") or "admin"
+            }
+        }
+    )
+    return {
+        "success": True,
+        "score_visible_for_public": new_val,
+        "results_published": new_val,
+        "message": f"Score visible for public is now {'ON (Public)' if new_val else 'OFF (Private)'}."
+    }
+
 # ══════════════════════════════════════════════
 # LIVE SESSION PIN MANAGEMENT (Admin)
 # ══════════════════════════════════════════════
@@ -1687,6 +1731,55 @@ async def revert_participant_cash(
         "registration_id": reg_id,
         "payment_status": "PENDING",
         "cash_status": "PENDING"
+    }
+
+
+@router.patch("/{comp_id}/participants/{reg_id}/confirm-payment")
+@router.post("/{comp_id}/participants/{reg_id}/confirm-payment")
+async def confirm_participant_payment(
+    comp_id: str,
+    reg_id: str,
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Super Admin confirms participant payment (Online, UPI, or Cash).
+    Marks payment_status as 'PAID' and registration status as 'CONFIRMED'.
+    The contestant is immediately admitted into the official confirmed performance lineup.
+    """
+    try:
+        r_oid = ObjectId(reg_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid registration ID")
+
+    reg = await competition_registration_collection.find_one({"_id": r_oid, "competition_id": str(comp_id)})
+    if not reg:
+        raise HTTPException(status_code=404, detail="Participant registration not found")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    is_cash = bool(reg.get("cash_payment") or reg.get("payment_method") == "CASH")
+    update_fields: Dict[str, Any] = {
+        "payment_status": "PAID",
+        "status": "CONFIRMED",
+        "payment_verified_at": now_iso,
+        "payment_verified_by": admin.get("email") or admin.get("name") or "admin",
+        "updated_at": now_iso
+    }
+    if is_cash:
+        update_fields["cash_status"] = "COLLECTED"
+        update_fields["cash_collected_at"] = now_iso
+        update_fields["cash_collected_by"] = admin.get("email") or "admin"
+
+    await competition_registration_collection.update_one(
+        {"_id": r_oid},
+        {"$set": update_fields}
+    )
+    return {
+        "success": True,
+        "message": "Payment verified and contestant confirmed! Admitted to the official lineup.",
+        "registration_id": reg_id,
+        "status": "CONFIRMED",
+        "payment_status": "PAID",
+        "payment_verified_at": now_iso
     }
 
 

@@ -188,6 +188,9 @@ class CompetitionCreateReq(BaseModel):
     rounds: Optional[List[Dict[str, Any]]] = None
     current_round: Optional[int] = 1
     total_rounds: Optional[int] = None
+    score_visible_for_public: Optional[bool] = None
+    results_published: Optional[bool] = None
+    result_status: Optional[str] = None
 
     @field_validator("image_url", "card_image_url", "banner_url", "banner_image_url", mode="before")
     @classmethod
@@ -241,6 +244,9 @@ class CompetitionUpdateReq(BaseModel):
     rounds: Optional[List[Dict[str, Any]]] = None
     current_round: Optional[int] = None
     total_rounds: Optional[int] = None
+    score_visible_for_public: Optional[bool] = None
+    results_published: Optional[bool] = None
+    result_status: Optional[str] = None
 
     @field_validator("image_url", "card_image_url", "banner_url", "banner_image_url", mode="before")
     @classmethod

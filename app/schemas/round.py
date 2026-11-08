@@ -101,3 +101,4 @@ class RoundAdvancementSummary(BaseModel):
     eliminated_count: int
     advanced_contestants: List[Dict[str, Any]]
     message: str
+

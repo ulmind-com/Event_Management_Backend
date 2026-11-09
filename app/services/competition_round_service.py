@@ -351,16 +351,8 @@ class CompetitionRoundService:
         # 1. Fetch participants qualified for this round
         reg_query: Dict[str, Any] = {"competition_id": {"$in": c_matches}}
         if target_r_num > 1:
-            reg_query["$and"] = [
-                {
-                    "$or": [
-                        {"qualified_rounds": target_r_num},
-                        {"current_round": target_r_num},
-                        {"highest_round": {"$gte": target_r_num}},
-                    ]
-                },
-                {"round_status": {"$ne": "ELIMINATED"}},
-            ]
+            reg_query["qualified_rounds"] = target_r_num
+            reg_query["round_status"] = {"$ne": "ELIMINATED"}
 
         regs = await competition_registration_collection.find(reg_query).to_list(length=3000)
         if not regs and target_r_num == 1:
@@ -780,16 +772,8 @@ class CompetitionRoundService:
 
         reg_query: Dict[str, Any] = {"competition_id": {"$in": c_matches}}
         if target_r > 1:
-            reg_query["$and"] = [
-                {
-                    "$or": [
-                        {"qualified_rounds": target_r},
-                        {"current_round": target_r},
-                        {"highest_round": {"$gte": target_r}},
-                    ]
-                },
-                {"round_status": {"$ne": "ELIMINATED"}},
-            ]
+            reg_query["qualified_rounds"] = target_r
+            reg_query["round_status"] = {"$ne": "ELIMINATED"}
 
         if category and category.strip() and category.upper() != "ALL":
             reg_query["category"] = category.strip()

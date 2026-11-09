@@ -601,11 +601,10 @@ class CompetitionStageService:
         and_clauses: List[Dict[str, Any]] = []
 
         if curr_round > 1:
-            and_clauses.append({"$or": [
-                {"qualified_rounds": curr_round},
-                {"current_round": curr_round},
-                {"highest_round": {"$gte": curr_round}}
-            ]})
+            and_clauses.append({
+                "qualified_rounds": curr_round,
+                "round_status": {"$ne": "ELIMINATED"}
+            })
 
         is_offline = bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE")
         present_count = await competition_registration_collection.count_documents({

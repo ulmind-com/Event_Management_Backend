@@ -359,6 +359,8 @@ async def list_contestants(
         s["submission_url"] = sub_url
         s["media_url"] = sub_url
         s["category"] = r_info.get("category") or s.get("category") or (comp_doc.get("category") if comp_doc else None) or "General"
+        s["qualified_rounds"] = r_info.get("qualified_rounds") or [1]
+        s["round_status"] = r_info.get("round_status", "QUALIFIED")
 
         # Format title and description
         s["title"] = s.get("title") or r_info.get("entry_title") or s.get("submission_title") or "Contestant Entry"
@@ -410,16 +412,8 @@ async def list_contestants(
 
     reg_find_query: Dict[str, Any] = {"competition_id": {"$in": comp_matches}}
     if target_round > 1:
-        reg_find_query["$and"] = [
-            {
-                "$or": [
-                    {"qualified_rounds": target_round},
-                    {"current_round": target_round},
-                    {"highest_round": {"$gte": target_round}},
-                ]
-            },
-            {"round_status": {"$ne": "ELIMINATED"}},
-        ]
+        reg_find_query["qualified_rounds"] = target_round
+        reg_find_query["round_status"] = {"$ne": "ELIMINATED"}
     else:
         # Contestant lineup after confirmation by admin after payment
         reg_find_query["$or"] = [
@@ -442,8 +436,17 @@ async def list_contestants(
         }).sort([("created_at", 1)]).to_list(length=1000)
 
     if target_round > 1:
-        qualified_emails_in_round = list({(r.get("user_email") or r.get("email") or "").strip().lower() for r in all_registered if (r.get("user_email") or r.get("email"))})
-        subs = [s for s in subs if (s.get("user_email") or "").strip().lower() in qualified_emails_in_round]
+        qualified_emails_in_round = set(
+            (r.get("user_email") or r.get("email") or "").strip().lower()
+            for r in all_registered
+            if (r.get("user_email") or r.get("email"))
+        )
+        qualified_ids_in_round = set(str(r["_id"]) for r in all_registered if r.get("_id"))
+        subs = [
+            s for s in subs
+            if (s.get("user_email") or "").strip().lower() in qualified_emails_in_round
+            or str(s.get("registration_id") or "") in qualified_ids_in_round
+        ]
 
     # Batch pre-fetch any registered users not already in user_map
     missing_user_emails = list({
@@ -543,7 +546,26 @@ async def list_contestants(
                 "attendance_status": r.get("attendance_status", "PRESENT" if (r.get("is_present") or r.get("attendance_status") == "PRESENT") else "ABSENT"),
                 "attended_at": r.get("attended_at"),
                 "category": r.get("category") or (comp_doc.get("category") if comp_doc else None) or "General",
+                "qualified_rounds": r.get("qualified_rounds", [1]),
+                "round_status": r.get("round_status", "QUALIFIED"),
             })
+
+    if target_round > 1:
+        qualified_emails_in_round = set(
+            (r.get("user_email") or r.get("email") or "").strip().lower()
+            for r in all_registered
+            if (r.get("user_email") or r.get("email"))
+        )
+        qualified_ids_in_round = set(str(r["_id"]) for r in all_registered if r.get("_id"))
+        subs = [
+            s for s in subs
+            if s.get("round_status") != "ELIMINATED"
+            and (
+                target_round in (s.get("qualified_rounds") or [])
+                or (s.get("user_email") or "").strip().lower() in qualified_emails_in_round
+                or str(s.get("registration_id") or "") in qualified_ids_in_round
+            )
+        ]
 
     if category and category.strip():
         c_clean = category.strip().lower()

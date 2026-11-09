@@ -27,7 +27,7 @@ class ShareService:
         
         base_url = cls.get_frontend_base_url()
         event_url = f"{base_url}/events/{event_id}"
-        direct_booking_url = f"{base_url}/events/{event_id}?action=book_tickets#tickets"
+        direct_booking_url = f"{base_url}/events/{event_id}/book"
         share_url = direct_booking_url
         backend_redirect_url = f"/api/public/share/event/{event_id}"
         

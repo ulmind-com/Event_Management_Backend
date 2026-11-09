@@ -50,6 +50,7 @@ api_router.include_router(admin_referrals.router, prefix="/admin", tags=["admin-
 api_router.include_router(admin_certificates.router, prefix="/admin", tags=["admin-certificates"])
 api_router.include_router(admin_badges.router, prefix="/admin/badges", tags=["admin-badges"])
 api_router.include_router(admin_checkin.router, prefix="/admin/tickets", tags=["admin-checkin"])
+api_router.include_router(admin_checkin.router, prefix="/admin/checkin", tags=["admin-checkin"])
 api_router.include_router(admin_competitions.router, prefix="/admin/advanced-competitions", tags=["admin-advanced-competitions"])
 api_router.include_router(admin_judges.router, prefix="/admin/judges", tags=["admin-judges"])
 api_router.include_router(admin_volunteers.router, prefix="/admin/volunteers", tags=["admin-volunteers"])

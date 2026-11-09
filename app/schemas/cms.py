@@ -62,6 +62,9 @@ class EventCreate(BaseModel):
     title: str
     description: str
     image_url: Optional[str] = None
+    card_image_url: Optional[str] = None
+    banner_url: Optional[str] = None
+    banner_image_url: Optional[str] = None
     date: str
     time: Optional[str] = None
     venue: str
@@ -79,7 +82,7 @@ class EventCreate(BaseModel):
     ticket_enabled: bool = False
     display_order: int = 0
 
-    @field_validator("image_url", mode="before")
+    @field_validator("image_url", "card_image_url", "banner_url", "banner_image_url", mode="before")
     @classmethod
     def validate_image_url(cls, v):
         return check_no_fake_cloudinary(v)
@@ -88,6 +91,9 @@ class EventUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     image_url: Optional[str] = None
+    card_image_url: Optional[str] = None
+    banner_url: Optional[str] = None
+    banner_image_url: Optional[str] = None
     date: Optional[str] = None
     time: Optional[str] = None
     venue: Optional[str] = None
@@ -105,7 +111,7 @@ class EventUpdate(BaseModel):
     ticket_enabled: Optional[bool] = None
     display_order: Optional[int] = None
 
-    @field_validator("image_url", mode="before")
+    @field_validator("image_url", "card_image_url", "banner_url", "banner_image_url", mode="before")
     @classmethod
     def validate_image_url(cls, v):
         return check_no_fake_cloudinary(v)

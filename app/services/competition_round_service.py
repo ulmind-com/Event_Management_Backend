@@ -351,10 +351,15 @@ class CompetitionRoundService:
         # 1. Fetch participants qualified for this round
         reg_query: Dict[str, Any] = {"competition_id": {"$in": c_matches}}
         if target_r_num > 1:
-            reg_query["$or"] = [
-                {"qualified_rounds": target_r_num},
-                {"current_round": target_r_num},
-                {"highest_round": {"$gte": target_r_num}}
+            reg_query["$and"] = [
+                {
+                    "$or": [
+                        {"qualified_rounds": target_r_num},
+                        {"current_round": target_r_num},
+                        {"highest_round": {"$gte": target_r_num}},
+                    ]
+                },
+                {"round_status": {"$ne": "ELIMINATED"}},
             ]
 
         regs = await competition_registration_collection.find(reg_query).to_list(length=3000)
@@ -484,17 +489,34 @@ class CompetitionRoundService:
 
         category_leaderboards = RankingService.calculate_category_leaderboards(leaderboard)
 
-        all_cats = [c.get("name") for c in comp.get("categories", []) if isinstance(c, dict) and c.get("name")]
+        raw_comp_cats = comp.get("categories", [])
+        all_cats: List[str] = []
+        if isinstance(raw_comp_cats, list):
+            for c in raw_comp_cats:
+                name = c.get("name") if isinstance(c, dict) else str(c)
+                if name and str(name).strip() and str(name).strip() not in all_cats:
+                    all_cats.append(str(name).strip())
+
         for k in category_leaderboards.keys():
-            if k not in all_cats:
-                all_cats.append(k)
+            if k and str(k).strip() not in all_cats:
+                all_cats.append(str(k).strip())
+
+        if not all_cats:
+            all_cats = ["Sub-Junior", "Junior", "Senior"]
 
         target_lb = leaderboard
-        if category and category.strip():
+        if category and category.strip() and category.strip().upper() != "ALL":
             c_clean = category.strip().lower()
-            target_lb = category_leaderboards.get(category.strip(), [
-                x for x in leaderboard if (x.get("category") or "").strip().lower() == c_clean
-            ])
+            matched_key = next((k for k in category_leaderboards.keys() if k.strip().lower() == c_clean), None)
+            if matched_key and category_leaderboards.get(matched_key):
+                target_lb = category_leaderboards[matched_key]
+            else:
+                target_lb = [
+                    x for x in leaderboard if (x.get("category") or "").strip().lower() == c_clean
+                ]
+                for c_idx, c_item in enumerate(target_lb):
+                    c_item["rank"] = c_idx + 1
+                    c_item["category_rank"] = c_idx + 1
 
         return {
             "competition_id": c_str,
@@ -758,10 +780,15 @@ class CompetitionRoundService:
 
         reg_query: Dict[str, Any] = {"competition_id": {"$in": c_matches}}
         if target_r > 1:
-            reg_query["$or"] = [
-                {"qualified_rounds": target_r},
-                {"current_round": target_r},
-                {"highest_round": {"$gte": target_r}}
+            reg_query["$and"] = [
+                {
+                    "$or": [
+                        {"qualified_rounds": target_r},
+                        {"current_round": target_r},
+                        {"highest_round": {"$gte": target_r}},
+                    ]
+                },
+                {"round_status": {"$ne": "ELIMINATED"}},
             ]
 
         if category and category.strip() and category.upper() != "ALL":

@@ -410,10 +410,15 @@ async def list_contestants(
 
     reg_find_query: Dict[str, Any] = {"competition_id": {"$in": comp_matches}}
     if target_round > 1:
-        reg_find_query["$or"] = [
-            {"qualified_rounds": target_round},
-            {"current_round": target_round},
-            {"highest_round": {"$gte": target_round}}
+        reg_find_query["$and"] = [
+            {
+                "$or": [
+                    {"qualified_rounds": target_round},
+                    {"current_round": target_round},
+                    {"highest_round": {"$gte": target_round}},
+                ]
+            },
+            {"round_status": {"$ne": "ELIMINATED"}},
         ]
     else:
         # Contestant lineup after confirmation by admin after payment

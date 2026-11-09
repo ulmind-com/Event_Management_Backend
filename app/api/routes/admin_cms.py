@@ -281,7 +281,12 @@ async def update_event(event_id: str, data: EventUpdate, admin=Depends(get_curre
     update = {k: v for k, v in data.model_dump().items() if v is not None}
     update["updated_at"] = datetime.now(timezone.utc)
 
-    existing = await event_collection.find_one({"_id": oid(event_id), "is_deleted": {"$ne": True}})
+    clean_eid = str(event_id).strip()
+    ev_ids = [clean_eid]
+    if ObjectId.is_valid(clean_eid):
+        ev_ids.append(ObjectId(clean_eid))
+
+    existing = await event_collection.find_one({"_id": {"$in": ev_ids}, "is_deleted": {"$ne": True}})
     if not existing:
         raise HTTPException(status_code=404, detail="Event not found")
 
@@ -294,15 +299,15 @@ async def update_event(event_id: str, data: EventUpdate, admin=Depends(get_curre
         if "price" not in update:
             update["price"] = normalized["price"]
 
-    result = await event_collection.update_one({"_id": oid(event_id), "is_deleted": {"$ne": True}}, {"$set": update})
+    result = await event_collection.update_one({"_id": existing["_id"], "is_deleted": {"$ne": True}}, {"$set": update})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Event not found")
-    await log_admin_action(admin["email"], "update", "event", event_id)
-    doc = await event_collection.find_one({"_id": oid(event_id)})
+    await log_admin_action(admin["email"], "update", "event", clean_eid)
+    doc = await event_collection.find_one({"_id": existing["_id"]})
 
     # Keep ticket tiers synced with event categories/price/capacity
     if "categories" in update or "price" in update or "capacity" in update:
-        existing_tiers = await ticket_collection.find({"event_id": event_id}).to_list(length=50)
+        existing_tiers = await ticket_collection.find({"event_id": {"$in": ev_ids}}).to_list(length=100)
         cats = doc.get("categories", [])
         if cats:
             existing_by_name = {t.get("type", "").strip().lower(): t for t in existing_tiers}
@@ -336,7 +341,7 @@ async def update_event(event_id: str, data: EventUpdate, admin=Depends(get_curre
                     )
                 elif doc.get("ticket_enabled", True):
                     new_tier = {
-                        "event_id": event_id,
+                        "event_id": clean_eid,
                         "type": c_name,
                         "category": c_name,
                         "description": c_desc or "",

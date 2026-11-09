@@ -151,19 +151,23 @@ async def get_event_booked_seats(event_id: str):
 async def get_tickets(event_id: Optional[str] = None, skip: int = 0, limit: int = 50):
     query = {"is_visible": {"$ne": False}}
     if event_id:
-        query["event_id"] = event_id
+        clean_eid = str(event_id).strip()
+        ev_matches = [clean_eid]
+        if ObjectId.is_valid(clean_eid):
+            ev_matches.append(ObjectId(clean_eid))
+        query["event_id"] = {"$in": ev_matches}
 
         # Check event configuration
         ev = None
-        if ObjectId.is_valid(event_id):
-            ev = await event_collection.find_one({"_id": ObjectId(event_id), "is_deleted": {"$ne": True}})
+        if ObjectId.is_valid(clean_eid):
+            ev = await event_collection.find_one({"_id": ObjectId(clean_eid), "is_deleted": {"$ne": True}})
         if not ev:
-            ev = await event_collection.find_one({"_id": event_id, "is_deleted": {"$ne": True}})
+            ev = await event_collection.find_one({"_id": clean_eid, "is_deleted": {"$ne": True}})
 
         if ev and ev.get("categories"):
             cats = ev.get("categories", [])
             active_cat_names = {c["name"].strip().lower() for c in cats if c.get("name")}
-            existing_tiers = await ticket_collection.find({"event_id": event_id}).to_list(length=100)
+            existing_tiers = await ticket_collection.find({"event_id": {"$in": ev_matches}}).to_list(length=100)
 
             # Clean up or hide orphaned tiers that no longer exist in cats
             for t in existing_tiers:
@@ -177,17 +181,20 @@ async def get_tickets(event_id: Optional[str] = None, skip: int = 0, limit: int 
                         await ticket_collection.update_one({"_id": t["_id"]}, {"$set": {"is_visible": False}})
 
             # Re-fetch active tiers for this event
-            tickets = await ticket_collection.find({"event_id": event_id, "is_visible": {"$ne": False}}).to_list(length=100)
+            tickets = await ticket_collection.find({"event_id": {"$in": ev_matches}, "is_visible": {"$ne": False}}).to_list(length=100)
 
-            # If any category has no ticket tier yet, provision it
-            existing_names = {(t.get("type") or "").strip().lower() for t in tickets} | {(t.get("category") or "").strip().lower() for t in tickets}
+            # If any category has no ticket tier yet, provision it; if it exists, ensure price & total_quantity are synced
+            existing_by_name = {t.get("type", "").strip().lower(): t for t in tickets}
+            existing_by_cat = {t.get("category", "").strip().lower(): t for t in tickets if t.get("category")}
+
             for idx, c in enumerate(cats):
                 c_name = c["name"].strip()
-                if c_name.lower() not in existing_names:
-                    c_price = float(c.get("price", 0.0))
-                    c_cap = int(c.get("capacity") or ev.get("capacity") or 100)
+                c_price = float(c.get("price", 0.0))
+                c_cap = int(c.get("capacity") or ev.get("capacity") or 100)
+                matched = existing_by_name.get(c_name.lower()) or existing_by_cat.get(c_name.lower())
+                if not matched:
                     tier_doc = {
-                        "event_id": str(event_id),
+                        "event_id": clean_eid,
                         "type": c_name,
                         "category": c_name,
                         "description": c.get("description") or "",
@@ -203,6 +210,29 @@ async def get_tickets(event_id: Optional[str] = None, skip: int = 0, limit: int 
                     res = await ticket_collection.insert_one(tier_doc)
                     tier_doc["_id"] = str(res.inserted_id)
                     tickets.append(tier_doc)
+                else:
+                    # Sync price and capacity if changed
+                    sold = max(0, int(matched.get("total_quantity", c_cap)) - int(matched.get("available", c_cap)))
+                    matched["price"] = c_price
+                    matched["total_quantity"] = c_cap
+                    matched["available"] = max(0, c_cap - sold)
+                    matched["display_order"] = idx
+                    matched["category"] = c_name
+                    matched["type"] = c_name
+                    if c.get("description"):
+                        matched["description"] = c.get("description")
+                    await ticket_collection.update_one(
+                        {"_id": matched["_id"]},
+                        {"$set": {
+                            "price": c_price,
+                            "total_quantity": c_cap,
+                            "available": max(0, c_cap - sold),
+                            "display_order": idx,
+                            "type": c_name,
+                            "category": c_name,
+                            "updated_at": datetime.now(timezone.utc)
+                        }}
+                    )
 
             # Sort strictly according to the categories list order
             cat_order = {c["name"].strip().lower(): idx for idx, c in enumerate(cats) if c.get("name")}

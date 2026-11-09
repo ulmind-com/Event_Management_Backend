@@ -20,7 +20,7 @@ def clean_ids(docs):
 @router.get("/events")
 async def get_events(
     skip: int = 0,
-    limit: int = 10,
+    limit: int = 50,
     search: Optional[str] = None,
     category: Optional[str] = None
 ):
@@ -34,7 +34,7 @@ async def get_events(
             {"category": cat_regex},
             {"categories.name": cat_regex}
         ]
-    events = await event_collection.find(query).sort("display_order", 1).skip(skip).limit(limit).to_list(length=limit)
+    events = await event_collection.find(query).sort([("display_order", 1), ("updated_at", -1), ("created_at", -1)]).skip(skip).limit(limit).to_list(length=limit)
     for ev in events:
         ShareService.enrich_event(ev)
     return clean_ids(events)
@@ -42,7 +42,7 @@ async def get_events(
 @router.get("/events/by-category")
 async def get_events_by_category():
     """Public API: returns all published events grouped by category."""
-    events = await event_collection.find({"is_published": True, "is_deleted": {"$ne": True}}).sort("display_order", 1).to_list(length=200)
+    events = await event_collection.find({"is_published": True, "is_deleted": {"$ne": True}}).sort([("display_order", 1), ("updated_at", -1), ("created_at", -1)]).to_list(length=200)
     by_category = {}
     for ev in events:
         ShareService.enrich_event(ev)

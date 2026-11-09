@@ -230,11 +230,11 @@ def normalize_event_categories(doc: dict) -> dict:
     return doc
 
 @router.get("/events", tags=["admin-events"])
-async def list_events(skip: int = 0, limit: int = 50, search: Optional[str] = None, admin=Depends(get_current_admin)):
+async def list_events(skip: int = 0, limit: int = 200, search: Optional[str] = None, admin=Depends(get_current_admin)):
     q = {"is_deleted": {"$ne": True}}
     if search:
         q["title"] = {"$regex": search, "$options": "i"}
-    docs = await event_collection.find(q).sort("display_order", 1).skip(skip).limit(limit).to_list(length=limit)
+    docs = await event_collection.find(q).sort([("updated_at", -1), ("created_at", -1), ("_id", -1)]).skip(skip).limit(limit).to_list(length=limit)
     for d in docs:
         ShareService.enrich_event(d)
     return clean_list(docs)

@@ -308,28 +308,38 @@ async def update_event(event_id: str, data: EventUpdate, admin=Depends(get_curre
             existing_by_name = {t.get("type", "").strip().lower(): t for t in existing_tiers}
             existing_by_cat = {t.get("category", "").strip().lower(): t for t in existing_tiers if t.get("category")}
 
+            active_cat_names = set()
             for idx, c in enumerate(cats):
                 c_name = c["name"].strip()
+                active_cat_names.add(c_name.lower())
                 c_price = float(c.get("price", 0.0))
                 c_cap = int(c.get("capacity") or doc.get("capacity") or 100)
+                c_desc = c.get("description")
                 matched = existing_by_name.get(c_name.lower()) or existing_by_cat.get(c_name.lower())
                 if matched:
                     sold = max(0, int(matched.get("total_quantity", c_cap)) - int(matched.get("available", c_cap)))
+                    update_dict = {
+                        "price": c_price,
+                        "type": c_name,
+                        "category": c_name,
+                        "total_quantity": c_cap,
+                        "available": max(0, c_cap - sold),
+                        "display_order": idx,
+                        "is_visible": True,
+                        "updated_at": datetime.now(timezone.utc)
+                    }
+                    if c_desc:
+                        update_dict["description"] = c_desc
                     await ticket_collection.update_one(
                         {"_id": matched["_id"]},
-                        {"$set": {
-                            "price": c_price,
-                            "category": c_name,
-                            "total_quantity": c_cap,
-                            "available": max(0, c_cap - sold),
-                            "updated_at": datetime.now(timezone.utc)
-                        }}
+                        {"$set": update_dict}
                     )
                 elif doc.get("ticket_enabled", True):
                     new_tier = {
                         "event_id": event_id,
                         "type": c_name,
                         "category": c_name,
+                        "description": c_desc or "",
                         "price": c_price,
                         "total_quantity": c_cap,
                         "available": c_cap,
@@ -340,6 +350,17 @@ async def update_event(event_id: str, data: EventUpdate, admin=Depends(get_curre
                         "created_at": datetime.now(timezone.utc)
                     }
                     await ticket_collection.insert_one(new_tier)
+
+            # Purge or hide orphaned tiers that no longer exist in new categories
+            for t in existing_tiers:
+                t_type = (t.get("type") or "").strip().lower()
+                t_cat = (t.get("category") or "").strip().lower()
+                if t_type not in active_cat_names and t_cat not in active_cat_names:
+                    sold = max(0, int(t.get("total_quantity", 0)) - int(t.get("available", 0)))
+                    if sold > 0:
+                        await ticket_collection.update_one({"_id": t["_id"]}, {"$set": {"is_visible": False}})
+                    else:
+                        await ticket_collection.delete_one({"_id": t["_id"]})
         elif len(existing_tiers) == 1 and existing_tiers[0].get("type", "").lower() in ["general", "general admission"]:
             tier_update = {}
             if "price" in update:

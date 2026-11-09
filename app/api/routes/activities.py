@@ -93,10 +93,69 @@ async def get_event_by_id(event_id: str):
     return ev
 
 @router.get("/tickets")
-async def get_tickets(event_id: Optional[str] = None, skip: int = 0, limit: int = 20):
-    query = {}
+async def get_tickets(event_id: Optional[str] = None, skip: int = 0, limit: int = 50):
+    query = {"is_visible": {"$ne": False}}
     if event_id:
         query["event_id"] = event_id
+
+        # Check event configuration
+        ev = None
+        if ObjectId.is_valid(event_id):
+            ev = await event_collection.find_one({"_id": ObjectId(event_id), "is_deleted": {"$ne": True}})
+        if not ev:
+            ev = await event_collection.find_one({"_id": event_id, "is_deleted": {"$ne": True}})
+
+        if ev and ev.get("categories"):
+            cats = ev.get("categories", [])
+            active_cat_names = {c["name"].strip().lower() for c in cats if c.get("name")}
+            existing_tiers = await ticket_collection.find({"event_id": event_id}).to_list(length=100)
+
+            # Clean up or hide orphaned tiers that no longer exist in cats
+            for t in existing_tiers:
+                t_type = (t.get("type") or "").strip().lower()
+                t_cat = (t.get("category") or "").strip().lower()
+                if t_type not in active_cat_names and t_cat not in active_cat_names:
+                    sold = max(0, int(t.get("total_quantity", 0)) - int(t.get("available", 0)))
+                    if sold == 0:
+                        await ticket_collection.delete_one({"_id": t["_id"]})
+                    else:
+                        await ticket_collection.update_one({"_id": t["_id"]}, {"$set": {"is_visible": False}})
+
+            # Re-fetch active tiers for this event
+            tickets = await ticket_collection.find({"event_id": event_id, "is_visible": {"$ne": False}}).to_list(length=100)
+
+            # If any category has no ticket tier yet, provision it
+            existing_names = {(t.get("type") or "").strip().lower() for t in tickets} | {(t.get("category") or "").strip().lower() for t in tickets}
+            for idx, c in enumerate(cats):
+                c_name = c["name"].strip()
+                if c_name.lower() not in existing_names:
+                    c_price = float(c.get("price", 0.0))
+                    c_cap = int(c.get("capacity") or ev.get("capacity") or 100)
+                    tier_doc = {
+                        "event_id": str(event_id),
+                        "type": c_name,
+                        "category": c_name,
+                        "description": c.get("description") or "",
+                        "price": c_price,
+                        "total_quantity": c_cap,
+                        "available": c_cap,
+                        "sale_start": None,
+                        "sale_end": None,
+                        "is_visible": True,
+                        "display_order": idx,
+                        "created_at": datetime.now(timezone.utc)
+                    }
+                    res = await ticket_collection.insert_one(tier_doc)
+                    tier_doc["_id"] = str(res.inserted_id)
+                    tickets.append(tier_doc)
+
+            # Sort strictly according to the categories list order
+            cat_order = {c["name"].strip().lower(): idx for idx, c in enumerate(cats) if c.get("name")}
+            tickets.sort(key=lambda t: cat_order.get((t.get("category") or t.get("type", "")).strip().lower(), 99))
+
+            normalized = [TicketService.normalize_ticket_data(t) for t in tickets]
+            return normalized[skip:skip+limit]
+
     tickets = await ticket_collection.find(query).skip(skip).limit(limit).to_list(length=limit)
 
     # Auto-provision a default ticket tier if event exists with ticketing enabled

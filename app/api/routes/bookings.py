@@ -14,10 +14,54 @@ router = APIRouter()
 
 async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, ticket_type: str, user_email: str, quantity: int, names: list, payment_method: str = "ONLINE", payment_status: str = "PENDING", category: Optional[str] = None, seats: Optional[list] = None):
     """Background task to generate digital admission pass once confirmed with multi-person quantity and assigned seats."""
-    if not seats and booking_ref:
+    b_doc = None
+    if booking_ref:
         b_doc = await booking_collection.find_one({"booking_reference": booking_ref})
-        if b_doc:
+    if not b_doc and booking_id and ObjectId.is_valid(booking_id):
+        b_doc = await booking_collection.find_one({"_id": ObjectId(booking_id)})
+
+    if b_doc:
+        if not seats:
             seats = b_doc.get("seats") or []
+        if not names:
+            names = b_doc.get("holder_names") or []
+        if not category:
+            category = b_doc.get("category") or b_doc.get("ticket_type")
+        if not quantity or quantity <= 1:
+            quantity = int(b_doc.get("quantity") or quantity or 1)
+        if not user_email:
+            user_email = b_doc.get("user_email")
+        if payment_method == "ONLINE" and b_doc.get("payment_method"):
+            payment_method = b_doc.get("payment_method")
+        if payment_status == "PENDING" and b_doc.get("payment_status"):
+            payment_status = b_doc.get("payment_status")
+
+    total_amount = b_doc.get("total_amount") if b_doc else None
+    unit_price = b_doc.get("unit_price") if b_doc else None
+    if unit_price is None and total_amount is not None and quantity > 0:
+        unit_price = round(total_amount / quantity, 2)
+
+    ev_doc = None
+    if event_id and ObjectId.is_valid(event_id):
+        ev_doc = await event_collection.find_one({"_id": ObjectId(event_id)})
+
+    cover_img = None
+    ev_title = None
+    ev_date = None
+    ev_time = None
+    ev_venue = None
+    if ev_doc:
+        ev_title = ev_doc.get("title")
+        ev_date = ev_doc.get("date")
+        ev_time = ev_doc.get("time")
+        ev_venue = ev_doc.get("venue")
+        cover_img = (
+            ev_doc.get("card_image_url")
+            or ev_doc.get("image_url")
+            or ev_doc.get("banner_url")
+            or ev_doc.get("banner_image_url")
+            or ev_doc.get("cover_image")
+        )
 
     docs = []
     ticket_ref = f"TKT-{uuid.uuid4().hex[:8].upper()}"
@@ -34,6 +78,12 @@ async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, tic
         "booking_id": booking_id,
         "booking_ref": booking_ref,
         "event_id": event_id,
+        "event_title": ev_title,
+        "event_date": ev_date,
+        "event_time": ev_time,
+        "event_venue": ev_venue,
+        "event_cover": cover_img,
+        "event_image": cover_img,
         "category": cat_val,
         "ticket_type": ticket_type,
         "holder_email": user_email,
@@ -47,6 +97,11 @@ async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, tic
         "check_in_time": None,
         "status": "ACTIVE",
         "qr_token": qr_token,
+        "unit_price": unit_price,
+        "total_amount": total_amount,
+        "total_booking_amount": total_amount,
+        "total_price": total_amount,
+        "price": total_amount if (total_amount is not None and quantity > 1) else (unit_price or total_amount),
         "payment_method": payment_method,
         "payment_status": payment_status,
         "issued_at": datetime.now(timezone.utc)
@@ -512,11 +567,20 @@ async def get_my_tickets(current_user: dict = Depends(get_current_user)):
             try:
                 e = await event_collection.find_one({"_id": ObjectId(t["event_id"])})
                 if e:
-                    t["event_title"] = e.get("title")
-                    t["event_date"] = e.get("date")
-                    t["event_time"] = e.get("time")
-                    t["event_venue"] = e.get("venue")
-                    t["event_cover"] = e.get("cover_image")
+                    t["event_title"] = e.get("title") or t.get("event_title")
+                    t["event_date"] = e.get("date") or t.get("event_date")
+                    t["event_time"] = e.get("time") or t.get("event_time")
+                    t["event_venue"] = e.get("venue") or t.get("event_venue")
+                    cover_img = (
+                        e.get("card_image_url")
+                        or e.get("image_url")
+                        or e.get("banner_url")
+                        or e.get("banner_image_url")
+                        or e.get("cover_image")
+                        or t.get("event_cover")
+                    )
+                    t["event_cover"] = cover_img
+                    t["event_image"] = cover_img
                     t["base_price"] = e.get("base_price")
                     t["categories"] = e.get("categories", [])
                     if not t.get("category"):
@@ -529,11 +593,27 @@ async def get_my_tickets(current_user: dict = Depends(get_current_user)):
             try:
                 b = await booking_collection.find_one({"_id": ObjectId(t["booking_id"])})
                 if b:
-                    t["price"] = b.get("unit_price") or b.get("total_amount")
+                    total_amt = b.get("total_amount")
+                    unit_amt = b.get("unit_price")
+                    if unit_amt is None and total_amt is not None and qty > 0:
+                        unit_amt = round(total_amt / qty, 2)
+                    t["unit_price"] = unit_amt
+                    t["total_amount"] = total_amt
+                    t["total_booking_amount"] = total_amt
+                    t["total_price"] = total_amt
+                    # When booking has multiple tickets (e.g. 5 tickets for ₹12,500), the pass price displays total amount ₹12,500
+                    t["price"] = total_amt if (total_amt is not None and qty > 1) else (unit_amt or total_amt or t.get("price"))
                     t["booking_ref"] = b.get("booking_reference")
-                    t["total_booking_amount"] = b.get("total_amount")
                     t["payment_method"] = b.get("payment_method", t.get("payment_method", "ONLINE"))
                     t["payment_status"] = b.get("payment_status", t.get("payment_status", "PENDING"))
+                    if not t.get("seats") and b.get("seats"):
+                        t["seats"] = b.get("seats")
+                    if not t.get("seat") and t.get("seats"):
+                        t["seat"] = ", ".join(t["seats"])
+                    if (not t.get("holder_names") or t.get("holder_names") == ["Attendee"]) and b.get("holder_names"):
+                        t["holder_names"] = b.get("holder_names")
+                        first_holder = t["holder_names"][0]
+                        t["holder_name"] = first_holder + (f" (+{qty - 1} Guests)" if qty > 1 else "")
             except Exception:
                 pass
     return tickets

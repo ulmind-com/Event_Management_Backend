@@ -97,15 +97,34 @@ async def verify_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanner_
     remaining_count = max(0, quantity - admitted_count)
     is_fully_used = bool(ticket.get("is_checked_in")) or (admitted_count >= quantity)
     
+    event_cover = (
+        event.get("card_image_url")
+        or event.get("image_url")
+        or event.get("banner_url")
+        or event.get("banner_image_url")
+        or event.get("cover_image")
+    ) if event else ticket.get("event_cover")
+
+    seats = ticket.get("seats") or (booking.get("seats") if booking else [])
+    holder_names = ticket.get("holder_names") or (booking.get("holder_names") if booking else [])
+    category = ticket.get("category") or (booking.get("category") if booking else "General")
+    total_amount = (booking.get("total_amount") if booking else None) or ticket.get("total_amount") or ticket.get("total_booking_amount")
+    unit_price = (booking.get("unit_price") if booking else None) or ticket.get("unit_price")
+    if unit_price is None and total_amount is not None and quantity > 0:
+        unit_price = round(total_amount / quantity, 2)
+
     return {
         "is_valid": True,
         "ticket": {
             "ticket_ref": ticket["ticket_ref"],
             "holder_name": ticket.get("holder_name") or (booking.get("user_name") if booking else "Guest"),
-            "holder_names": ticket.get("holder_names") or (booking.get("holder_names") if booking else []),
+            "holder_names": holder_names,
             "holder_email": ticket.get("holder_email") or (booking.get("user_email") if booking else ""),
             "ticket_type": ticket.get("ticket_type", "General Access"),
+            "category": category,
             "quantity": quantity,
+            "seats": seats,
+            "seat": ticket.get("seat") or (", ".join(seats) if seats else None),
             "admitted_count": admitted_count,
             "remaining_count": remaining_count,
             "is_checked_in": is_fully_used,
@@ -114,8 +133,14 @@ async def verify_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanner_
             "check_in_time": ticket.get("check_in_time"),
             "payment_method": ticket.get("payment_method") or (booking.get("payment_method") if booking else "ONLINE"),
             "payment_status": ticket.get("payment_status") or (booking.get("payment_status") if booking else "PENDING"),
+            "total_amount": total_amount,
+            "unit_price": unit_price,
         },
         "event_title": event.get("title") if event else ticket.get("event_title"),
+        "event_date": event.get("date") if event else ticket.get("event_date"),
+        "event_time": event.get("time") if event else ticket.get("event_time"),
+        "event_venue": event.get("venue") if event else ticket.get("event_venue"),
+        "event_cover": event_cover,
         "booking_reference": booking.get("booking_reference") if booking else ticket.get("booking_ref"),
         "booking_status": booking.get("booking_status") if booking else "CONFIRMED"
     }

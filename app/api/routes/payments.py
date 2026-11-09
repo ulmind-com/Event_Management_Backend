@@ -107,10 +107,14 @@ async def verify_razorpay_payment(
         str(b_id),
         booking["booking_reference"],
         booking["event_id"],
-        "PaidTicket",
+        booking.get("ticket_type", "PaidTicket"),
         booking["user_email"],
-        booking["quantity"],
-        []
+        booking.get("quantity", 1),
+        booking.get("holder_names", []),
+        payment_method=booking.get("payment_method", "ONLINE"),
+        payment_status="PAID",
+        category=booking.get("category"),
+        seats=booking.get("seats", [])
     )
 
     # Authoritative trigger: PAYMENT_CONFIRMATION
@@ -291,10 +295,14 @@ async def handle_razorpay_booking_webhook(
                         str(b_id),
                         booking["booking_reference"],
                         booking["event_id"],
-                        "PaidTicket",
+                        booking.get("ticket_type", "PaidTicket"),
                         booking["user_email"],
-                        booking["quantity"],
-                        []
+                        booking.get("quantity", 1),
+                        booking.get("holder_names", []),
+                        payment_method=booking.get("payment_method", "ONLINE"),
+                        payment_status="PAID",
+                        category=booking.get("category"),
+                        seats=booking.get("seats", [])
                     )
                     # Authoritative trigger: PAYMENT_CONFIRMATION via webhook
                     try:
@@ -365,10 +373,14 @@ async def verify_payment_mock(
             str(b_id),
             booking["booking_reference"],
             booking["event_id"],
-            "PaidTicket",
+            booking.get("ticket_type", "PaidTicket"),
             booking["user_email"],
-            booking["quantity"],
-            []
+            booking.get("quantity", 1),
+            booking.get("holder_names", []),
+            payment_method=booking.get("payment_method", "ONLINE"),
+            payment_status="PAID",
+            category=booking.get("category"),
+            seats=booking.get("seats", [])
         )
         return {"message": "Payment verified and booking confirmed"}
     else:

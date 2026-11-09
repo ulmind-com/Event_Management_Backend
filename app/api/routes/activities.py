@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 import re
 from bson import ObjectId
-from app.core.database import event_collection, ticket_collection, competition_collection, course_collection, merchandise_collection
+from app.core.database import event_collection, ticket_collection, competition_collection, course_collection, merchandise_collection, booking_collection, issued_ticket_collection
 from app.services.ticket import TicketService
 from app.services.competition_lifecycle import evaluate_competition_registration_status
 from app.services.competition_submission_config import enrich_competition_submission_config
@@ -91,6 +91,61 @@ async def get_event_by_id(event_id: str):
     ev["_id"] = str(ev["_id"])
     ShareService.enrich_event(ev)
     return ev
+
+@router.get("/events/{event_id}/booked-seats")
+async def get_event_booked_seats(event_id: str):
+    """
+    Returns the real-time set of occupied/booked seats for an event so
+    the BookMyShow-style visual seating arena disables them.
+    """
+    clean_eid = str(event_id).strip()
+    ev_match = [clean_eid]
+    if ObjectId.is_valid(clean_eid):
+        ev_match.append(ObjectId(clean_eid))
+
+    # 1. Fetch confirmed or cash-pending bookings
+    bookings = await booking_collection.find({
+        "event_id": {"$in": ev_match},
+        "booking_status": {"$in": ["CONFIRMED", "PENDING"]}
+    }).to_list(length=1000)
+
+    booked_seats = set()
+    total_qty_sold = 0
+
+    for b in bookings:
+        s_list = b.get("seats") or b.get("selected_seats") or []
+        for s in s_list:
+            booked_seats.add(str(s).strip().upper())
+        total_qty_sold += int(b.get("quantity") or 1)
+
+    # 2. Check issued tickets
+    tix = await issued_ticket_collection.find({"event_id": {"$in": ev_match}}).to_list(length=1000)
+    for t in tix:
+        seat = t.get("seat") or t.get("seat_number")
+        if seat:
+            booked_seats.add(str(seat).strip().upper())
+
+    # 3. Deterministic realistic seeding if older test bookings didn't specify seat codes
+    ev = await event_collection.find_one({"_id": ObjectId(clean_eid)}) if ObjectId.is_valid(clean_eid) else await event_collection.find_one({"_id": clean_eid})
+    reg_count = int(ev.get("registered_count") or 0) if ev else 0
+    target_count = max(len(booked_seats), total_qty_sold, reg_count)
+
+    row_letters = ["A", "B", "C", "D", "E", "F", "G", "H", "J", "K"]
+    r_idx = 0
+    c_idx = 1
+    while len(booked_seats) < target_count and r_idx < len(row_letters):
+        seat_code = f"{row_letters[r_idx]}-{str(c_idx).zfill(2)}"
+        booked_seats.add(seat_code)
+        c_idx += 1
+        if c_idx > 16:
+            c_idx = 1
+            r_idx += 1
+
+    return {
+        "event_id": clean_eid,
+        "booked_seats": sorted(list(booked_seats)),
+        "count": len(booked_seats)
+    }
 
 @router.get("/tickets")
 async def get_tickets(event_id: Optional[str] = None, skip: int = 0, limit: int = 50):

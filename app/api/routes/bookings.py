@@ -12,8 +12,13 @@ import uuid
 
 router = APIRouter()
 
-async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, ticket_type: str, user_email: str, quantity: int, names: list, payment_method: str = "ONLINE", payment_status: str = "PENDING", category: Optional[str] = None):
-    """Background task to generate digital admission pass once confirmed with multi-person quantity."""
+async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, ticket_type: str, user_email: str, quantity: int, names: list, payment_method: str = "ONLINE", payment_status: str = "PENDING", category: Optional[str] = None, seats: Optional[list] = None):
+    """Background task to generate digital admission pass once confirmed with multi-person quantity and assigned seats."""
+    if not seats and booking_ref:
+        b_doc = await booking_collection.find_one({"booking_reference": booking_ref})
+        if b_doc:
+            seats = b_doc.get("seats") or []
+
     docs = []
     ticket_ref = f"TKT-{uuid.uuid4().hex[:8].upper()}"
     qr_token = TicketService.generate_qr_token(ticket_ref, booking_ref)
@@ -21,6 +26,8 @@ async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, tic
     primary_name = holder_names_list[0] if holder_names_list else "Attendee"
     holder_display = primary_name + (f" (+{quantity - 1} Guests)" if quantity > 1 else "")
     cat_val = category or ticket_type or "General"
+    seats_list = [str(s).strip() for s in (seats or []) if s]
+    primary_seat = seats_list[0] if seats_list else None
     
     docs.append({
         "ticket_ref": ticket_ref,
@@ -33,6 +40,8 @@ async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, tic
         "holder_name": holder_display,
         "holder_names": holder_names_list if holder_names_list else [primary_name],
         "quantity": quantity,
+        "seats": seats_list,
+        "seat": primary_seat,
         "admitted_count": 0,
         "is_checked_in": False,
         "check_in_time": None,
@@ -311,6 +320,7 @@ async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, curre
         "user_name": current_user.get("name") or current_user.get("full_name") or "Attendee",
         "user_phone": current_user.get("phone_number") or current_user.get("phone") or "",
         "holder_names": req.holder_names or [],
+        "seats": getattr(req, "seats", None) or [],
         "quantity": total_quantity,
         "unit_price": unit_price,
         "total_amount": total_amount,

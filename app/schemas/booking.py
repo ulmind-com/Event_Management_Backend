@@ -30,6 +30,7 @@ class BookingCreateReq(BaseModel):
     items: Optional[List[BookingCategoryItem]] = None
     categories: Optional[List[str]] = None
     holder_names: Optional[List[str]] = None
+    seats: Optional[List[str]] = None
     payment_method: Optional[str] = "ONLINE"  # "ONLINE" or "CASH"
 
 class BookingResponse(BaseModel):

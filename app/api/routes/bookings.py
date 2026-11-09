@@ -9,6 +9,9 @@ from app.services.ticket import TicketService
 from datetime import datetime, timezone, timedelta
 import re
 import uuid
+import logging
+
+logger = logging.getLogger("eventora.bookings")
 
 router = APIRouter()
 
@@ -131,6 +134,33 @@ async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, tic
             ))
         except Exception as e:
             pass
+
+        # Send Ultra-Premium Ticket Confirmation Email with Real Scannable QR & Event Details
+        try:
+            from app.services.email import EmailService
+            ev_schedule = f"{ev_date} • {ev_time}" if (ev_date and ev_time) else (ev_date or ev_time or "")
+            EmailService.send_ticket_confirmation(
+                email=user_email,
+                name=primary_name,
+                event_title=ev_title or "Official Live Event",
+                ticket_reference=ticket_ref,
+                booking_reference=booking_ref,
+                event_date=ev_schedule,
+                venue=ev_venue,
+                quantity=quantity,
+                category=cat_val,
+                seats=seats_list,
+                holder_names=holder_names_list,
+                total_amount=total_amount,
+                unit_price=unit_price,
+                payment_method=payment_method,
+                payment_status=payment_status,
+                event_cover=cover_img,
+                qr_token=qr_token,
+                event_id=str(event_id) if event_id else None
+            )
+        except Exception as e:
+            logger.error(f"Failed to dispatch ticket confirmation email for {ticket_ref}: {e}", exc_info=True)
 
         # Schedule Event Reminders
         try:
@@ -626,3 +656,81 @@ async def get_ticket_qr(ticket_ref: str, current_user: dict = Depends(get_curren
     
     b64_qr = TicketService.generate_qr_image_base64(ticket["qr_token"])
     return {"qr_image": b64_qr}
+
+@router.post("/tickets/{ticket_ref}/send-email")
+async def send_ticket_email_manual(ticket_ref: str, current_user: dict = Depends(get_current_user)):
+    """Allows attendee to receive or re-send their ultra-pro admission pass & QR code directly to their email inbox."""
+    clean_ref = ticket_ref.strip()
+    ticket = await issued_ticket_collection.find_one({
+        "ticket_ref": clean_ref,
+        "$or": [
+            {"holder_email": current_user["email"]},
+            {"holder_email": current_user["email"].lower()}
+        ]
+    })
+    if not ticket:
+        ticket = await issued_ticket_collection.find_one({"ticket_ref": clean_ref})
+        if not ticket or (ticket.get("holder_email") != current_user["email"] and current_user.get("role") not in ["ADMIN", "SUPERADMIN"]):
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+    event = None
+    if ticket.get("event_id") and ObjectId.is_valid(ticket["event_id"]):
+        event = await event_collection.find_one({"_id": ObjectId(ticket["event_id"])})
+
+    booking = None
+    if ticket.get("booking_id") and ObjectId.is_valid(ticket["booking_id"]):
+        booking = await booking_collection.find_one({"_id": ObjectId(ticket["booking_id"])})
+    elif ticket.get("booking_ref"):
+        booking = await booking_collection.find_one({"booking_reference": ticket["booking_ref"]})
+
+    ev_title = (event.get("title") if event else None) or ticket.get("event_title") or "Official Live Event"
+    ev_date = (event.get("date") if event else None) or ticket.get("event_date")
+    ev_time = (event.get("time") if event else None) or ticket.get("event_time")
+    ev_venue = (event.get("venue") if event else None) or ticket.get("event_venue") or "Official Event Arena"
+    ev_cover = (
+        (event.get("card_image_url") or event.get("image_url") or event.get("banner_url") or event.get("banner_image_url") or event.get("cover_image"))
+        if event else ticket.get("event_cover")
+    )
+    ev_schedule = f"{ev_date} • {ev_time}" if (ev_date and ev_time) else (ev_date or ev_time or "")
+
+    qty = int(ticket.get("quantity") or (booking.get("quantity") if booking else 1) or 1)
+    seats = ticket.get("seats") or (booking.get("seats") if booking else [])
+    holder_names = ticket.get("holder_names") or (booking.get("holder_names") if booking else [])
+    primary_name = holder_names[0] if holder_names else (ticket.get("holder_name") or current_user.get("name") or "Attendee")
+    category = ticket.get("category") or ticket.get("ticket_type") or (booking.get("category") if booking else "General Access")
+    
+    total_amount = (booking.get("total_amount") if booking else None) or ticket.get("total_amount") or ticket.get("total_booking_amount")
+    unit_price = (booking.get("unit_price") if booking else None) or ticket.get("unit_price")
+    if unit_price is None and total_amount is not None and qty > 0:
+        unit_price = round(total_amount / qty, 2)
+    payment_method = ticket.get("payment_method") or (booking.get("payment_method") if booking else "ONLINE")
+    payment_status = ticket.get("payment_status") or (booking.get("payment_status") if booking else "PAID")
+
+    from app.services.email import EmailService
+    sent = EmailService.send_ticket_confirmation(
+        email=current_user["email"],
+        name=primary_name,
+        event_title=ev_title,
+        ticket_reference=ticket["ticket_ref"],
+        booking_reference=ticket.get("booking_ref") or (booking.get("booking_reference") if booking else None),
+        event_date=ev_schedule,
+        venue=ev_venue,
+        quantity=qty,
+        category=category,
+        seats=seats,
+        holder_names=holder_names,
+        total_amount=total_amount,
+        unit_price=unit_price,
+        payment_method=payment_method,
+        payment_status=payment_status,
+        event_cover=ev_cover,
+        qr_token=ticket.get("qr_token"),
+        event_id=str(event["_id"]) if event else ticket.get("event_id")
+    )
+
+    return {
+        "success": True,
+        "message": f"Admission pass and QR code have been dispatched to {current_user['email']}",
+        "email": current_user["email"],
+        "ticket_ref": ticket["ticket_ref"]
+    }

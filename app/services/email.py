@@ -2,6 +2,7 @@ import resend
 from app.core.config import settings
 import logging
 import html as html_lib
+import urllib.parse
 from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -1058,75 +1059,197 @@ class EmailService:
         name: str,
         event_title: str,
         ticket_reference: str,
+        booking_reference: Optional[str] = None,
         event_date: Optional[str] = None,
         venue: Optional[str] = None,
-        quantity: int = 1
+        quantity: int = 1,
+        category: Optional[str] = None,
+        seats: Optional[List[str]] = None,
+        holder_names: Optional[List[str]] = None,
+        total_amount: Optional[float] = None,
+        unit_price: Optional[float] = None,
+        payment_method: Optional[str] = "ONLINE",
+        payment_status: Optional[str] = "PAID",
+        event_cover: Optional[str] = None,
+        qr_token: Optional[str] = None,
+        event_id: Optional[str] = None,
     ) -> bool:
-        """Sends ticket booking confirmation email."""
+        """Sends an ultra-pro, luxury event admission pass with real scannable QR and attendee details."""
         safe_name = _escape(name)
         safe_event = _escape(event_title)
         safe_ref = _escape(ticket_reference)
+        safe_bkg = _escape(booking_reference or "N/A")
         safe_date = _escape(event_date) or "Check event schedule on dashboard"
         safe_venue = _escape(venue) or "Official Event Arena"
+        safe_category = _escape(category or "General Access")
+        safe_method = _escape(payment_method or "ONLINE")
+        safe_status = _escape(payment_status or "PAID")
+        qty = max(1, int(quantity or 1))
+
+        # QR code token
+        qr_token_str = qr_token or ticket_reference
+        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=6&data={urllib.parse.quote(qr_token_str)}"
+
+        # Optional cover image block
+        cover_block = ""
+        if event_cover and str(event_cover).startswith("http"):
+            safe_cover = _escape(event_cover)
+            cover_block = f"""
+            <div style="margin: 0 0 20px 0; border-radius: 14px; overflow: hidden; border: 1px solid #1E293B; box-shadow: 0 10px 25px rgba(0,0,0,0.35);">
+              <img src="{safe_cover}" alt="{safe_event}" width="100%" style="width: 100%; max-height: 220px; object-fit: cover; display: block;" />
+            </div>
+            """
+
+        # Allocated seats row
+        seats_row = ""
+        if seats and len(seats) > 0:
+            seats_str = ", ".join([_escape(s) for s in seats if s])
+            seats_row = f"""
+            <tr>
+              <td style="color: #94A3B8; padding: 6px 0; vertical-align: top;">Allocated Seats:</td>
+              <td style="color: #FBBF24; font-weight: 800; font-family: Consolas, monospace; padding: 6px 0;">
+                <span style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); padding: 3px 8px; border-radius: 6px;">
+                  {seats_str}
+                </span>
+              </td>
+            </tr>
+            """
+
+        # Total amount row
+        price_row = ""
+        if total_amount is not None:
+            unit_sub = f" (₹{unit_price:,.0f} × {qty})" if (unit_price and qty > 1) else ""
+            price_row = f"""
+            <tr>
+              <td style="color: #94A3B8; padding: 6px 0;">Total Paid:</td>
+              <td style="color: #34D399; font-weight: 800; padding: 6px 0;">
+                ₹{total_amount:,.2f}{unit_sub} &bull; <span style="font-size: 11px; color: #A7F3D0; text-transform: uppercase;">{safe_status} ({safe_method})</span>
+              </td>
+            </tr>
+            """
+
+        # Attendee list block
+        attendees_block = ""
+        names_list = [n for n in (holder_names or []) if n]
+        if len(names_list) > 0:
+            items_html = ""
+            for idx, h_name in enumerate(names_list):
+                is_pri = (idx == 0)
+                pri_badge = '<span style="font-size: 9px; font-weight: 800; color: #38BDF8; background: rgba(56, 189, 248, 0.15); padding: 2px 6px; border-radius: 4px; text-transform: uppercase; margin-left: 6px;">Primary</span>' if is_pri else ""
+                items_html += f"""
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                  <td style="padding: 7px 10px; color: #38BDF8; font-weight: 700; width: 28px;">#{idx + 1}</td>
+                  <td style="padding: 7px 10px; color: #FFFFFF; font-weight: 600;">{_escape(h_name)}{pri_badge}</td>
+                </tr>
+                """
+            attendees_block = f"""
+            <div style="margin: 18px 0; background: #0F172A; border: 1px solid #1E293B; border-radius: 12px; padding: 14px 16px;">
+              <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; color: #94A3B8; margin-bottom: 8px;">
+                Registered Attendees ({len(names_list)})
+              </div>
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 13px;">
+                {items_html}
+              </table>
+            </div>
+            """
+
+        admission_badge = f"GROUP ADMISSION ({qty} PERSONS)" if qty > 1 else "SINGLE ADMISSION (1 PERSON)"
+        dashboard_url = "https://www.upgradetalentsindia.in/dashboard?tab=tickets"
 
         content = f"""
-          <h1 style="margin: 0 0 10px 0; font-size: 22px; font-weight: 800; color: #F8FAFC; letter-spacing: -0.4px;">
-            Your Ticket is Confirmed! &#127915;
-          </h1>
-          <p style="margin: 0 0 16px 0; font-size: 15px; color: #CBD5E1; line-height: 1.6;">
-            Hello <strong>{safe_name}</strong>,
-          </p>
-          <p style="margin: 0 0 20px 0; font-size: 14px; color: #94A3B8; line-height: 1.6;">
-            Your admission ticket for <strong>{safe_event}</strong> is confirmed. Your digital QR pass is ready in your account.
-          </p>
+          {cover_block}
 
-          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #172033; border: 1px solid #1E293B; border-radius: 14px; padding: 22px; margin: 20px 0;">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <span style="display: inline-block; padding: 5px 14px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 9999px; font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: #34D399;">
+              {admission_badge}
+            </span>
+            <h1 style="margin: 12px 0 6px 0; font-size: 24px; font-weight: 900; color: #FFFFFF; letter-spacing: -0.5px; text-transform: uppercase;">
+              {safe_event}
+            </h1>
+            <p style="margin: 0; font-size: 13px; color: #94A3B8;">
+              Your official digital admission pass has been confirmed and issued.
+            </p>
+          </div>
+
+          <!-- Luxury Pass Details Table -->
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #0F172A; border: 1px solid #1E293B; border-radius: 16px; padding: 20px; margin: 16px 0;">
             <tr>
               <td>
-                <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #A5B4FC; margin-bottom: 14px;">
-                  Event Admission Details
+                <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.8px; color: #38BDF8; margin-bottom: 12px;">
+                  Pass Verification Details
                 </div>
-                <table role="presentation" border="0" cellpadding="4" cellspacing="0" width="100%" style="font-size: 13px;">
+                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-size: 13px; line-height: 1.5;">
                   <tr>
-                    <td style="color: #64748B; width: 40%;">Event:</td>
-                    <td style="color: #FFFFFF; font-weight: 700;">{safe_event}</td>
+                    <td style="color: #94A3B8; width: 38%; padding: 6px 0;">Attendee / Holder:</td>
+                    <td style="color: #FFFFFF; font-weight: 700; padding: 6px 0;">{safe_name}</td>
                   </tr>
                   <tr>
-                    <td style="color: #64748B;">Date / Time:</td>
-                    <td style="color: #CBD5E1; font-weight: 600;">{safe_date}</td>
+                    <td style="color: #94A3B8; padding: 6px 0;">Access Tier:</td>
+                    <td style="color: #F43F5E; font-weight: 800; padding: 6px 0;">{safe_category}</td>
                   </tr>
                   <tr>
-                    <td style="color: #64748B;">Venue:</td>
-                    <td style="color: #CBD5E1; font-weight: 600;">{safe_venue}</td>
+                    <td style="color: #94A3B8; padding: 6px 0;">Event Date / Time:</td>
+                    <td style="color: #FFFFFF; font-weight: 600; padding: 6px 0;">{safe_date}</td>
                   </tr>
                   <tr>
-                    <td style="color: #64748B;">Quantity:</td>
-                    <td style="color: #FFFFFF; font-weight: 700;">{quantity} Ticket(s)</td>
+                    <td style="color: #94A3B8; padding: 6px 0;">Venue:</td>
+                    <td style="color: #CBD5E1; font-weight: 600; padding: 6px 0;">{safe_venue}</td>
                   </tr>
                   <tr>
-                    <td style="color: #64748B;">Ticket Reference:</td>
-                    <td style="color: #818CF8; font-family: monospace; font-weight: 700;">{safe_ref}</td>
+                    <td style="color: #94A3B8; padding: 6px 0;">Pass Validity:</td>
+                    <td style="color: #38BDF8; font-weight: 800; padding: 6px 0;">Valid for {qty} Person(s)</td>
+                  </tr>
+                  {seats_row}
+                  {price_row}
+                  <tr>
+                    <td style="color: #94A3B8; padding: 6px 0;">Ticket Reference:</td>
+                    <td style="color: #38BDF8; font-family: Consolas, monospace; font-weight: 800; letter-spacing: 1px; padding: 6px 0;">{safe_ref}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #94A3B8; padding: 6px 0;">Booking Reference:</td>
+                    <td style="color: #CBD5E1; font-family: Consolas, monospace; font-weight: 600; padding: 6px 0;">{safe_bkg}</td>
                   </tr>
                 </table>
               </td>
             </tr>
           </table>
 
-          <div style="text-align: center; margin: 28px 0 10px 0;">
-            <a href="https://www.upgradetalentsindia.in/dashboard?tab=tickets" style="display: inline-block; background: linear-gradient(135deg, #6366F1 0%, #A855F7 100%); color: #FFFFFF; text-decoration: none; padding: 14px 32px; border-radius: 9999px; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
-              View My QR Pass &rarr;
+          {attendees_block}
+
+          <!-- Centered Scannable QR Gate Pass Container -->
+          <div style="background: #FFFFFF; border-radius: 18px; padding: 22px 20px; text-align: center; max-width: 290px; margin: 26px auto 10px auto; box-shadow: 0 12px 35px rgba(0, 0, 0, 0.35);">
+            <div style="font-size: 11px; font-weight: 900; color: #0F172A; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 12px;">
+              GATE ENTRY PASS ({qty}P)
+            </div>
+            <img src="{qr_url}" alt="Gate QR Pass {safe_ref}" width="210" height="210" style="display: block; margin: 0 auto; border-radius: 10px;" />
+            <div style="font-family: Consolas, monospace; font-size: 14px; font-weight: 900; color: #0F172A; margin-top: 12px; letter-spacing: 1.2px;">
+              {safe_ref}
+            </div>
+            <div style="font-size: 10.5px; font-weight: 700; color: #64748B; margin-top: 5px; text-transform: uppercase; letter-spacing: 0.8px;">
+              Present at Gate &bull; Instant Group Check-In
+            </div>
+          </div>
+
+          <!-- CTAs -->
+          <div style="text-align: center; margin: 30px 0 10px 0;">
+            <a href="{dashboard_url}" style="display: inline-block; background: linear-gradient(135deg, #10B981 0%, #06B6D4 100%); color: #000000; text-decoration: none; padding: 14px 34px; border-radius: 9999px; font-size: 14px; font-weight: 800; letter-spacing: 0.5px; box-shadow: 0 6px 20px rgba(16, 185, 129, 0.35); text-transform: uppercase;">
+              View &amp; Download Pass &rarr;
             </a>
           </div>
         """
 
         html = _render_base_email(
-            title="Ticket Confirmed",
-            preheader=f"Your ticket for {event_title} is confirmed. Reference: {ticket_reference}",
-            badge_text="ADMISSION CONFIRMED",
-            badge_color="#818CF8",
-            badge_bg="rgba(99, 102, 241, 0.15)",
-            badge_border="rgba(99, 102, 241, 0.35)",
+            title=f"Ticket Confirmed: {event_title}",
+            preheader=f"Your admission pass for {event_title} is confirmed. Ref: {ticket_reference} ({qty} Persons)",
+            badge_text="OFFICIAL ADMISSION PASS",
+            badge_color="#34D399",
+            badge_bg="rgba(16, 185, 129, 0.15)",
+            badge_border="rgba(16, 185, 129, 0.35)",
             content_html=content,
             recipient_email=email
         )
-        return _send_email_payload(to_email=email, subject=f"🎟️ Ticket Confirmed: {event_title}", html=html)
+        return _send_email_payload(
+            to_email=email,
+            subject=f"🎟️ Official Ticket Pass: {event_title} ({safe_ref})",
+            html=html
+        )

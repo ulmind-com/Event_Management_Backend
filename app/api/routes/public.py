@@ -11,7 +11,11 @@ from app.core.database import (
 )
 from app.services.share_service import ShareService
 from app.schemas.share import ShareLinkResponse
-from app.api.routes.admin_cms import DEFAULT_STAGE_MOMENTS_SECTION, DEFAULT_SPOTLIGHT_SECTION
+from app.api.routes.admin_cms import (
+    DEFAULT_STAGE_MOMENTS_SECTION,
+    DEFAULT_SPOTLIGHT_SECTION,
+    DEFAULT_PARTNERS_SECTION,
+)
 
 router = APIRouter()
 
@@ -187,6 +191,8 @@ async def get_homepage():
     stage_moments_section = (settings or {}).get("stage_moments_section")
     # Spotlight Section (Moments in the Spotlight / Promotional Links)
     spotlight_section = (settings or {}).get("spotlight_section")
+    # Partners & Sponsors Section
+    partners_section = (settings or {}).get("partners_section")
 
     return {
         "brand": {
@@ -235,6 +241,7 @@ async def get_homepage():
         },
         "stage_moments_section": stage_moments_section if stage_moments_section and isinstance(stage_moments_section, dict) else DEFAULT_STAGE_MOMENTS_SECTION,
         "spotlight_section": spotlight_section if spotlight_section and isinstance(spotlight_section, dict) else DEFAULT_SPOTLIGHT_SECTION,
+        "partners_section": partners_section if partners_section and isinstance(partners_section, dict) else DEFAULT_PARTNERS_SECTION,
     }
 
 # ── Individual Section Endpoints ──
@@ -249,6 +256,12 @@ async def get_public_spotlight_section():
     settings = await website_settings_collection.find_one({"_type": "settings"})
     spotlight = (settings or {}).get("spotlight_section")
     return spotlight if spotlight and isinstance(spotlight, dict) else DEFAULT_SPOTLIGHT_SECTION
+
+@router.get("/partners-section", tags=["public"])
+async def get_public_partners_section():
+    settings = await website_settings_collection.find_one({"_type": "settings"})
+    partners = (settings or {}).get("partners_section")
+    return partners if partners and isinstance(partners, dict) else DEFAULT_PARTNERS_SECTION
 @router.get("/competitions/upcoming", tags=["public"])
 async def get_upcoming_competitions(skip: int = 0, limit: int = 20, search: Optional[str] = None):
     q = {"is_published": True, "is_deleted": {"$ne": True}}

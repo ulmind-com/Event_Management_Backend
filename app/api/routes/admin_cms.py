@@ -526,6 +526,91 @@ async def upload_spotlight_moment_photo(
         raise HTTPException(status_code=500, detail="Failed to upload spotlight photo to storage.")
     return {"url": url, "image_url": url, "filename": file.filename}
 
+
+# ════════════════════════════════════════
+# PARTNERS & SPONSORS SECTION
+# ════════════════════════════════════════
+DEFAULT_PARTNERS = [
+    {
+        "id": "partner-1",
+        "name": "Red Bull",
+        "logo_url": "https://upload.wikimedia.org/wikipedia/en/thumb/f/f5/RedBullEnergyDrink.svg/640px-RedBullEnergyDrink.svg.png",
+        "website_url": "https://www.redbull.com",
+        "is_active": True,
+    },
+    {
+        "id": "partner-2",
+        "name": "Puma",
+        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ae/Puma-logo-%28text%29.svg/640px-Puma-logo-%28text%29.svg.png",
+        "website_url": "https://puma.com",
+        "is_active": True,
+    },
+    {
+        "id": "partner-3",
+        "name": "Sony Music",
+        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/75/Sony_Music_logo.svg/640px-Sony_Music_logo.svg.png",
+        "website_url": "https://sonymusic.com",
+        "is_active": True,
+    },
+    {
+        "id": "partner-4",
+        "name": "Monster Energy",
+        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d7/Monster_Energy_logo.svg/640px-Monster_Energy_logo.svg.png",
+        "website_url": "https://www.monsterenergy.com",
+        "is_active": True,
+    },
+    {
+        "id": "partner-5",
+        "name": "JBL",
+        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1e/JBL_logo.svg/640px-JBL_logo.svg.png",
+        "website_url": "https://jbl.com",
+        "is_active": True,
+    },
+    {
+        "id": "partner-6",
+        "name": "Spotify",
+        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/19/Spotify_logo_without_text.svg/640px-Spotify_logo_without_text.svg.png",
+        "website_url": "https://spotify.com",
+        "is_active": True,
+    },
+]
+
+DEFAULT_PARTNERS_SECTION = {
+    "label": "Powered by our partners",
+    "title": "Official Partners & Sponsors",
+    "partners": DEFAULT_PARTNERS,
+}
+
+@router.get("/partners-section", tags=["admin-cms"])
+async def get_admin_partners_section(admin=Depends(get_current_admin)):
+    settings = await website_settings_collection.find_one({"_type": "settings"})
+    partners = (settings or {}).get("partners_section")
+    return partners if partners and isinstance(partners, dict) else DEFAULT_PARTNERS_SECTION
+
+@router.put("/partners-section", tags=["admin-cms"])
+async def update_admin_partners_section(payload: Dict[str, Any], admin=Depends(get_current_admin)):
+    await website_settings_collection.update_one(
+        {"_type": "settings"},
+        {"$set": {"partners_section": payload, "updated_at": datetime.now(timezone.utc)}},
+        upsert=True
+    )
+    await log_admin_action(admin["email"], "update", "partners_section")
+    return {"message": "Partners section updated successfully", "partners_section": payload}
+
+@router.post("/upload-partner-logo", tags=["admin-cms"])
+async def upload_partner_logo(
+    file: UploadFile = File(...),
+    admin: dict = Depends(get_current_admin)
+):
+    """Uploads a partner/sponsor logo to Cloudinary storage and returns secure URL."""
+    contents = await file.read()
+    if not contents or len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    url = upload_image(contents, folder="eventora/partners", filename=file.filename)
+    if not url:
+        raise HTTPException(status_code=500, detail="Failed to upload partner logo to storage.")
+    return {"url": url, "logo_url": url, "filename": file.filename}
+
 # ════════════════════════════════════════
 # EVENTS
 # ════════════════════════════════════════

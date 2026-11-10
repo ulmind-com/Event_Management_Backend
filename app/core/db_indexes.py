@@ -12,6 +12,9 @@ from app.core.database import (
     referral_collection,
     banner_collection,
     otp_collection,
+    idempotency_collection,
+    webhook_event_collection,
+    payment_recovery_collection,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,6 +111,19 @@ async def init_core_database_indexes():
         # 10. OTPs (TTL index for automatic self-deletion)
         await otp_collection.create_index([("email", 1)], background=True)
         await otp_collection.create_index([("expires_at", 1)], expireAfterSeconds=0, background=True)
+
+        # 11. Production Idempotency Records (Unique Key + 24-hr TTL index)
+        await idempotency_collection.create_index([("idempotency_key", 1)], unique=True, background=True)
+        await idempotency_collection.create_index([("created_at", 1)], expireAfterSeconds=86400, background=True)
+        await idempotency_collection.create_index([("user_email", 1), ("endpoint", 1)], background=True)
+
+        # 12. Webhook Events (Deduplication + 7-day TTL index)
+        await webhook_event_collection.create_index([("event_key", 1)], unique=True, background=True)
+        await webhook_event_collection.create_index([("received_at", 1)], expireAfterSeconds=604800, background=True)
+
+        # 13. Payment Recovery Queue (Fast indexing for background reconciliation worker)
+        await payment_recovery_collection.create_index([("status", 1), ("recovered_at", -1)], background=True)
+        await payment_recovery_collection.create_index([("reference", 1)], background=True)
 
         logger.info("High-performance core database indexes initialized successfully.")
     except Exception as e:

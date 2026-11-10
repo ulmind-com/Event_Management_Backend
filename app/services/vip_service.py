@@ -34,6 +34,7 @@ from app.schemas.vip import (
 from app.services.vip_payment_gateway import VIPPaymentGatewayAdapter
 from app.services.ticket import TicketService
 from app.services.email import EmailService
+from app.core.transactions import database_transaction
 
 logger = logging.getLogger("eventora.vip_service")
 
@@ -525,73 +526,73 @@ class VIPService:
         validity_start = config.get("validity_start") if config else now_utc
         validity_end = config.get("validity_end") if config else (now_utc + timedelta(days=7))
 
-        issued_passes = []
-        issued_pass_ids = []
+        # 4. Atomically Insert Passes, Update Booking, and Log Audit via ACID Transaction
+        async with database_transaction() as session:
+            for i in range(quantity):
+                holder = holder_names[i] if i < len(holder_names) else f"Guest {i + 1}"
+                raw_token = secrets.token_urlsafe(32)
+                token_hash = VIPService.hash_token(raw_token)
+                pass_ref = f"PASS-VIP-{uuid.uuid4().hex[:8].upper()}"
 
-        for i in range(quantity):
-            holder = holder_names[i] if i < len(holder_names) else f"Guest {i + 1}"
-            raw_token = secrets.token_urlsafe(32)
-            token_hash = VIPService.hash_token(raw_token)
-            pass_ref = f"PASS-VIP-{uuid.uuid4().hex[:8].upper()}"
+                # Generate QR Image base64 containing the secure verification payload
+                qr_payload = f"https://upgradetalentsindia.in/vip-verify?token={raw_token}&ref={pass_ref}"
+                qr_image_b64 = TicketService.generate_qr_image_base64(qr_payload)
 
-            # Generate QR Image base64 containing the secure verification payload
-            qr_payload = f"https://upgradetalentsindia.in/vip-verify?token={raw_token}&ref={pass_ref}"
-            qr_image_b64 = TicketService.generate_qr_image_base64(qr_payload)
+                pass_doc = {
+                    "pass_reference": pass_ref,
+                    "booking_id": str(booking["_id"]),
+                    "booking_reference": booking_reference,
+                    "event_id": str(event_id),
+                    "event_title": booking.get("event_title"),
+                    "configuration_id": str(config_id),
+                    "category": booking.get("category", "VIP"),
+                    "pass_name": booking.get("pass_name", "VIP Pass"),
+                    "user_email": booking.get("user_email"),
+                    "holder_name": holder,
+                    "token_hash": token_hash,
+                    "qr_token": raw_token,
+                    "qr_image_base64": qr_image_b64,
+                    "status": "VALID",
+                    "access_areas": access_areas,
+                    "entry_policy": entry_policy,
+                    "entries_count": 0,
+                    "max_entries": config.get("max_entries", 1) if config else 1,
+                    "last_entry_at": None,
+                    "issued_at": now_utc,
+                    "validity_start": validity_start,
+                    "validity_end": validity_end,
+                    "issuing_source": "ONLINE_BOOKING",
+                    "created_at": now_utc,
+                    "updated_at": now_utc
+                }
+                res = await vip_pass_collection.insert_one(pass_doc, session=session)
+                pass_doc["_id"] = res.inserted_id
+                issued_pass_ids.append(str(res.inserted_id))
+                issued_passes.append(pass_doc)
 
-            pass_doc = {
-                "pass_reference": pass_ref,
-                "booking_id": str(booking["_id"]),
+            # 5. Confirm Booking in Database
+            await vip_booking_collection.update_one(
+                {"_id": booking["_id"]},
+                {"$set": {
+                    "booking_status": "CONFIRMED",
+                    "payment_status": "PAID",
+                    "payment_reference": payment_txn_id,
+                    "provider_order_id": provider_order_id,
+                    "issued_pass_ids": issued_pass_ids,
+                    "updated_at": now_utc
+                }},
+                session=session
+            )
+
+            # 6. Audit Log
+            await audit_log_collection.insert_one({
+                "actor_id": booking.get("user_email"),
+                "action_type": "VIP_PAYMENT_CONFIRMED_AND_PASS_ISSUED",
                 "booking_reference": booking_reference,
-                "event_id": str(event_id),
-                "event_title": booking.get("event_title"),
-                "configuration_id": str(config_id),
-                "category": booking.get("category", "VIP"),
-                "pass_name": booking.get("pass_name", "VIP Pass"),
-                "user_email": booking.get("user_email"),
-                "holder_name": holder,
-                "token_hash": token_hash,
-                "qr_token": raw_token, # Available to owner upon retrieval
-                "qr_image_base64": qr_image_b64,
-                "status": "VALID",
-                "access_areas": access_areas,
-                "entry_policy": entry_policy,
-                "entries_count": 0,
-                "max_entries": config.get("max_entries", 1) if config else 1,
-                "last_entry_at": None,
-                "issued_at": now_utc,
-                "validity_start": validity_start,
-                "validity_end": validity_end,
-                "issuing_source": "ONLINE_BOOKING",
-                "created_at": now_utc,
-                "updated_at": now_utc
-            }
-            res = await vip_pass_collection.insert_one(pass_doc)
-            pass_doc["_id"] = res.inserted_id
-            issued_pass_ids.append(str(res.inserted_id))
-            issued_passes.append(pass_doc)
-
-        # 5. Confirm Booking in Database
-        await vip_booking_collection.update_one(
-            {"_id": booking["_id"]},
-            {"$set": {
-                "booking_status": "CONFIRMED",
-                "payment_status": "PAID",
                 "payment_reference": payment_txn_id,
-                "provider_order_id": provider_order_id,
-                "issued_pass_ids": issued_pass_ids,
-                "updated_at": now_utc
-            }}
-        )
-
-        # 6. Audit Log
-        await audit_log_collection.insert_one({
-            "actor_id": booking.get("user_email"),
-            "action_type": "VIP_PAYMENT_CONFIRMED_AND_PASS_ISSUED",
-            "booking_reference": booking_reference,
-            "payment_reference": payment_txn_id,
-            "passes_issued": len(issued_pass_ids),
-            "timestamp": now_utc
-        })
+                "passes_issued": len(issued_pass_ids),
+                "timestamp": now_utc
+            }, session=session)
 
         # 7. Send Email Notification
         try:

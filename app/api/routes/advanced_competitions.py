@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from fastapi import status, APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form, Query, Body
+from fastapi import status, APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form, Query, Body, Header
 from bson import ObjectId
 from app.api.deps import get_current_user, get_current_user_allow_incomplete
 from app.core.database import (
@@ -17,6 +17,9 @@ from app.schemas.competition import (
     parse_age_limit,
 )
 from app.services.payment import PaymentService
+from app.core.idempotency import IdempotencyManager
+from app.core.transactions import database_transaction
+from app.services.payment_reconciliation import PaymentReconciliationService
 from datetime import datetime, timezone, date
 from typing import Optional, Any, Dict, List
 import uuid
@@ -445,7 +448,9 @@ async def register_competition(
     category: Optional[str] = Query(None),
     date_of_birth: Optional[str] = Query(None),
     body: Optional[CompetitionRegisterReq] = Body(None),
-    user: dict = Depends(get_current_user_allow_incomplete)
+    user: dict = Depends(get_current_user_allow_incomplete),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key")
 ):
     """Registers / participates the user for a competition with age limit, fee safety, cash, and category verification."""
     is_rules_accepted = (
@@ -512,6 +517,22 @@ async def register_competition(
     user_email = user.get("email")
     if not user_email:
         raise HTTPException(status_code=401, detail="User email not found in session.")
+
+    clean_idem_key = (
+        idempotency_key
+        or x_idempotency_key
+        or f"comp_reg:{comp_id}:{user_email}:{selected_category}"
+    )
+
+    # 1. Acquire Idempotency Lock or Replay Cached Result
+    idem = await IdempotencyManager.acquire_or_replay(
+        key=clean_idem_key,
+        payload={"comp_id": comp_id, "category": selected_category, "pay_method": pay_method},
+        user_email=user_email,
+        endpoint=f"/v1/competitions/{comp_id}/register"
+    )
+    if idem.is_replay:
+        return idem.replay_response()
 
     # If date_of_birth provided in registration request, verify verified user DOB immutability
     if dob_input:
@@ -1037,15 +1058,33 @@ class CompetitionPaymentVerifyReq(BaseModel):
 async def verify_competition_payment(
     comp_id: str,
     req: CompetitionPaymentVerifyReq,
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key")
 ):
     """
-    Client-side verification for paid competition registration checkout.
-    Verifies Razorpay cryptographic HMAC signature and marks registration as CONFIRMED.
+    Authoritative, idempotent verification for paid competition registration checkout.
+    Executes inside atomic multi-document transaction and synchronizes gateway state.
     """
     c_id = safe_object_id(comp_id)
     if not c_id:
         raise HTTPException(status_code=400, detail="Invalid competition ID format.")
+
+    user_email = user.get("email")
+    clean_idem_key = (
+        idempotency_key
+        or x_idempotency_key
+        or f"comp_verify:{req.registration_reference}:{req.razorpay_payment_id}"
+    )
+
+    idem = await IdempotencyManager.acquire_or_replay(
+        key=clean_idem_key,
+        payload=req,
+        user_email=user_email,
+        endpoint=f"/v1/competitions/{comp_id}/verify-payment"
+    )
+    if idem.is_replay:
+        return idem.replay_response()
 
     is_valid = PaymentService.verify_payment_signature(
         razorpay_order_id=req.razorpay_order_id,
@@ -1053,6 +1092,7 @@ async def verify_competition_payment(
         razorpay_signature=req.razorpay_signature
     )
     if not is_valid:
+        await IdempotencyManager.fail(clean_idem_key, "Invalid payment signature")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid Razorpay payment signature. Verification failed."
@@ -1062,44 +1102,22 @@ async def verify_competition_payment(
         "registration_reference": req.registration_reference
     })
     if not reg or str(reg.get("competition_id")) != str(comp_id):
+        await IdempotencyManager.fail(clean_idem_key, "Competition registration not found")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Competition registration not found")
 
-    user_email = user.get("email")
     if reg.get("user_email") != user_email and user.get("role") != "super_admin":
+        await IdempotencyManager.fail(clean_idem_key, "Unauthorized")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized")
 
-    if reg.get("status") == RegistrationStatus.CONFIRMED.value and reg.get("payment_status") == PaymentStatus.PAID.value:
-        return {
-            "status": RegistrationStatus.CONFIRMED.value,
-            "message": "Registration already confirmed.",
-            "reference": req.registration_reference
-        }
-
-    # Update registration to confirmed & paid
-    await competition_registration_collection.update_one(
-        {"_id": reg["_id"]},
-        {"$set": {
-            "status": RegistrationStatus.CONFIRMED.value,
-            "payment_status": PaymentStatus.PAID.value,
-            "payment_reference": req.razorpay_payment_id,
-            "provider_order_id": req.razorpay_order_id,
-            "payment_provider": "RAZORPAY",
-            "paid_at": datetime.now(timezone.utc)
-        }}
-    )
-
-    # Increment registered_count on competition
     try:
-        await competition_collection.update_one(
-            {"_id": c_id},
-            {"$inc": {"registered_count": 1}}
+        result = await PaymentReconciliationService.confirm_competition_registration_transactionally(
+            reg=reg,
+            payment_id=req.razorpay_payment_id,
+            order_id=req.razorpay_order_id,
+            source="CLIENT_VERIFICATION"
         )
-    except Exception:
-        pass
-
-    return {
-        "status": RegistrationStatus.CONFIRMED.value,
-        "message": "Payment verified and competition registration confirmed successfully.",
-        "reference": req.registration_reference,
-        "payment_id": req.razorpay_payment_id
-    }
+        await IdempotencyManager.complete(clean_idem_key, result, status_code=200)
+        return result
+    except Exception as e:
+        await IdempotencyManager.fail(clean_idem_key, str(e))
+        raise

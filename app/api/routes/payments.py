@@ -6,10 +6,18 @@ from pydantic import BaseModel, Field
 from bson import ObjectId
 
 from app.api.deps import get_current_user
-from app.core.database import booking_collection, event_collection, ticket_collection
+from app.core.database import (
+    booking_collection,
+    event_collection,
+    ticket_collection,
+    competition_registration_collection,
+    competition_collection
+)
 from app.schemas.booking import PaymentVerifyReq, BookingStatus, PaymentStatus
 from app.api.routes.bookings import generate_tickets
 from app.services.payment import PaymentService
+from app.core.idempotency import IdempotencyManager
+from app.services.payment_reconciliation import PaymentReconciliationService
 
 router = APIRouter()
 logger = logging.getLogger("eventora.payments_route")
@@ -30,14 +38,32 @@ class RazorpayCreateOrderReq(BaseModel):
 async def verify_razorpay_payment(
     req: RazorpayVerifyReq,
     bg_tasks: BackgroundTasks,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key")
 ):
     """
-    Authoritative Razorpay payment signature verification endpoint.
-    Called by client frontend after Razorpay modal completes successfully.
-    Confirms booking, stores payment reference, and initiates ticket generation.
+    Authoritative, idempotent Razorpay payment signature verification endpoint.
+    Executed inside multi-document ACID transactions with automated duplicate prevention.
     """
-    # 1. Verify Razorpay cryptographic signature
+    clean_idem_key = (
+        idempotency_key
+        or x_idempotency_key
+        or f"rzp_verify:{req.razorpay_order_id}:{req.razorpay_payment_id}"
+    )
+    user_email = current_user.get("email")
+
+    # 1. Acquire Idempotency Lock or Replay Cached Result
+    idem = await IdempotencyManager.acquire_or_replay(
+        key=clean_idem_key,
+        payload=req,
+        user_email=user_email,
+        endpoint="/api/payments/verify-razorpay"
+    )
+    if idem.is_replay:
+        return idem.replay_response()
+
+    # 2. Verify Razorpay cryptographic signature
     is_valid = PaymentService.verify_payment_signature(
         razorpay_order_id=req.razorpay_order_id,
         razorpay_payment_id=req.razorpay_payment_id,
@@ -45,110 +71,81 @@ async def verify_razorpay_payment(
     )
     if not is_valid:
         logger.warning(f"Signature verification failed for payment {req.razorpay_payment_id}")
+        await IdempotencyManager.fail(clean_idem_key, "Invalid Razorpay payment signature.")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid Razorpay payment signature. Payment verification failed."
         )
 
-    # 2. Find booking
-    booking = None
     try:
-        booking = await booking_collection.find_one({"_id": ObjectId(req.booking_id)})
-    except Exception:
-        pass
+        # 3. Find booking or competition registration
+        booking = None
+        try:
+            booking = await booking_collection.find_one({"_id": ObjectId(req.booking_id)})
+        except Exception:
+            pass
 
-    if not booking:
-        booking = await booking_collection.find_one({
-            "$or": [
-                {"booking_reference": req.booking_id},
-                {"_id": req.booking_id}
-            ]
-        })
+        if not booking:
+            booking = await booking_collection.find_one({
+                "$or": [
+                    {"booking_reference": req.booking_id},
+                    {"_id": req.booking_id}
+                ]
+            })
 
-    if not booking:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+        # Check competition registration fallback if not found in bookings
+        if not booking and (req.booking_id.startswith("CRG-") or ObjectId.is_valid(req.booking_id)):
+            reg = await competition_registration_collection.find_one({
+                "$or": [
+                    {"registration_reference": req.booking_id},
+                    {"_id": ObjectId(req.booking_id) if ObjectId.is_valid(req.booking_id) else None}
+                ]
+            })
+            if reg:
+                # Confirm competition registration transactionally
+                if reg.get("user_email") != user_email and current_user.get("role") != "super_admin":
+                    await IdempotencyManager.fail(clean_idem_key, "Unauthorized")
+                    raise HTTPException(status_code=403, detail="Unauthorized")
+                
+                result = await PaymentReconciliationService.confirm_competition_registration_transactionally(
+                    reg=reg,
+                    payment_id=req.razorpay_payment_id,
+                    order_id=req.razorpay_order_id,
+                    source="CLIENT_VERIFICATION"
+                )
+                await IdempotencyManager.complete(clean_idem_key, result, status_code=200)
+                return result
 
-    # 3. Ownership check
-    user_email = current_user.get("email")
-    if booking.get("user_email") != user_email and current_user.get("role") != "super_admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized booking payment verification")
+        if not booking:
+            await IdempotencyManager.fail(clean_idem_key, "Booking not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
 
-    # 4. Check if already confirmed (idempotency)
-    if booking.get("payment_status") == PaymentStatus.PAID.value:
-        return {
-            "status": "ALREADY_CONFIRMED",
-            "message": "Payment already confirmed for this booking.",
-            "booking_reference": booking.get("booking_reference")
-        }
+        # 4. Ownership check
+        if booking.get("user_email") != user_email and current_user.get("role") != "super_admin":
+            await IdempotencyManager.fail(clean_idem_key, "Unauthorized booking payment verification")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized booking payment verification")
 
-    # 5. Confirm booking and record transaction
-    b_id = booking["_id"]
-    await booking_collection.update_one(
-        {"_id": b_id},
-        {"$set": {
-            "payment_status": PaymentStatus.PAID.value,
-            "booking_status": BookingStatus.CONFIRMED.value,
-            "payment_reference": req.razorpay_payment_id,
-            "provider_order_id": req.razorpay_order_id,
-            "payment_provider": "RAZORPAY"
-        }}
-    )
-
-    # Increment registered_count on event
-    if ObjectId.is_valid(booking.get("event_id")):
-        await event_collection.update_one(
-            {"_id": ObjectId(booking["event_id"])},
-            {"$inc": {"registered_count": booking.get("quantity", 1)}}
+        # 5. Atomic multi-document transaction confirmation
+        result = await PaymentReconciliationService.confirm_booking_transactionally(
+            booking=booking,
+            payment_id=req.razorpay_payment_id,
+            order_id=req.razorpay_order_id,
+            source="CLIENT_VERIFICATION"
         )
 
-    # 6. Trigger Ticket Generation background task
-    bg_tasks.add_task(
-        generate_tickets,
-        str(b_id),
-        booking["booking_reference"],
-        booking["event_id"],
-        booking.get("ticket_type", "PaidTicket"),
-        booking["user_email"],
-        booking.get("quantity", 1),
-        booking.get("holder_names", []),
-        payment_method=booking.get("payment_method", "ONLINE"),
-        payment_status="PAID",
-        category=booking.get("category"),
-        seats=booking.get("seats", [])
-    )
+        await IdempotencyManager.complete(clean_idem_key, result, status_code=200)
+        return result
 
-    # Authoritative trigger: PAYMENT_CONFIRMATION
-    try:
-        from app.services.notification_service import NotificationService
-        from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
-        from app.schemas.notification import NotificationCreate
-
-        await NotificationService.create_notification(NotificationCreate(
-            recipient_user_id=booking["user_email"],
-            notification_type=NotificationType.PAYMENT_CONFIRMATION,
-            title="Payment Received",
-            message=f"Your payment of ₹{booking.get('total_amount', 0)} for booking {booking['booking_reference']} has been verified.",
-            resource_type="booking",
-            resource_id=str(b_id),
-            action_url=f"/bookings/{b_id}",
-            priority=NotificationPriority.HIGH,
-            sound_category=SoundCategory.SUCCESS,
-            deduplication_key=f"pay_conf_{req.razorpay_payment_id}",
-            source_module="payments",
-            source_event_id=booking["booking_reference"],
-        ))
+    except HTTPException:
+        await IdempotencyManager.fail(clean_idem_key, "HTTP Error during verification")
+        raise
     except Exception as e:
-        logger.warning(f"Failed to create payment confirmation notification: {e}")
-
-    logger.info(f"Booking {booking['booking_reference']} confirmed via Razorpay payment {req.razorpay_payment_id}")
-
-
-    return {
-        "status": "SUCCESS",
-        "message": "Razorpay payment verified and booking confirmed successfully.",
-        "booking_reference": booking["booking_reference"],
-        "payment_id": req.razorpay_payment_id
-    }
+        logger.error(f"Unexpected error during payment verification: {e}", exc_info=True)
+        await IdempotencyManager.fail(clean_idem_key, str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Transaction failed while confirming payment. Auto-recovery scheduled."
+        )
 
 
 @router.post("/create-order/{booking_id}", status_code=status.HTTP_200_OK)
@@ -187,8 +184,18 @@ async def create_razorpay_order_for_booking(
         booking_reference=booking["booking_reference"],
         amount=booking.get("total_amount", 0.0),
         currency="INR",
-        notes={"user_email": user_email, "booking_id": str(booking["_id"])}
+        notes={
+            "user_email": user_email,
+            "booking_id": str(booking["_id"]),
+            "provider_order_id": booking.get("provider_order_id")
+        }
     )
+
+    if payment_info.get("order_id"):
+        await booking_collection.update_one(
+            {"_id": booking["_id"]},
+            {"$set": {"provider_order_id": payment_info["order_id"]}}
+        )
 
     return payment_info
 
@@ -216,7 +223,8 @@ async def handle_razorpay_booking_webhook(
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
     event = payload.get("event")
-    logger.info(f"Received Razorpay webhook event: {event}")
+    event_id = payload.get("id") or payload.get("event_id")
+    logger.info(f"Received Razorpay webhook event: {event} (ID: {event_id})")
 
     if event in ["payment.captured", "order.paid"]:
         payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
@@ -225,31 +233,32 @@ async def handle_razorpay_booking_webhook(
         payment_id = payment_entity.get("id")
         order_id = payment_entity.get("order_id")
 
+        # 1. Deduplicate webhook event at database level
+        should_process = await PaymentReconciliationService.record_and_deduplicate_webhook(
+            event_id=event_id,
+            event_type=event,
+            payment_id=payment_id,
+            order_id=order_id,
+            payload=payload
+        )
+        if not should_process:
+            return {"status": "DUPLICATE_WEBHOOK_ACKNOWLEDGED"}
+
+        dedup_key = event_id or f"{event}:{order_id}:{payment_id}"
+
         if booking_ref:
             # 1. Check Competition Registration
             if booking_ref.startswith("CRG-") or notes.get("type") == "competition_registration":
-                from app.core.database import competition_registration_collection, competition_collection
-                from app.schemas.competition import RegistrationStatus
                 reg = await competition_registration_collection.find_one({"registration_reference": booking_ref})
-                if reg and reg.get("payment_status") != PaymentStatus.PAID.value:
-                    await competition_registration_collection.update_one(
-                        {"_id": reg["_id"]},
-                        {"$set": {
-                            "status": RegistrationStatus.CONFIRMED.value,
-                            "payment_status": PaymentStatus.PAID.value,
-                            "payment_reference": payment_id,
-                            "provider_order_id": order_id,
-                            "payment_provider": "RAZORPAY"
-                        }}
+                if reg:
+                    await PaymentReconciliationService.confirm_competition_registration_transactionally(
+                        reg=reg,
+                        payment_id=payment_id,
+                        order_id=order_id,
+                        payment_provider="RAZORPAY",
+                        source="WEBHOOK"
                     )
-                    try:
-                        await competition_collection.update_one(
-                            {"_id": ObjectId(reg["competition_id"])},
-                            {"$inc": {"registered_count": 1}}
-                        )
-                    except Exception:
-                        pass
-                    logger.info(f"Webhook confirmed paid competition registration {booking_ref}")
+                    logger.info(f"Webhook transactionally confirmed paid competition registration {booking_ref}")
 
             # 2. Check General Activity / Course / Workshop Registration
             elif booking_ref.startswith("ORD_") or notes.get("type") == "activity_registration":
@@ -273,62 +282,37 @@ async def handle_razorpay_booking_webhook(
             # 3. Check Event Ticket Bookings
             else:
                 booking = await booking_collection.find_one({"booking_reference": booking_ref})
-                if booking and booking.get("payment_status") != PaymentStatus.PAID.value:
-                    b_id = booking["_id"]
-                    await booking_collection.update_one(
-                        {"_id": b_id},
-                        {"$set": {
-                            "payment_status": PaymentStatus.PAID.value,
-                            "booking_status": BookingStatus.CONFIRMED.value,
-                            "payment_reference": payment_id,
-                            "provider_order_id": order_id,
-                            "payment_provider": "RAZORPAY"
-                        }}
+                if booking:
+                    await PaymentReconciliationService.confirm_booking_transactionally(
+                        booking=booking,
+                        payment_id=payment_id,
+                        order_id=order_id,
+                        payment_provider="RAZORPAY",
+                        source="WEBHOOK"
                     )
-                    if ObjectId.is_valid(booking.get("event_id")):
-                        await event_collection.update_one(
-                            {"_id": ObjectId(booking["event_id"])},
-                            {"$inc": {"registered_count": booking.get("quantity", 1)}}
-                        )
-                    bg_tasks.add_task(
-                        generate_tickets,
-                        str(b_id),
-                        booking["booking_reference"],
-                        booking["event_id"],
-                        booking.get("ticket_type", "PaidTicket"),
-                        booking["user_email"],
-                        booking.get("quantity", 1),
-                        booking.get("holder_names", []),
-                        payment_method=booking.get("payment_method", "ONLINE"),
-                        payment_status="PAID",
-                        category=booking.get("category"),
-                        seats=booking.get("seats", [])
-                    )
-                    # Authoritative trigger: PAYMENT_CONFIRMATION via webhook
-                    try:
-                        from app.services.notification_service import NotificationService
-                        from app.core.notification_types import NotificationType, NotificationPriority, SoundCategory
-                        from app.schemas.notification import NotificationCreate
+                    logger.info(f"Webhook transactionally confirmed ticket booking {booking_ref}")
 
-                        await NotificationService.create_notification(NotificationCreate(
-                            recipient_user_id=booking["user_email"],
-                            notification_type=NotificationType.PAYMENT_CONFIRMATION,
-                            title="Payment Received",
-                            message=f"Payment for booking {booking['booking_reference']} was captured successfully.",
-                            resource_type="booking",
-                            resource_id=str(b_id),
-                            action_url=f"/bookings/{b_id}",
-                            priority=NotificationPriority.HIGH,
-                            sound_category=SoundCategory.SUCCESS,
-                            deduplication_key=f"pay_conf_{payment_id}",
-                            source_module="payments_webhook",
-                            source_event_id=booking_ref,
-                        ))
-                    except Exception:
-                        pass
-                    logger.info(f"Webhook confirmed ticket booking {booking_ref}")
+        await PaymentReconciliationService.mark_webhook_completed(dedup_key)
 
     return {"status": "PROCESSED"}
+
+
+@router.post("/reconcile-pending", status_code=status.HTTP_200_OK)
+async def trigger_payment_reconciliation(
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    On-demand payment reconciliation trigger.
+    Inspects Razorpay status for pending orders and auto-recovers captured payments.
+    """
+    if current_user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Super Admin authorization required.")
+    
+    result = await PaymentReconciliationService.reconcile_pending_payments()
+    return {
+        "status": "COMPLETED",
+        "result": result
+    }
 
 
 @router.post("/verify-mock/{booking_id}")

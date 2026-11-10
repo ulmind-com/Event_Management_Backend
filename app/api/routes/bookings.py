@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Header
 from typing import Optional, List, Dict, Any
 from bson import ObjectId
 from app.api.deps import get_current_user
@@ -6,6 +6,8 @@ from app.core.database import booking_collection, ticket_collection, event_colle
 from app.schemas.booking import BookingCreateReq, BookingResponse, BookingStatus, PaymentStatus
 from app.services.payment import PaymentService
 from app.services.ticket import TicketService
+from app.core.idempotency import IdempotencyManager
+from app.core.transactions import database_transaction
 from datetime import datetime, timezone, timedelta
 import re
 import uuid
@@ -254,45 +256,65 @@ def check_event_deadline(event: dict) -> None:
             pass
 
 @router.post("/", response_model=dict)
-async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
-    try:
-        e_id = ObjectId(req.event_id)
-    except:
-        raise HTTPException(status_code=400, detail="Invalid event ID")
+async def create_booking(
+    req: BookingCreateReq,
+    bg_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key")
+):
+    clean_idem_key = idempotency_key or x_idempotency_key
+    user_email = current_user.get("email")
 
-    event = await event_collection.find_one({"_id": e_id, "is_published": True})
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found or not published")
-    if not event.get("registration_enabled", True) or not event.get("ticket_enabled", True):
-        raise HTTPException(status_code=400, detail="Ticketing is closed for this event")
-    if event.get("event_status") in ["completed", "cancelled"]:
-        raise HTTPException(status_code=400, detail=f"This event is {event.get('event_status')}. Ticket booking is closed.")
-
-    check_event_deadline(event)
-
-    raw_items = []
-    if req.items:
-        raw_items = [it.model_dump() for it in req.items if it.quantity > 0]
-    elif req.categories and len(req.categories) > 1:
-        raw_items = [{"category": c, "quantity": 1} for c in req.categories]
-    else:
-        qty = req.quantity if req.quantity is not None else 1
-        raw_items = [{
-            "ticket_id": req.ticket_id,
-            "category": req.category,
-            "quantity": qty,
-            "holder_names": req.holder_names or []
-        }]
-
-    if not raw_items:
-        raise HTTPException(status_code=400, detail="Please select at least one ticket category")
-
-    booked_items = []
-    total_amount = 0.0
-    total_quantity = 0
-    reserved_tickets = []
+    # 1. Acquire Idempotency Lock or Replay Cached Result
+    idem = await IdempotencyManager.acquire_or_replay(
+        key=clean_idem_key,
+        payload=req,
+        user_email=user_email,
+        endpoint="/api/bookings"
+    )
+    if idem.is_replay:
+        return idem.replay_response()
 
     try:
+        try:
+            e_id = ObjectId(req.event_id)
+        except:
+            raise HTTPException(status_code=400, detail="Invalid event ID")
+
+        event = await event_collection.find_one({"_id": e_id, "is_published": True})
+        if not event:
+            raise HTTPException(status_code=404, detail="Event not found or not published")
+        if not event.get("registration_enabled", True) or not event.get("ticket_enabled", True):
+            raise HTTPException(status_code=400, detail="Ticketing is closed for this event")
+        if event.get("event_status") in ["completed", "cancelled"]:
+            raise HTTPException(status_code=400, detail=f"This event is {event.get('event_status')}. Ticket booking is closed.")
+
+        check_event_deadline(event)
+
+        raw_items = []
+        if req.items:
+            raw_items = [it.model_dump() for it in req.items if it.quantity > 0]
+        elif req.categories and len(req.categories) > 1:
+            raw_items = [{"category": c, "quantity": 1} for c in req.categories]
+        else:
+            qty = req.quantity if req.quantity is not None else 1
+            raw_items = [{
+                "ticket_id": req.ticket_id,
+                "category": req.category,
+                "quantity": qty,
+                "holder_names": req.holder_names or []
+            }]
+
+        if not raw_items:
+            raise HTTPException(status_code=400, detail="Please select at least one ticket category")
+
+        booked_items = []
+        total_amount = 0.0
+        total_quantity = 0
+
+        # Pre-resolve ticket tiers
+        resolved_items = []
         for it in raw_items:
             it_qty = it.get("quantity", 1)
             it_ticket_id = it.get("ticket_id")
@@ -348,23 +370,20 @@ async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, curre
                     raise HTTPException(status_code=404, detail=f"Ticket tier not found for category '{it_category}'")
 
             final_cat = it_category or item_ticket.get("category") or item_ticket.get("type") or "General"
-            
-            # Atomic inventory decrement
-            up_res = await ticket_collection.update_one(
-                {"_id": item_tid, "event_id": str(e_id), "available": {"$gte": it_qty}},
-                {"$inc": {"available": -it_qty}}
-            )
-            if up_res.modified_count == 0:
-                t_check = await ticket_collection.find_one({"_id": item_tid})
-                if not t_check:
-                    raise HTTPException(status_code=404, detail="Ticket not found")
-                raise HTTPException(status_code=409, detail=f"Insufficient tickets available for category '{final_cat}'")
-            
-            reserved_tickets.append((item_tid, it_qty))
             unit_p = float(item_ticket.get("price", 0.0))
             subtotal = unit_p * it_qty
             total_amount += subtotal
             total_quantity += it_qty
+
+            resolved_items.append({
+                "item_tid": item_tid,
+                "it_qty": it_qty,
+                "final_cat": final_cat,
+                "unit_p": unit_p,
+                "subtotal": subtotal,
+                "ticket_type": item_ticket.get("type") or final_cat,
+                "holder_names": it.get("holder_names") or []
+            })
 
             booked_items.append({
                 "ticket_id": str(item_tid),
@@ -375,109 +394,163 @@ async def create_booking(req: BookingCreateReq, bg_tasks: BackgroundTasks, curre
                 "subtotal": subtotal,
                 "holder_names": it.get("holder_names") or []
             })
+
+        distinct_categories = list(dict.fromkeys([b_it["category"] for b_it in booked_items]))
+        primary_category = distinct_categories[0] if len(distinct_categories) == 1 else ", ".join(distinct_categories)
+        first_tid = booked_items[0]["ticket_id"]
+        unit_price = booked_items[0]["unit_price"] if len(booked_items) == 1 else (total_amount / max(1, total_quantity))
+
+        booking_ref = f"BKG-{uuid.uuid4().hex[:10].upper()}"
+        now_utc = datetime.now(timezone.utc)
+        expires_at = now_utc + timedelta(minutes=15)
+
+        payment_method = (getattr(req, "payment_method", None) or "ONLINE").strip().upper()
+        if payment_method not in ["ONLINE", "CASH", "OFFLINE"]:
+            payment_method = "ONLINE"
+
+        booking = {
+            "booking_reference": booking_ref,
+            "event_id": str(e_id),
+            "ticket_id": first_tid,
+            "category": primary_category,
+            "categories": distinct_categories,
+            "items": booked_items,
+            "ticket_type": booked_items[0]["ticket_type"],
+            "user_email": current_user["email"],
+            "user_name": current_user.get("name") or current_user.get("full_name") or "Attendee",
+            "user_phone": current_user.get("phone_number") or current_user.get("phone") or "",
+            "holder_names": req.holder_names or [],
+            "seats": getattr(req, "seats", None) or [],
+            "quantity": total_quantity,
+            "unit_price": unit_price,
+            "total_amount": total_amount,
+            "booked_at": now_utc,
+            "expires_at": expires_at,
+            "payment_method": payment_method,
+            "payment_reference": None
+        }
+
+        # ── Execute Multi-Document ACID Transaction for Inventory & Booking Creation ──
+        async with database_transaction() as session:
+            # 1. Atomic conditional stock decrement for all ticket tiers
+            for res_it in resolved_items:
+                up_res = await ticket_collection.update_one(
+                    {"_id": res_it["item_tid"], "event_id": str(e_id), "available": {"$gte": res_it["it_qty"]}},
+                    {"$inc": {"available": -res_it["it_qty"]}},
+                    session=session
+                )
+                if up_res.modified_count == 0:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Insufficient tickets available for category '{res_it['final_cat']}'."
+                    )
+
+            # 2. Insert Booking Record
+            if total_amount == 0.0:
+                booking["booking_status"] = BookingStatus.CONFIRMED.value
+                booking["payment_status"] = PaymentStatus.NOT_REQUIRED.value
+                booking["payment_status_display"] = "SUCCESS"
+                booking["confirmed_at"] = now_utc
+            elif payment_method in ["CASH", "OFFLINE"]:
+                booking["booking_status"] = BookingStatus.CONFIRMED.value
+                booking["payment_status"] = PaymentStatus.PENDING.value
+                booking["payment_status_display"] = "PENDING"
+                booking["payment_method"] = "CASH"
+                booking["cash_payment"] = True
+                booking["cash_status"] = "PENDING"
+                booking["confirmed_at"] = now_utc
+            else:
+                booking["booking_status"] = BookingStatus.PENDING.value
+                booking["payment_status"] = PaymentStatus.PENDING.value
+                booking["payment_status_display"] = "PENDING"
+                booking["payment_method"] = "ONLINE"
+
+            ins_res = await booking_collection.insert_one(booking, session=session)
+            booking_oid = ins_res.inserted_id
+
+            # 3. If Free or Cash, increment event registered_count in same transaction
+            if total_amount == 0.0 or payment_method in ["CASH", "OFFLINE"]:
+                await event_collection.update_one(
+                    {"_id": e_id},
+                    {"$inc": {"registered_count": total_quantity}},
+                    session=session
+                )
+
+        # ── Post-Commit Operations ──
+        response_data = {
+            "message": "",
+            "booking_reference": booking_ref,
+            "category": primary_category,
+            "categories": distinct_categories,
+            "items": booked_items,
+            "unit_price": unit_price,
+            "total_amount": total_amount,
+            "payment_method": payment_method
+        }
+
+        if total_amount == 0.0:
+            for b_it in booked_items:
+                it_names = b_it.get("holder_names") or req.holder_names or []
+                bg_tasks.add_task(
+                    generate_tickets, str(booking_oid), booking_ref, str(e_id), b_it["ticket_type"], current_user["email"], b_it["quantity"], it_names, payment_method, "NOT_REQUIRED", category=b_it["category"]
+                )
+            response_data["message"] = "Free ticket booked and confirmed successfully."
+            response_data["booking_status"] = BookingStatus.CONFIRMED.value
+            response_data["payment_status"] = PaymentStatus.NOT_REQUIRED.value
+            response_data["payment_status_display"] = "SUCCESS"
+        elif payment_method in ["CASH", "OFFLINE"]:
+            for b_it in booked_items:
+                it_names = b_it.get("holder_names") or req.holder_names or []
+                bg_tasks.add_task(
+                    generate_tickets, str(booking_oid), booking_ref, str(e_id), b_it["ticket_type"], current_user["email"], b_it["quantity"], it_names, "CASH", "PENDING", category=b_it["category"]
+                )
+            response_data["message"] = f"Registration successful! Cash payment of ₹{total_amount:.2f} is pending at the event venue."
+            response_data["booking_status"] = BookingStatus.CONFIRMED.value
+            response_data["payment_status"] = PaymentStatus.PENDING.value
+            response_data["payment_status_display"] = "PENDING"
+            response_data["payment_method"] = "CASH"
+        else:
+            payment_info = await PaymentService.initiate_payment(
+                booking_reference=booking_ref,
+                amount=total_amount,
+                notes={
+                    "user_email": current_user["email"],
+                    "booking_id": str(booking_oid),
+                    "event_id": str(e_id)
+                }
+            )
+            if payment_info.get("order_id"):
+                await booking_collection.update_one(
+                    {"_id": booking_oid},
+                    {"$set": {"provider_order_id": payment_info["order_id"]}}
+                )
+            response_data["message"] = "Booking reserved. Proceed to payment."
+            response_data["booking_status"] = BookingStatus.PENDING.value
+            response_data["payment_status"] = PaymentStatus.PENDING.value
+            response_data["payment_status_display"] = "PENDING"
+            response_data["payment_method"] = "ONLINE"
+            response_data["payment_info"] = payment_info
+
+        # Complete idempotency record
+        await IdempotencyManager.complete(clean_idem_key, response_data, status_code=200)
+
+        # Fetch primary updated ticket metrics to return real-time remaining count
+        updated_ticket = await ticket_collection.find_one({"_id": ObjectId(first_tid)})
+        norm = TicketService.normalize_ticket_data(updated_ticket) if updated_ticket else {}
+        response_data.update({
+            "available_seats": norm.get("available", 0),
+            "total_seats": norm.get("total_quantity", 0),
+            "sold_out": norm.get("is_sold_out", False)
+        })
+        return response_data
+
+    except HTTPException as he:
+        await IdempotencyManager.fail(clean_idem_key, str(he.detail))
+        raise
     except Exception as e:
-        for r_tid, r_qty in reserved_tickets:
-            await ticket_collection.update_one({"_id": r_tid}, {"$inc": {"available": r_qty}})
-        raise e
-
-    distinct_categories = list(dict.fromkeys([b_it["category"] for b_it in booked_items]))
-    primary_category = distinct_categories[0] if len(distinct_categories) == 1 else ", ".join(distinct_categories)
-    first_tid = booked_items[0]["ticket_id"]
-    unit_price = booked_items[0]["unit_price"] if len(booked_items) == 1 else (total_amount / max(1, total_quantity))
-
-    booking_ref = f"BKG-{uuid.uuid4().hex[:10].upper()}"
-    now_utc = datetime.now(timezone.utc)
-    expires_at = now_utc + timedelta(minutes=15)
-
-    payment_method = (getattr(req, "payment_method", None) or "ONLINE").strip().upper()
-    if payment_method not in ["ONLINE", "CASH", "OFFLINE"]:
-        payment_method = "ONLINE"
-
-    booking = {
-        "booking_reference": booking_ref,
-        "event_id": str(e_id),
-        "ticket_id": first_tid,
-        "category": primary_category,
-        "categories": distinct_categories,
-        "items": booked_items,
-        "ticket_type": booked_items[0]["ticket_type"],
-        "user_email": current_user["email"],
-        "user_name": current_user.get("name") or current_user.get("full_name") or "Attendee",
-        "user_phone": current_user.get("phone_number") or current_user.get("phone") or "",
-        "holder_names": req.holder_names or [],
-        "seats": getattr(req, "seats", None) or [],
-        "quantity": total_quantity,
-        "unit_price": unit_price,
-        "total_amount": total_amount,
-        "booked_at": now_utc,
-        "expires_at": expires_at,
-        "payment_method": payment_method,
-        "payment_reference": None
-    }
-
-    response_data = {
-        "message": "",
-        "booking_reference": booking_ref,
-        "category": primary_category,
-        "categories": distinct_categories,
-        "items": booked_items,
-        "unit_price": unit_price,
-        "total_amount": total_amount,
-        "payment_method": payment_method
-    }
-
-    if total_amount == 0.0:
-        booking["booking_status"] = BookingStatus.CONFIRMED.value
-        booking["payment_status"] = PaymentStatus.NOT_REQUIRED.value
-        booking["payment_status_display"] = "SUCCESS"
-        booking["confirmed_at"] = now_utc
-        res = await booking_collection.insert_one(booking)
-        for b_it in booked_items:
-            it_names = b_it.get("holder_names") or req.holder_names or []
-            bg_tasks.add_task(
-                generate_tickets, str(res.inserted_id), booking_ref, str(e_id), b_it["ticket_type"], current_user["email"], b_it["quantity"], it_names, payment_method, "NOT_REQUIRED", category=b_it["category"]
-            )
-        await event_collection.update_one({"_id": e_id}, {"$inc": {"registered_count": total_quantity}})
-        response_data["message"] = "Free ticket booked and confirmed successfully."
-        response_data["booking_status"] = BookingStatus.CONFIRMED.value
-        response_data["payment_status"] = PaymentStatus.NOT_REQUIRED.value
-        response_data["payment_status_display"] = "SUCCESS"
-    elif payment_method in ["CASH", "OFFLINE"]:
-        # Cash on Venue / Spot registration: registration is active & confirmed, payment is PENDING cash collection
-        booking["booking_status"] = BookingStatus.CONFIRMED.value
-        booking["payment_status"] = PaymentStatus.PENDING.value
-        booking["payment_status_display"] = "PENDING"
-        booking["payment_method"] = "CASH"
-        booking["cash_payment"] = True
-        booking["cash_status"] = "PENDING"
-        booking["confirmed_at"] = now_utc
-        res = await booking_collection.insert_one(booking)
-        for b_it in booked_items:
-            it_names = b_it.get("holder_names") or req.holder_names or []
-            bg_tasks.add_task(
-                generate_tickets, str(res.inserted_id), booking_ref, str(e_id), b_it["ticket_type"], current_user["email"], b_it["quantity"], it_names, "CASH", "PENDING", category=b_it["category"]
-            )
-        await event_collection.update_one({"_id": e_id}, {"$inc": {"registered_count": total_quantity}})
-        response_data["message"] = f"Registration successful! Cash payment of ₹{total_amount:.2f} is pending at the event venue."
-        response_data["booking_status"] = BookingStatus.CONFIRMED.value
-        response_data["payment_status"] = PaymentStatus.PENDING.value
-        response_data["payment_status_display"] = "PENDING"
-        response_data["payment_method"] = "CASH"
-    else:
-        # Online payment via Razorpay
-        booking["booking_status"] = BookingStatus.PENDING.value
-        booking["payment_status"] = PaymentStatus.PENDING.value
-        booking["payment_status_display"] = "PENDING"
-        booking["payment_method"] = "ONLINE"
-        res = await booking_collection.insert_one(booking)
-        
-        payment_info = await PaymentService.initiate_payment(booking_ref, total_amount)
-        response_data["message"] = "Booking reserved. Proceed to payment."
-        response_data["booking_status"] = BookingStatus.PENDING.value
-        response_data["payment_status"] = PaymentStatus.PENDING.value
-        response_data["payment_status_display"] = "PENDING"
-        response_data["payment_method"] = "ONLINE"
-        response_data["payment_info"] = payment_info
+        logger.error(f"Error creating booking: {e}", exc_info=True)
+        await IdempotencyManager.fail(clean_idem_key, str(e))
+        raise HTTPException(status_code=500, detail="Failed to create booking due to a database transaction error.")
 
     # Fetch primary updated ticket metrics to return real-time remaining count
     updated_ticket = await ticket_collection.find_one({"_id": ObjectId(first_tid)})

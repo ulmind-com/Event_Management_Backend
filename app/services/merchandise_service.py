@@ -30,6 +30,7 @@ from app.schemas.merchandise import (
 )
 from app.services.merchandise_payment_gateway import MerchandisePaymentGatewayAdapter
 from app.services.email import EmailService
+from app.core.transactions import database_transaction
 
 logger = logging.getLogger("eventora.merchandise_service")
 
@@ -499,66 +500,70 @@ class MerchandiseService:
 
         now_utc = datetime.now(timezone.utc)
 
-        # 3. Commit Reserved Stock to Sold Physical Stock
-        for it in order.get("items", []):
-            p_oid = MerchandiseService._to_object_id(it["product_id"])
-            p_filter: Dict[str, Any] = {"_id": p_oid} if p_oid else {"_id": it["product_id"]}
-            qty = it.get("quantity", 1)
+        # 3. Commit Reserved Stock to Sold Physical Stock & Confirm Order in Atomic ACID Transaction
+        async with database_transaction() as session:
+            for it in order.get("items", []):
+                p_oid = MerchandiseService._to_object_id(it["product_id"])
+                p_filter: Dict[str, Any] = {"_id": p_oid} if p_oid else {"_id": it["product_id"]}
+                qty = it.get("quantity", 1)
 
-            if it.get("variant") and it["variant"].get("variant_id"):
-                p_filter["variants.variant_id"] = it["variant"]["variant_id"]
-                await merchandise_product_collection.update_one(
-                    p_filter,
-                    {"$inc": {
-                        "variants.$.stock_quantity": -qty,
-                        "variants.$.reserved_quantity": -qty,
-                        "stock_quantity": -qty,
-                        "reserved_quantity": -qty
-                    }}
-                )
-            else:
-                await merchandise_product_collection.update_one(
-                    p_filter,
-                    {"$inc": {
-                        "stock_quantity": -qty,
-                        "reserved_quantity": -qty
-                    }}
-                )
+                if it.get("variant") and it["variant"].get("variant_id"):
+                    p_filter["variants.variant_id"] = it["variant"]["variant_id"]
+                    await merchandise_product_collection.update_one(
+                        p_filter,
+                        {"$inc": {
+                            "variants.$.stock_quantity": -qty,
+                            "variants.$.reserved_quantity": -qty,
+                            "stock_quantity": -qty,
+                            "reserved_quantity": -qty
+                        }},
+                        session=session
+                    )
+                else:
+                    await merchandise_product_collection.update_one(
+                        p_filter,
+                        {"$inc": {
+                            "stock_quantity": -qty,
+                            "reserved_quantity": -qty
+                        }},
+                        session=session
+                    )
 
-            # Record Sale Committed Movement
-            await merchandise_inventory_movement_collection.insert_one({
-                "product_id": it["product_id"],
-                "variant_id": it["variant"]["variant_id"] if it.get("variant") else None,
-                "movement_type": InventoryMovementType.SALE_COMMITTED.value,
-                "quantity_delta": -qty,
-                "related_order_number": order_number,
+                # Record Sale Committed Movement
+                await merchandise_inventory_movement_collection.insert_one({
+                    "product_id": it["product_id"],
+                    "variant_id": it["variant"]["variant_id"] if it.get("variant") else None,
+                    "movement_type": InventoryMovementType.SALE_COMMITTED.value,
+                    "quantity_delta": -qty,
+                    "related_order_number": order_number,
+                    "actor": "PAYMENT_GATEWAY",
+                    "reason": "Payment verified. Stock committed to completed sale.",
+                    "timestamp": now_utc
+                }, session=session)
+
+            # 4. Mark Order Confirmed & Paid
+            new_history_entry = {
+                "status": OrderStatus.CONFIRMED.value,
+                "timestamp": now_utc,
                 "actor": "PAYMENT_GATEWAY",
-                "reason": "Payment verified. Stock committed to completed sale.",
-                "timestamp": now_utc
-            })
-
-        # 4. Mark Order Confirmed & Paid
-        new_history_entry = {
-            "status": OrderStatus.CONFIRMED.value,
-            "timestamp": now_utc,
-            "actor": "PAYMENT_GATEWAY",
-            "notes": f"Payment verified successfully with reference {payment_txn_id}."
-        }
-
-        await merchandise_order_collection.update_one(
-            {"_id": order["_id"]},
-            {
-                "$set": {
-                    "status": OrderStatus.CONFIRMED.value,
-                    "payment_status": PaymentStatus.PAID.value,
-                    "payment_reference": payment_txn_id,
-                    "provider_order_id": provider_order_id,
-                    "paid_at": now_utc,
-                    "updated_at": now_utc
-                },
-                "$push": {"status_history": new_history_entry}
+                "notes": f"Payment verified successfully with reference {payment_txn_id}."
             }
-        )
+
+            await merchandise_order_collection.update_one(
+                {"_id": order["_id"]},
+                {
+                    "$set": {
+                        "status": OrderStatus.CONFIRMED.value,
+                        "payment_status": PaymentStatus.PAID.value,
+                        "payment_reference": payment_txn_id,
+                        "provider_order_id": provider_order_id,
+                        "paid_at": now_utc,
+                        "updated_at": now_utc
+                    },
+                    "$push": {"status_history": new_history_entry}
+                },
+                session=session
+            )
 
         # Authoritative trigger: ORDER_UPDATE (Confirmed)
         try:

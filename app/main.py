@@ -65,10 +65,15 @@ async def startup_event():
     ExpiryWorker.start(interval_seconds=3600)
     # Start background notification scheduler worker
     NotificationSchedulerWorker.start(interval_seconds=settings.NOTIFICATION_SCHEDULER_INTERVAL_SECONDS)
+    # Start automated payment reconciliation and crash recovery worker (every 5 minutes)
+    from app.services.payment_reconciliation import PaymentReconciliationService
+    PaymentReconciliationService.start_worker(interval_seconds=300)
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     await ExpiryWorker.stop()
     await NotificationSchedulerWorker.stop()
+    from app.services.payment_reconciliation import PaymentReconciliationService
+    await PaymentReconciliationService.stop_worker()
 

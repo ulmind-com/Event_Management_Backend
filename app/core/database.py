@@ -117,4 +117,10 @@ admin_webauthn_challenge_collection = db["admin_webauthn_challenges"]
 user_webauthn_credential_collection = db["user_webauthn_credentials"]
 user_webauthn_challenge_collection = db["user_webauthn_challenges"]
 
+# ── Production Transactions, Idempotency & Payment Recovery Collections ──
+idempotency_collection = db["idempotency_records"]
+webhook_event_collection = db["webhook_events"]
+payment_recovery_collection = db["payment_recovery_queue"]
+
+
 

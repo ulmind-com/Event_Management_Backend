@@ -61,3 +61,4 @@ async def run_in_transaction_with_retry(
                 raise
     finally:
         await session.end_session()
+

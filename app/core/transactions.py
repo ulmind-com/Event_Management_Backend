@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import random
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Optional, Callable, Any
 from pymongo.errors import PyMongoError, OperationFailure
@@ -35,13 +36,13 @@ async def database_transaction() -> AsyncGenerator[motor.motor_asyncio.AsyncIOMo
 
 async def run_in_transaction_with_retry(
     transaction_body_fn: Callable[[motor.motor_asyncio.AsyncIOMotorClientSession], Any],
-    max_retries: int = 3,
-    backoff_delay: float = 0.15
+    max_retries: int = 5,
+    backoff_delay: float = 0.05
 ) -> Any:
     """
-    Executes a transactional operation with automated retry for TransientTransactionErrors.
-    Complies with MongoDB official transaction guidelines for high-concurrency environments
-    (handling write conflicts and transient network failovers smoothly).
+    Executes a transactional operation with automated retry for TransientTransactionErrors
+    and WriteConflicts, with jittered exponential backoff.
+    Complies with MongoDB official transaction guidelines for high-concurrency environments.
     """
     session = await client.start_session()
     try:
@@ -51,14 +52,18 @@ async def run_in_transaction_with_retry(
                     result = await transaction_body_fn(session)
                     return result
             except PyMongoError as exc:
-                if exc.has_error_label("TransientTransactionError") and attempt < max_retries - 1:
+                is_transient = exc.has_error_label("TransientTransactionError") or "WriteConflict" in str(exc)
+                if is_transient and attempt < max_retries - 1:
+                    jitter = random.uniform(0.01, 0.05)
+                    delay = (backoff_delay * (2 ** attempt)) + jitter
                     logger.warning(
-                        f"TransientTransactionError encountered on attempt {attempt + 1}/{max_retries}. "
-                        f"Retrying after {backoff_delay * (2 ** attempt)}s..."
+                        f"TransientTransactionError/WriteConflict on attempt {attempt + 1}/{max_retries}. "
+                        f"Retrying after {delay:.3f}s..."
                     )
-                    await asyncio.sleep(backoff_delay * (2 ** attempt))
+                    await asyncio.sleep(delay)
                     continue
                 raise
     finally:
         await session.end_session()
+
 

@@ -35,6 +35,10 @@ async def setup_vip_test_data():
         "name": "Alice VIP",
         "email": user1_email,
         "role": "USER",
+        "phone_number": "+919876543210",
+        "date_of_birth": "2000-01-01",
+        "address": "123 Test Street",
+        "parent_phone_number": "+919876543211",
         "registration_complete": True,
         "created_at": now_utc
     })
@@ -43,6 +47,10 @@ async def setup_vip_test_data():
         "name": "Bob VIP",
         "email": user2_email,
         "role": "USER",
+        "phone_number": "+919876543212",
+        "date_of_birth": "2000-01-01",
+        "address": "123 Test Street",
+        "parent_phone_number": "+919876543213",
         "registration_complete": True,
         "created_at": now_utc
     })

@@ -307,14 +307,31 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
         except Exception:
             pass
 
-    # Update count if free, coin-covered, or confirmed via cash registration
+    # Update count atomically if free, coin-covered, or confirmed via cash registration
     if final_status == "CONFIRMED":
-        if req.activity_type == "event":
-            await event_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
-        elif req.activity_type == "competition":
-            await competition_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
-        elif req.activity_type == "course":
-            await course_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
+        cap_val = activity.get("capacity") or activity.get("available_seats")
+        if cap_val and int(cap_val) > 0:
+            filt = {
+                "_id": obj_id,
+                "$expr": {"$lt": [{"$ifNull": ["$registered_count", 0]}, int(cap_val)]}
+            }
+            if req.activity_type == "event":
+                u_res = await event_collection.update_one(filt, {"$inc": {"registered_count": 1}})
+            elif req.activity_type == "competition":
+                u_res = await competition_collection.update_one(filt, {"$inc": {"registered_count": 1}})
+            elif req.activity_type in ("course", "workshop"):
+                u_res = await course_collection.update_one(filt, {"$inc": {"registered_count": 1}})
+            else:
+                u_res = None
+            if u_res and u_res.modified_count == 0:
+                raise HTTPException(status_code=409, detail="Activity capacity limit has been reached.")
+        else:
+            if req.activity_type == "event":
+                await event_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
+            elif req.activity_type == "competition":
+                await competition_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
+            elif req.activity_type in ("course", "workshop"):
+                await course_collection.update_one({"_id": obj_id}, {"$inc": {"registered_count": 1}})
 
     payment_info = None
     if payable_amount > 0.0 and payment_method == "ONLINE":

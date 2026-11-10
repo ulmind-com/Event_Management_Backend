@@ -8,6 +8,7 @@ from app.services.payment import PaymentService
 from app.services.ticket import TicketService
 from app.core.idempotency import IdempotencyManager
 from app.core.transactions import database_transaction
+from app.core.concurrency import ResourceLockManager
 from datetime import datetime, timezone, timedelta
 import re
 import uuid
@@ -431,50 +432,52 @@ async def create_booking(
         }
 
         # ── Execute Multi-Document ACID Transaction for Inventory & Booking Creation ──
-        async with database_transaction() as session:
-            # 1. Atomic conditional stock decrement for all ticket tiers
-            for res_it in resolved_items:
-                up_res = await ticket_collection.update_one(
-                    {"_id": res_it["item_tid"], "event_id": str(e_id), "available": {"$gte": res_it["it_qty"]}},
-                    {"$inc": {"available": -res_it["it_qty"]}},
-                    session=session
-                )
-                if up_res.modified_count == 0:
-                    raise HTTPException(
-                        status_code=409,
-                        detail=f"Insufficient tickets available for category '{res_it['final_cat']}'."
+        ticket_lock_keys = [f"ticket:{res_it['item_tid']}" for res_it in resolved_items if res_it.get("item_tid")]
+        async with ResourceLockManager.acquire_many(ticket_lock_keys):
+            async with database_transaction() as session:
+                # 1. Atomic conditional stock decrement for all ticket tiers
+                for res_it in resolved_items:
+                    up_res = await ticket_collection.update_one(
+                        {"_id": res_it["item_tid"], "event_id": str(e_id), "available": {"$gte": res_it["it_qty"]}},
+                        {"$inc": {"available": -res_it["it_qty"]}},
+                        session=session
                     )
+                    if up_res.modified_count == 0:
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"Insufficient tickets available for category '{res_it['final_cat']}'."
+                        )
 
-            # 2. Insert Booking Record
-            if total_amount == 0.0:
-                booking["booking_status"] = BookingStatus.CONFIRMED.value
-                booking["payment_status"] = PaymentStatus.NOT_REQUIRED.value
-                booking["payment_status_display"] = "SUCCESS"
-                booking["confirmed_at"] = now_utc
-            elif payment_method in ["CASH", "OFFLINE"]:
-                booking["booking_status"] = BookingStatus.CONFIRMED.value
-                booking["payment_status"] = PaymentStatus.PENDING.value
-                booking["payment_status_display"] = "PENDING"
-                booking["payment_method"] = "CASH"
-                booking["cash_payment"] = True
-                booking["cash_status"] = "PENDING"
-                booking["confirmed_at"] = now_utc
-            else:
-                booking["booking_status"] = BookingStatus.PENDING.value
-                booking["payment_status"] = PaymentStatus.PENDING.value
-                booking["payment_status_display"] = "PENDING"
-                booking["payment_method"] = "ONLINE"
+                # 2. Insert Booking Record
+                if total_amount == 0.0:
+                    booking["booking_status"] = BookingStatus.CONFIRMED.value
+                    booking["payment_status"] = PaymentStatus.NOT_REQUIRED.value
+                    booking["payment_status_display"] = "SUCCESS"
+                    booking["confirmed_at"] = now_utc
+                elif payment_method in ["CASH", "OFFLINE"]:
+                    booking["booking_status"] = BookingStatus.CONFIRMED.value
+                    booking["payment_status"] = PaymentStatus.PENDING.value
+                    booking["payment_status_display"] = "PENDING"
+                    booking["payment_method"] = "CASH"
+                    booking["cash_payment"] = True
+                    booking["cash_status"] = "PENDING"
+                    booking["confirmed_at"] = now_utc
+                else:
+                    booking["booking_status"] = BookingStatus.PENDING.value
+                    booking["payment_status"] = PaymentStatus.PENDING.value
+                    booking["payment_status_display"] = "PENDING"
+                    booking["payment_method"] = "ONLINE"
 
-            ins_res = await booking_collection.insert_one(booking, session=session)
-            booking_oid = ins_res.inserted_id
+                ins_res = await booking_collection.insert_one(booking, session=session)
+                booking_oid = ins_res.inserted_id
 
-            # 3. If Free or Cash, increment event registered_count in same transaction
-            if total_amount == 0.0 or payment_method in ["CASH", "OFFLINE"]:
-                await event_collection.update_one(
-                    {"_id": e_id},
-                    {"$inc": {"registered_count": total_quantity}},
-                    session=session
-                )
+                # 3. If Free or Cash, increment event registered_count in same transaction
+                if total_amount == 0.0 or payment_method in ["CASH", "OFFLINE"]:
+                    await event_collection.update_one(
+                        {"_id": e_id},
+                        {"$inc": {"registered_count": total_quantity}},
+                        session=session
+                    )
 
         # ── Post-Commit Operations ──
         response_data = {
@@ -622,9 +625,17 @@ async def cancel_my_booking(booking_id: str, current_user: dict = Depends(get_cu
         raise HTTPException(status_code=400, detail="Booking already cancelled or expired")
         
     was_confirmed = (booking.get("booking_status") == BookingStatus.CONFIRMED.value)
-    await booking_collection.update_one({"_id": b_id}, {"$set": {"booking_status": BookingStatus.CANCELLED.value}})
+    up_res = await booking_collection.update_one(
+        {
+            "_id": b_id,
+            "booking_status": {"$nin": [BookingStatus.CANCELLED.value, BookingStatus.EXPIRED.value]}
+        },
+        {"$set": {"booking_status": BookingStatus.CANCELLED.value}}
+    )
+    if up_res.modified_count == 0:
+        raise HTTPException(status_code=400, detail="Booking already cancelled or expired")
     
-    # Restore available ticket inventory
+    # Restore available ticket inventory only once
     if ObjectId.is_valid(booking.get("ticket_id")):
         await ticket_collection.update_one(
             {"_id": ObjectId(booking["ticket_id"])},

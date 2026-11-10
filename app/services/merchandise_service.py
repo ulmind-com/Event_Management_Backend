@@ -31,6 +31,12 @@ from app.schemas.merchandise import (
 from app.services.merchandise_payment_gateway import MerchandisePaymentGatewayAdapter
 from app.services.email import EmailService
 from app.core.transactions import database_transaction
+from app.core.concurrency import (
+    ResourceLockManager,
+    build_merchandise_atomic_stock_filter,
+    build_merchandise_atomic_stock_reserve_update,
+    build_merchandise_atomic_stock_revert_update
+)
 
 logger = logging.getLogger("eventora.merchandise_service")
 
@@ -347,72 +353,7 @@ class MerchandiseService:
                 detail="Every merchandise order must have a strictly positive total (> 0). Free merchandise purchases are strictly prohibited."
             )
 
-        # 3. Concurrency-Safe Atomic Stock Reservation
-        reserved_items = []
-        try:
-            for item in req.items:
-                p_oid = MerchandiseService._to_object_id(item.product_id)
-                base_filter: Dict[str, Any] = {"_id": p_oid} if p_oid else {"_id": item.product_id}
-
-                # Atomic conditional check on remaining stock: stock_quantity - reserved_quantity >= requested_quantity
-                stock_expr = {
-                    "$gte": [
-                        {"$subtract": ["$stock_quantity", {"$ifNull": ["$reserved_quantity", 0]}]},
-                        item.quantity
-                    ]
-                }
-
-                if item.variant_id:
-                    filter_q = {
-                        **base_filter,
-                        "variants.variant_id": item.variant_id,
-                        "$expr": stock_expr
-                    }
-                    res = await merchandise_product_collection.update_one(
-                        filter_q,
-                        {"$inc": {
-                            "variants.$.reserved_quantity": item.quantity,
-                            "reserved_quantity": item.quantity
-                        }}
-                    )
-                else:
-                    filter_q = {
-                        **base_filter,
-                        "$expr": stock_expr
-                    }
-                    res = await merchandise_product_collection.update_one(
-                        filter_q,
-                        {"$inc": {"reserved_quantity": item.quantity}}
-                    )
-
-                if res.modified_count == 0:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail="Item is SOLD OUT or insufficient stock available due to concurrent purchase. Please refresh and try again."
-                    )
-                reserved_items.append(item)
-        except Exception as e:
-            # Rollback any reserved items in this order
-            for rev_item in reserved_items:
-                r_oid = MerchandiseService._to_object_id(rev_item.product_id)
-                r_filter: Dict[str, Any] = {"_id": r_oid} if r_oid else {"_id": rev_item.product_id}
-                if rev_item.variant_id:
-                    r_filter["variants.variant_id"] = rev_item.variant_id
-                    await merchandise_product_collection.update_one(
-                        r_filter,
-                        {"$inc": {
-                            "variants.$.reserved_quantity": -rev_item.quantity,
-                            "reserved_quantity": -rev_item.quantity
-                        }}
-                    )
-                else:
-                    await merchandise_product_collection.update_one(
-                        r_filter,
-                        {"$inc": {"reserved_quantity": -rev_item.quantity}}
-                    )
-            raise e
-
-        # 4. Create Pending Order Document
+        # 3. Concurrency-Safe Atomic Stock Reservation & Order Creation via ACID Database Transaction
         order_number = f"MCH-ORD-{uuid.uuid4().hex[:10].upper()}"
         expires_at = now_utc + timedelta(minutes=15)
 
@@ -444,21 +385,56 @@ class MerchandiseService:
             "updated_at": now_utc
         }
 
-        insert_res = await merchandise_order_collection.insert_one(order_doc)
-        order_doc["id"] = str(insert_res.inserted_id)
+        # Resource locking on products to prevent thundering herds and connection pool contention
+        resource_keys = [f"merchandise_product:{item.product_id}" for item in req.items]
+        async with ResourceLockManager.acquire_many(resource_keys):
+            # Fast-path check: if any product/variant was already marked OUT_OF_STOCK by an immediate previous transaction
+            for item in req.items:
+                r_key = f"merchandise_product:{item.product_id}"
+                if item.variant_id:
+                    r_key = f"merchandise_product:{item.product_id}:{item.variant_id}"
+                if ResourceLockManager.get_resource_state(r_key) == "OUT_OF_STOCK":
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Item is SOLD OUT or insufficient stock available due to concurrent purchase. Please refresh and try again."
+                    )
 
-        # Record Inventory Reservation Movements
-        for it in item_snapshots:
-            await merchandise_inventory_movement_collection.insert_one({
-                "product_id": it["product_id"],
-                "variant_id": it["variant"]["variant_id"] if it.get("variant") else None,
-                "movement_type": InventoryMovementType.STOCK_RESERVED.value,
-                "quantity_delta": it["quantity"],
-                "related_order_number": order_number,
-                "actor": user_email,
-                "reason": "Stock reserved for pending checkout",
-                "timestamp": now_utc
-            })
+            async with database_transaction() as session:
+                for item in req.items:
+                    filter_q = build_merchandise_atomic_stock_filter(item.product_id, item.quantity, item.variant_id)
+                    update_q = build_merchandise_atomic_stock_reserve_update(item.quantity, item.variant_id)
+
+                    res = await merchandise_product_collection.update_one(
+                        filter_q,
+                        update_q,
+                        session=session
+                    )
+                    if res.modified_count == 0:
+                        r_key = f"merchandise_product:{item.product_id}"
+                        if item.variant_id:
+                            r_key = f"merchandise_product:{item.product_id}:{item.variant_id}"
+                        ResourceLockManager.set_resource_state(r_key, "OUT_OF_STOCK")
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail="Item is SOLD OUT or insufficient stock available due to concurrent purchase. Please refresh and try again."
+                        )
+
+                # Insert Pending Order Document atomically in same transaction
+                insert_res = await merchandise_order_collection.insert_one(order_doc, session=session)
+                order_doc["id"] = str(insert_res.inserted_id)
+
+                # Record Inventory Reservation Movements atomically in same transaction
+                for it in item_snapshots:
+                    await merchandise_inventory_movement_collection.insert_one({
+                        "product_id": it["product_id"],
+                        "variant_id": it["variant"]["variant_id"] if it.get("variant") else None,
+                        "movement_type": InventoryMovementType.STOCK_RESERVED.value,
+                        "quantity_delta": it["quantity"],
+                        "related_order_number": order_number,
+                        "actor": user_email,
+                        "reason": "Stock reserved for pending checkout",
+                        "timestamp": now_utc
+                    }, session=session)
 
         # 5. Create Payment Gateway Order
         payment_order = MerchandisePaymentGatewayAdapter.create_order(
@@ -764,6 +740,20 @@ class MerchandiseService:
 
         # Only unpaid pending reservations can be cancelled to release reserved stock
         if current_status == OrderStatus.PENDING_PAYMENT.value:
+            # Atomically flip status first to avoid concurrent double cancellation
+            up_res = await merchandise_order_collection.update_one(
+                {"_id": order["_id"], "status": OrderStatus.PENDING_PAYMENT.value},
+                {
+                    "$set": {"status": OrderStatus.CANCELLED.value, "updated_at": now_utc},
+                    "$push": {"status_history": {"status": OrderStatus.CANCELLED.value, "timestamp": now_utc, "actor": user_email, "notes": reason}}
+                }
+            )
+            if up_res.modified_count == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Order already cancelled or state changed."
+                )
+
             for it in order.get("items", []):
                 p_oid = MerchandiseService._to_object_id(it["product_id"])
                 p_filter: Dict[str, Any] = {"_id": p_oid} if p_oid else {"_id": it["product_id"]}
@@ -778,11 +768,13 @@ class MerchandiseService:
                             "reserved_quantity": -qty
                         }}
                     )
+                    ResourceLockManager.invalidate_resource_state(f"merchandise_product:{it['product_id']}:{it['variant']['variant_id']}")
                 else:
                     await merchandise_product_collection.update_one(
                         p_filter,
                         {"$inc": {"reserved_quantity": -qty}}
                     )
+                ResourceLockManager.invalidate_resource_state(f"merchandise_product:{it['product_id']}")
 
                 await merchandise_inventory_movement_collection.insert_one({
                     "product_id": it["product_id"],
@@ -795,13 +787,6 @@ class MerchandiseService:
                     "timestamp": now_utc
                 })
 
-            await merchandise_order_collection.update_one(
-                {"_id": order["_id"]},
-                {
-                    "$set": {"status": OrderStatus.CANCELLED.value, "updated_at": now_utc},
-                    "$push": {"status_history": {"status": OrderStatus.CANCELLED.value, "timestamp": now_utc, "actor": user_email, "notes": reason}}
-                }
-            )
             return serialize_mongo({"message": "Unpaid session cancelled and reserved stock released.", "order_number": order.get("order_number")})
 
         raise HTTPException(
@@ -824,6 +809,17 @@ class MerchandiseService:
 
         released_count = 0
         for ord_doc in expired_orders:
+            # Atomically claim and flip order status to prevent double-restock across concurrent worker instances
+            up_res = await merchandise_order_collection.update_one(
+                {"_id": ord_doc["_id"], "status": OrderStatus.PENDING_PAYMENT.value},
+                {
+                    "$set": {"status": OrderStatus.CANCELLED.value, "payment_status": PaymentStatus.EXPIRED.value, "updated_at": now_utc},
+                    "$push": {"status_history": {"status": OrderStatus.CANCELLED.value, "timestamp": now_utc, "actor": "SYSTEM_EXPIRY_WORKER", "notes": "Reservation expired after TTL."}}
+                }
+            )
+            if up_res.modified_count == 0:
+                continue
+
             for it in ord_doc.get("items", []):
                 p_oid = MerchandiseService._to_object_id(it["product_id"])
                 p_filter: Dict[str, Any] = {"_id": p_oid} if p_oid else {"_id": it["product_id"]}
@@ -838,19 +834,14 @@ class MerchandiseService:
                             "reserved_quantity": -qty
                         }}
                     )
+                    ResourceLockManager.invalidate_resource_state(f"merchandise_product:{it['product_id']}:{it['variant']['variant_id']}")
                 else:
                     await merchandise_product_collection.update_one(
                         p_filter,
                         {"$inc": {"reserved_quantity": -qty}}
                     )
+                ResourceLockManager.invalidate_resource_state(f"merchandise_product:{it['product_id']}")
 
-            await merchandise_order_collection.update_one(
-                {"_id": ord_doc["_id"]},
-                {
-                    "$set": {"status": OrderStatus.CANCELLED.value, "payment_status": PaymentStatus.EXPIRED.value, "updated_at": now_utc},
-                    "$push": {"status_history": {"status": OrderStatus.CANCELLED.value, "timestamp": now_utc, "actor": "SYSTEM_EXPIRY_WORKER", "notes": "Reservation expired after TTL."}}
-                }
-            )
             released_count += 1
 
         return {"expired_orders_count": released_count}
@@ -891,6 +882,10 @@ class MerchandiseService:
                 {"_id": product["_id"]},
                 {"$inc": {"stock_quantity": req.quantity_delta}, "$set": {"updated_at": now_utc}}
             )
+
+        ResourceLockManager.invalidate_resource_state(f"merchandise_product:{req.product_id}")
+        if req.variant_id:
+            ResourceLockManager.invalidate_resource_state(f"merchandise_product:{req.product_id}:{req.variant_id}")
 
         # Audit movement
         await merchandise_inventory_movement_collection.insert_one({

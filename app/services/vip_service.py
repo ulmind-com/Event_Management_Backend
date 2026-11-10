@@ -35,6 +35,7 @@ from app.services.vip_payment_gateway import VIPPaymentGatewayAdapter
 from app.services.ticket import TicketService
 from app.services.email import EmailService
 from app.core.transactions import database_transaction
+from app.core.concurrency import ResourceLockManager
 
 logger = logging.getLogger("eventora.vip_service")
 
@@ -311,26 +312,35 @@ class VIPService:
             {"$set": {"booking_status": "EXPIRED", "expired_at": now_utc}}
         )
 
-        # Check if user already has an active pending payment reservation
-        active_pending = await vip_booking_collection.find_one({
-            "configuration_id": str(config["_id"]),
-            "user_email": user_email,
-            "booking_status": "PENDING_PAYMENT",
-            "expires_at": {"$gt": now_utc}
-        })
-        if active_pending:
-            active_pending["booking_id"] = str(active_pending["_id"])
-            active_pending["capacity"] = await VIPService.calculate_capacity_stats(config)
-            
-            p_order = VIPPaymentGatewayAdapter.create_order(
-                booking_id=str(active_pending["_id"]),
-                booking_reference=active_pending.get("booking_reference"),
-                amount=float(active_pending.get("total_amount", 0.0)),
-                currency=active_pending.get("currency", "INR"),
-                user_email=user_email
+        # Pre-check available capacity
+        cap_stats = await VIPService.calculate_capacity_stats(config)
+        if cap_stats.available_count < req.quantity:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"SOLD OUT: Requested {req.quantity} pass(es), but only limited capacity is available due to high concurrent demand."
             )
-            active_pending["payment_details"] = p_order
-            return serialize_mongo(active_pending)
+
+        # Check if user has an active pending payment reservation with the same idempotency key
+        if req.idempotency_key:
+            active_pending = await vip_booking_collection.find_one({
+                "configuration_id": str(config["_id"]),
+                "user_email": user_email,
+                "booking_status": "PENDING_PAYMENT",
+                "idempotency_key": req.idempotency_key,
+                "expires_at": {"$gt": now_utc}
+            })
+            if active_pending:
+                active_pending["booking_id"] = str(active_pending["_id"])
+                active_pending["capacity"] = cap_stats
+                p_order = VIPPaymentGatewayAdapter.create_order(
+                    booking_id=str(active_pending["_id"]),
+                    booking_reference=active_pending.get("booking_reference"),
+                    amount=float(active_pending.get("total_amount", 0.0)),
+                    currency=active_pending.get("currency", "INR"),
+                    user_email=user_email
+                )
+                active_pending["payment_details"] = p_order
+                return serialize_mongo(active_pending)
 
         # 3. Enforce Per-User Booking Limits
         max_user_limit = int(config.get("max_passes_per_user", 1))
@@ -356,7 +366,48 @@ class VIPService:
                 existing_idemp["capacity"] = await VIPService.calculate_capacity_stats(config)
                 return serialize_mongo(existing_idemp)
 
-        # 5. Atomic Capacity Check & Allocation
+        # 5. Calculate Authoritative Price
+        unit_price = float(config.get("price", 0.0))
+        if unit_price <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price configuration. Free VIP passes are prohibited.")
+        total_amount = round(unit_price * req.quantity, 2)
+        currency = config.get("currency", "INR")
+
+        # 6. Create Pending Booking & Payment Order
+        booking_ref = f"VIP-BKG-{uuid.uuid4().hex[:10].upper()}"
+        expiry_minutes = int(config.get("reservation_expiry_minutes", 15))
+        expires_at = now_utc + timedelta(minutes=expiry_minutes)
+
+        holder_names = req.holder_names or [current_user.get("name", "VIP Guest")]
+        while len(holder_names) < req.quantity:
+            holder_names.append(f"Guest {len(holder_names) + 1}")
+
+        booking_doc = {
+            "booking_reference": booking_ref,
+            "event_id": str(event_id),
+            "event_title": config.get("event_title", "Event"),
+            "configuration_id": str(config["_id"]),
+            "pass_name": config.get("name"),
+            "category": config.get("category"),
+            "user_email": user_email,
+            "user_name": current_user.get("name", ""),
+            "quantity": req.quantity,
+            "unit_price": unit_price,
+            "total_amount": total_amount,
+            "currency": currency,
+            "holder_names": holder_names,
+            "booking_status": "PENDING_PAYMENT",
+            "payment_status": "PENDING",
+            "payment_reference": None,
+            "issued_pass_ids": [],
+            "idempotency_key": req.idempotency_key,
+            "booked_at": now_utc,
+            "expires_at": expires_at,
+            "created_at": now_utc,
+            "updated_at": now_utc,
+        }
+
+        # 7. Concurrency-Safe Atomic Capacity Check & Allocation via ACID Database Transaction
         c_oid = VIPService._to_object_id(config["_id"])
         c_filter = {
             "_id": c_oid if c_oid else config["_id"],
@@ -367,106 +418,60 @@ class VIPService:
                 ]
             }
         }
-        alloc_res = await vip_configuration_collection.update_one(
-            c_filter,
-            {"$inc": {"allocated_count": req.quantity}}
+
+        async with ResourceLockManager.acquire(f"vip_config:{config_id}"):
+            async with database_transaction() as session:
+                alloc_res = await vip_configuration_collection.update_one(
+                    c_filter,
+                    {"$inc": {"allocated_count": req.quantity}},
+                    session=session
+                )
+                if alloc_res.modified_count == 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"SOLD OUT: Requested {req.quantity} pass(es), but only limited capacity is available due to high concurrent demand."
+                    )
+
+                insert_res = await vip_booking_collection.insert_one(booking_doc, session=session)
+                booking_id = str(insert_res.inserted_id)
+                booking_doc["_id"] = insert_res.inserted_id
+                booking_doc["booking_id"] = booking_id
+
+                # Audit log in session
+                await audit_log_collection.insert_one({
+                    "actor_id": user_email,
+                    "action_type": "VIP_BOOKING_CREATED",
+                    "event_id": str(event_id),
+                    "booking_id": booking_id,
+                    "booking_reference": booking_ref,
+                    "amount": total_amount,
+                    "timestamp": now_utc
+                }, session=session)
+
+        # 8. Create Gateway Payment Order & Payment Attempt
+        payment_order = VIPPaymentGatewayAdapter.create_order(
+            booking_id=booking_id,
+            booking_reference=booking_ref,
+            amount=total_amount,
+            currency=currency,
+            user_email=user_email
         )
-        if alloc_res.modified_count == 0:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"SOLD OUT: Requested {req.quantity} pass(es), but only limited capacity is available due to high concurrent demand."
-            )
 
-        try:
-            # 6. Calculate Authoritative Price
-            unit_price = float(config.get("price", 0.0))
-            if unit_price <= 0:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price configuration. Free VIP passes are prohibited.")
-            total_amount = round(unit_price * req.quantity, 2)
-            currency = config.get("currency", "INR")
+        await vip_payment_attempt_collection.insert_one({
+            "booking_id": booking_id,
+            "booking_reference": booking_ref,
+            "provider": payment_order.get("provider"),
+            "provider_order_id": payment_order.get("provider_order_id"),
+            "amount": total_amount,
+            "currency": currency,
+            "status": "INITIATED",
+            "created_at": now_utc
+        })
 
-            # 7. Create Pending Booking & Payment Order
-            booking_ref = f"VIP-BKG-{uuid.uuid4().hex[:10].upper()}"
-            expiry_minutes = int(config.get("reservation_expiry_minutes", 15))
-            expires_at = now_utc + timedelta(minutes=expiry_minutes)
+        booking_doc["payment_details"] = payment_order
+        booking_doc["capacity"] = await VIPService.calculate_capacity_stats(config)
 
-            holder_names = req.holder_names or [current_user.get("name", "VIP Guest")]
-            while len(holder_names) < req.quantity:
-                holder_names.append(f"Guest {len(holder_names) + 1}")
-
-            booking_doc = {
-                "booking_reference": booking_ref,
-                "event_id": str(event_id),
-                "event_title": config.get("event_title", "Event"),
-                "configuration_id": str(config["_id"]),
-                "pass_name": config.get("name"),
-                "category": config.get("category"),
-                "user_email": user_email,
-                "user_name": current_user.get("name", ""),
-                "quantity": req.quantity,
-                "unit_price": unit_price,
-                "total_amount": total_amount,
-                "currency": currency,
-                "holder_names": holder_names,
-                "booking_status": "PENDING_PAYMENT",
-                "payment_status": "PENDING",
-                "payment_reference": None,
-                "issued_pass_ids": [],
-                "idempotency_key": req.idempotency_key,
-                "booked_at": now_utc,
-                "expires_at": expires_at,
-                "created_at": now_utc,
-                "updated_at": now_utc,
-            }
-
-            insert_res = await vip_booking_collection.insert_one(booking_doc)
-            booking_id = str(insert_res.inserted_id)
-            booking_doc["_id"] = insert_res.inserted_id
-            booking_doc["booking_id"] = booking_id
-
-            # 8. Create Gateway Payment Order
-            payment_order = VIPPaymentGatewayAdapter.create_order(
-                booking_id=booking_id,
-                booking_reference=booking_ref,
-                amount=total_amount,
-                currency=currency,
-                user_email=user_email
-            )
-
-            # Record payment attempt
-            await vip_payment_attempt_collection.insert_one({
-                "booking_id": booking_id,
-                "booking_reference": booking_ref,
-                "provider": payment_order.get("provider"),
-                "provider_order_id": payment_order.get("provider_order_id"),
-                "amount": total_amount,
-                "currency": currency,
-                "status": "INITIATED",
-                "created_at": now_utc
-            })
-
-            booking_doc["payment_details"] = payment_order
-            booking_doc["capacity"] = await VIPService.calculate_capacity_stats(config)
-
-            # Audit log
-            await audit_log_collection.insert_one({
-                "actor_id": user_email,
-                "action_type": "VIP_BOOKING_CREATED",
-                "event_id": str(event_id),
-                "booking_id": booking_id,
-                "booking_reference": booking_ref,
-                "amount": total_amount,
-                "timestamp": now_utc
-            })
-
-            return serialize_mongo(booking_doc)
-        except Exception as e:
-            # Revert allocated capacity counter on error
-            await vip_configuration_collection.update_one(
-                {"_id": c_oid if c_oid else config["_id"]},
-                {"$inc": {"allocated_count": -req.quantity}}
-            )
-            raise e
+        return serialize_mongo(booking_doc)
 
     # ──────────────────────────────────────────────────────────
     # Payment Confirmation & VIP Pass Issuance (Idempotent)
@@ -548,6 +553,8 @@ class VIPService:
         validity_end = config.get("validity_end") if config else (now_utc + timedelta(days=7))
 
         # 4. Atomically Insert Passes, Update Booking, and Log Audit via ACID Transaction
+        issued_pass_ids = []
+        issued_passes = []
         async with database_transaction() as session:
             for i in range(quantity):
                 holder = holder_names[i] if i < len(holder_names) else f"Guest {i + 1}"
@@ -971,14 +978,30 @@ class VIPService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="VIP Booking not found.")
 
         now_utc = datetime.now(timezone.utc)
-        await vip_booking_collection.update_one(
-            {"_id": booking["_id"]},
+        up_res = await vip_booking_collection.update_one(
+            {
+                "_id": booking["_id"],
+                "booking_status": {"$in": ["CONFIRMED", "PENDING_PAYMENT"]}
+            },
             {"$set": {
                 "booking_status": "CANCELLED",
                 "cancellation_reason": reason,
                 "cancelled_at": now_utc,
                 "cancelled_by": admin_email
             }}
+        )
+        if up_res.modified_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Booking is already cancelled or cannot be cancelled in its current state."
+            )
+
+        # Safely restore allocated capacity counter
+        cfg_oid = VIPService._to_object_id(booking.get("configuration_id"))
+        qty = int(booking.get("quantity", 1))
+        await vip_configuration_collection.update_one(
+            {"_id": cfg_oid if cfg_oid else booking.get("configuration_id")},
+            {"$inc": {"allocated_count": -qty}}
         )
 
         # Invalidate any associated passes

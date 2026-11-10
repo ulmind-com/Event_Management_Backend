@@ -724,19 +724,54 @@ async def register_competition(
     }
 
     if fee == 0.0:
+        # Atomic participant capacity check
+        max_p = comp.get("max_participants") or comp.get("capacity")
+        if max_p is not None and int(max_p) > 0:
+            c_res = await competition_collection.update_one(
+                {
+                    "_id": c_id,
+                    "$expr": {"$lt": [{"$ifNull": ["$registered_count", 0]}, int(max_p)]}
+                },
+                {"$inc": {"registered_count": 1}}
+            )
+            if c_res.modified_count == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Registration closed: participant capacity limit ({max_p}) has been reached."
+                )
+        else:
+            try:
+                await competition_collection.update_one({"_id": c_id}, {"$inc": {"registered_count": 1}})
+            except Exception:
+                pass
+
         doc["status"] = RegistrationStatus.CONFIRMED.value
         doc["payment_status"] = PaymentStatus.NOT_REQUIRED.value
         doc["payment_status_display"] = "SUCCESS"
         await competition_registration_collection.insert_one(doc)
-        try:
-            await competition_collection.update_one(
-                {"_id": c_id},
-                {"$inc": {"registered_count": 1}}
-            )
-        except Exception:
-            pass
         return {"message": "Registration confirmed.", "status": RegistrationStatus.CONFIRMED.value, "payment_status": PaymentStatus.NOT_REQUIRED.value, "payment_method": pay_method, "category": selected_category, "reference": reg_ref}
     elif pay_method in ["CASH", "OFFLINE"]:
+        # Atomic participant capacity check
+        max_p = comp.get("max_participants") or comp.get("capacity")
+        if max_p is not None and int(max_p) > 0:
+            c_res = await competition_collection.update_one(
+                {
+                    "_id": c_id,
+                    "$expr": {"$lt": [{"$ifNull": ["$registered_count", 0]}, int(max_p)]}
+                },
+                {"$inc": {"registered_count": 1}}
+            )
+            if c_res.modified_count == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Registration closed: participant capacity limit ({max_p}) has been reached."
+                )
+        else:
+            try:
+                await competition_collection.update_one({"_id": c_id}, {"$inc": {"registered_count": 1}})
+            except Exception:
+                pass
+
         doc["status"] = RegistrationStatus.CONFIRMED.value
         doc["payment_status"] = PaymentStatus.PENDING.value
         doc["payment_status_display"] = "PENDING"
@@ -744,13 +779,6 @@ async def register_competition(
         doc["cash_payment"] = True
         doc["cash_status"] = "PENDING"
         await competition_registration_collection.insert_one(doc)
-        try:
-            await competition_collection.update_one(
-                {"_id": c_id},
-                {"$inc": {"registered_count": 1}}
-            )
-        except Exception:
-            pass
         return {
             "message": f"Registration confirmed! Cash payment of ₹{fee:.2f} is pending at the venue.",
             "status": RegistrationStatus.CONFIRMED.value,

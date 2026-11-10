@@ -34,15 +34,21 @@ class RankingService:
         final_score = 0.0
         ranking_mode = "UNKNOWN"
 
-        if audience_enabled and not judge_enabled:
+        has_judge = bool(judge_score > 0)
+        has_votes = bool(audience_votes > 0)
+
+        eff_judge_enabled = bool(judge_enabled or has_judge)
+        eff_audience_enabled = bool(audience_enabled or has_votes)
+
+        if eff_audience_enabled and not eff_judge_enabled:
             ranking_mode = "AUDIENCE_VOTING_ONLY"
             final_score = norm_audience if max_audience_votes > 0 else float(audience_votes)
             
-        elif not audience_enabled and judge_enabled:
+        elif not eff_audience_enabled and eff_judge_enabled:
             ranking_mode = "JUDGES_SCORE_ONLY"
             final_score = norm_judge if max_judge_score > 0 else judge_score
             
-        elif audience_enabled and judge_enabled:
+        elif eff_audience_enabled and eff_judge_enabled:
             ranking_mode = "COMBINED_AUDIENCE_AND_JUDGES"
             # Ensure weights are applied as fractions
             a_frac = audience_weight if audience_weight <= 1.0 else (audience_weight / 100.0)
@@ -122,6 +128,15 @@ class RankingService:
             if "verified_badge" in p: result["verified_badge"] = p["verified_badge"]
             if "verified_tick" in p: result["verified_tick"] = p["verified_tick"]
             if "category" in p: result["category"] = p["category"]
+            if "user_email" in p: result["user_email"] = p["user_email"]
+            if "avatar" in p: result["avatar"] = p["avatar"]
+            if "round_status" in p: result["round_status"] = p["round_status"]
+            if "registration_reference" in p: result["registration_reference"] = p["registration_reference"]
+            if "registration_id" in p: result["registration_id"] = p["registration_id"]
+            if "judge_details" in p: result["judge_details"] = p["judge_details"]
+            if "comments" in p: result["comments"] = p["comments"]
+            if "is_present" in p: result["is_present"] = p["is_present"]
+            if "attendance_status" in p: result["attendance_status"] = p["attendance_status"]
             result["total_score"] = result.get("total_score", result["final_score"])
             result["score"] = result.get("score", result["final_score"])
             result["points"] = result.get("points", result["final_score"])

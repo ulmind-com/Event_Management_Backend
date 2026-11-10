@@ -141,19 +141,51 @@ async def get_public_final_present_participants(comp_id: str, category: Optional
 
 @router.get("/competitions/{comp_id}/results")
 async def public_results(comp_id: str, category: Optional[str] = Query(None)):
-    """Public API: Returns official leaderboard ONLY if results are published."""
-    comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    """Public API: Returns official leaderboard ONLY if results are published or public scores are enabled."""
+    comp = None
+    if ObjectId.is_valid(comp_id):
+        comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp:
+        comp = await competition_collection.find_one({"_id": comp_id})
+    if not comp:
+        comp = await competition_collection.find_one({"id": comp_id})
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
-    if comp.get("result_status") != "PUBLISHED":
+
+    is_pub = bool(
+        comp.get("result_status") == "PUBLISHED"
+        or comp.get("results_published", False)
+        or comp.get("score_visible_for_public", False)
+    )
+    if not is_pub:
         raise HTTPException(status_code=403, detail="Results have not been published yet.")
         
     from app.core.database import db
     result_snapshots_collection = db["result_snapshots"]
-    snapshot = await result_snapshots_collection.find_one({"competition_id": comp_id, "is_published": True})
+    snapshot = await result_snapshots_collection.find_one({
+        "$or": [{"competition_id": comp_id}, {"competition_id": str(comp["_id"])}],
+        "is_published": True
+    })
     
     if not snapshot:
-        raise HTTPException(status_code=404, detail="Official result snapshot not found.")
+        # Fall back to live multi-round / championship final ranking calculation
+        from app.services.competition_round_service import CompetitionRoundService
+        curr_r = int(comp.get("current_round") or 1)
+        total_r = len(comp.get("rounds") or [])
+        target_r = total_r if total_r > 0 else curr_r
+        lb_res = await CompetitionRoundService.get_round_leaderboard(comp_id, round_number=target_r, category=category)
+        return {
+            "_id": f"official_{comp_id}",
+            "competition_id": comp_id,
+            "is_published": True,
+            "calculated_at": datetime.now(timezone.utc).isoformat(),
+            "category": category,
+            "categories": lb_res.get("categories", []),
+            "category_leaderboards": lb_res.get("category_leaderboards", {}),
+            "leaderboard": lb_res.get("leaderboard", []),
+            "rounds": lb_res.get("rounds", []),
+            "current_round": target_r
+        }
         
     snapshot["_id"] = str(snapshot["_id"])
     cat_lbs = snapshot.get("category_leaderboards") or {}

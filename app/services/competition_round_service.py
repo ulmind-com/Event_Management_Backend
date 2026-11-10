@@ -388,11 +388,26 @@ class CompetitionRoundService:
 
         round_scores = await judge_score_collection.find(score_filter).to_list(length=5000)
         scores_by_email: Dict[str, List[float]] = {}
+        scores_by_sub_id: Dict[str, List[float]] = {}
+        judge_breakdown_by_email: Dict[str, List[Dict[str, Any]]] = {}
+        judge_breakdown_by_sub_id: Dict[str, List[Dict[str, Any]]] = {}
+
         for sc in round_scores:
             em = (sc.get("participant_id") or sc.get("user_email") or "").strip().lower()
+            s_id = str(sc.get("submission_id") or "").strip()
             val = float(sc.get("total_score") or 0.0)
+            breakdown_item = {
+                "judge_email": sc.get("judge_email"),
+                "total_score": val,
+                "scores": sc.get("scores", {}),
+                "comments": sc.get("comments") or sc.get("feedback") or ""
+            }
             if em:
                 scores_by_email.setdefault(em, []).append(val)
+                judge_breakdown_by_email.setdefault(em, []).append(breakdown_item)
+            if s_id:
+                scores_by_sub_id.setdefault(s_id, []).append(val)
+                judge_breakdown_by_sub_id.setdefault(s_id, []).append(breakdown_item)
 
         # 3. Fetch audience votes strictly for this round
         vote_filter: Dict[str, Any] = {"competition_id": {"$in": c_matches}}
@@ -437,8 +452,14 @@ class CompetitionRoundService:
             )
 
             p_scores = scores_by_email.get(em, [])
+            p_judge_details = judge_breakdown_by_email.get(em, [])
+            if not p_scores and sub and sub.get("_id"):
+                s_id_str = str(sub["_id"])
+                p_scores = scores_by_sub_id.get(s_id_str, [])
+                p_judge_details = judge_breakdown_by_sub_id.get(s_id_str, [])
             avg_judge_score = round(sum(p_scores) / len(p_scores), 2) if p_scores else 0.0
             p_votes = votes_by_email.get(em, 0)
+            p_comments = [j.get("comments") for j in p_judge_details if j.get("comments")]
             p_cat = r.get("category") or (sub.get("category") if sub else None) or comp.get("category") or "General"
 
             is_p = bool(r.get("is_present", False) or r.get("attendance_status") == "PRESENT")
@@ -453,6 +474,8 @@ class CompetitionRoundService:
                 "category": p_cat,
                 "judge_score": avg_judge_score,
                 "judge_score_count": len(p_scores),
+                "judge_details": p_judge_details,
+                "comments": p_comments,
                 "audience_votes": p_votes,
                 "is_verified": is_v,
                 "verified_badge": is_v,

@@ -10,13 +10,14 @@ from app.api.routes import (
     admin_merchandise, user_merchandise, merchandise_webhooks,
     notifications, admin_notifications, notification_ws,
     admin_kyc, user_kyc,
-    admin_analytics, admin_webauthn
+    admin_analytics, admin_webauthn, user_webauthn
 )
 
 api_router = APIRouter()
 
 # ── User APIs ──
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
+api_router.include_router(user_webauthn.router, prefix="/auth/passkey", tags=["user-webauthn"])
 api_router.include_router(profile.router, prefix="/profile", tags=["profile"])
 api_router.include_router(activities.router, prefix="/activities", tags=["activities"])
 api_router.include_router(registrations.router, prefix="/registrations", tags=["registrations"])

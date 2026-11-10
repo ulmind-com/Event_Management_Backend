@@ -110,4 +110,10 @@ kyc_verification_collection = db["kyc_verifications"]
 admin_webauthn_credential_collection = db["admin_webauthn_credentials"]
 admin_webauthn_challenge_collection = db["admin_webauthn_challenges"]
 
+# ── User WebAuthn (fingerprint / passkey) Collections ──
+# Kept apart from the admin ones so an admin passkey can never authenticate a
+# user session, or the other way round.
+user_webauthn_credential_collection = db["user_webauthn_credentials"]
+user_webauthn_challenge_collection = db["user_webauthn_challenges"]
+
 

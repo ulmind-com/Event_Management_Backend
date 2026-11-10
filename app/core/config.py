@@ -33,14 +33,19 @@ class Settings:
     # CORS
     CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 
-    # WebAuthn — admin fingerprint / passkey sign-in.
-    # WEBAUTHN_ORIGINS is a comma-separated allowlist of exact origins the admin
-    # panel is served from; the rp_id is derived per request from the Origin host,
-    # so one backend serves both production and localhost without redeploys.
+    # WebAuthn — fingerprint / passkey sign-in for the admin panel and the
+    # public website. WEBAUTHN_ORIGINS is a comma-separated allowlist of exact
+    # origins either front end is served from; the rp_id is derived per request
+    # from the Origin host, so one backend serves production and localhost
+    # without redeploys. A passkey is bound to the rp_id it was created under,
+    # so the admin panel and the website keep separate passkeys by construction.
     WEBAUTHN_RP_NAME = os.getenv("WEBAUTHN_RP_NAME", "Upgrade Talents India Admin")
+    WEBAUTHN_USER_RP_NAME = os.getenv("WEBAUTHN_USER_RP_NAME", "Upgrade Talents India")
     WEBAUTHN_ORIGINS = os.getenv(
         "WEBAUTHN_ORIGINS",
-        "https://upgrade-talents-admin.vercel.app,http://localhost:3001,http://localhost:3000",
+        "https://upgrade-talents-admin.vercel.app,"
+        "https://upgrade-talents-india-frontend.vercel.app,"
+        "http://localhost:3001,http://localhost:3000",
     )
 
     # Razorpay & Payment Gateway Configuration (from .env only - never hardcode)

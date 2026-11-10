@@ -352,10 +352,22 @@ class MerchandiseService:
         try:
             for item in req.items:
                 p_oid = MerchandiseService._to_object_id(item.product_id)
-                filter_q: Dict[str, Any] = {"_id": p_oid} if p_oid else {"_id": item.product_id}
+                base_filter: Dict[str, Any] = {"_id": p_oid} if p_oid else {"_id": item.product_id}
+
+                # Atomic conditional check on remaining stock: stock_quantity - reserved_quantity >= requested_quantity
+                stock_expr = {
+                    "$gte": [
+                        {"$subtract": ["$stock_quantity", {"$ifNull": ["$reserved_quantity", 0]}]},
+                        item.quantity
+                    ]
+                }
 
                 if item.variant_id:
-                    filter_q["variants.variant_id"] = item.variant_id
+                    filter_q = {
+                        **base_filter,
+                        "variants.variant_id": item.variant_id,
+                        "$expr": stock_expr
+                    }
                     res = await merchandise_product_collection.update_one(
                         filter_q,
                         {"$inc": {
@@ -364,13 +376,20 @@ class MerchandiseService:
                         }}
                     )
                 else:
+                    filter_q = {
+                        **base_filter,
+                        "$expr": stock_expr
+                    }
                     res = await merchandise_product_collection.update_one(
                         filter_q,
                         {"$inc": {"reserved_quantity": item.quantity}}
                     )
 
                 if res.modified_count == 0:
-                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Could not reserve stock atomically due to concurrent order.")
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Item is SOLD OUT or insufficient stock available due to concurrent purchase. Please refresh and try again."
+                    )
                 reserved_items.append(item)
         except Exception as e:
             # Rollback any reserved items in this order

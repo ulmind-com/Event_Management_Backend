@@ -112,3 +112,4 @@ async def init_core_database_indexes():
         logger.info("High-performance core database indexes initialized successfully.")
     except Exception as e:
         logger.warning(f"Core database index initialization notice: {e}")
+

@@ -11,6 +11,7 @@ from app.core.database import (
 )
 from app.services.share_service import ShareService
 from app.schemas.share import ShareLinkResponse
+from app.api.routes.admin_cms import DEFAULT_STAGE_MOMENTS_SECTION
 
 router = APIRouter()
 
@@ -182,6 +183,8 @@ async def get_homepage():
 
     # Gallery Section
     gallery_section = (settings or {}).get("gallery_section")
+    # Stage Moments / Floor Photos (Ring Showcase)
+    stage_moments_section = (settings or {}).get("stage_moments_section")
 
     return {
         "brand": {
@@ -228,9 +231,15 @@ async def get_homepage():
             "view_all_url": "/gallery",
             "images": [],
         },
+        "stage_moments_section": stage_moments_section if stage_moments_section and isinstance(stage_moments_section, dict) else DEFAULT_STAGE_MOMENTS_SECTION,
     }
 
 # ── Individual Section Endpoints ──
+@router.get("/stage-moments", tags=["public"])
+async def get_public_stage_moments():
+    settings = await website_settings_collection.find_one({"_type": "settings"})
+    stage = (settings or {}).get("stage_moments_section")
+    return stage if stage and isinstance(stage, dict) else DEFAULT_STAGE_MOMENTS_SECTION
 @router.get("/competitions/upcoming", tags=["public"])
 async def get_upcoming_competitions(skip: int = 0, limit: int = 20, search: Optional[str] = None):
     q = {"is_published": True, "is_deleted": {"$ne": True}}

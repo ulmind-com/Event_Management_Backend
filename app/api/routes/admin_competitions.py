@@ -307,6 +307,25 @@ async def upload_competition_banner(
     }
 
 
+@router.post("/upload-share-image")
+async def upload_competition_share_image(
+    file: UploadFile = File(...),
+    admin: dict = Depends(get_current_admin),
+):
+    """Uploads a competition social share / OG image to Cloudinary and returns secure URL."""
+    contents = await file.read()
+    if not contents or len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    url = upload_image(contents, folder="eventora/competitions/shares", filename=file.filename)
+    if not url:
+        raise HTTPException(status_code=500, detail="Failed to upload share image to storage.")
+    return {
+        "url": url,
+        "share_image_url": url,
+        "filename": file.filename,
+    }
+
+
 @router.post("/upload-image")
 async def upload_competition_image(
     file: UploadFile = File(...),
@@ -535,6 +554,32 @@ async def upload_banner_to_competition(
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Competition not found")
     return {"message": "Banner image uploaded and updated successfully", "banner_url": url, "banner_image_url": url}
+
+
+@router.post("/{comp_id}/upload-share-image")
+async def upload_share_image_to_competition(
+    comp_id: str,
+    file: UploadFile = File(...),
+    admin: dict = Depends(get_current_admin),
+):
+    """Uploads social share / OG image and attaches directly to the specified competition."""
+    try:
+        c_id = ObjectId(comp_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid competition ID")
+    contents = await file.read()
+    if not contents or len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    url = upload_image(contents, folder="eventora/competitions/shares", filename=file.filename)
+    if not url:
+        raise HTTPException(status_code=500, detail="Failed to upload social share image to storage.")
+    res = await competition_collection.update_one(
+        {"_id": c_id},
+        {"$set": {"share_image_url": url, "updated_at": datetime.now(timezone.utc)}}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Competition not found")
+    return {"message": "Social share image uploaded and updated successfully", "share_image_url": url}
 
 @router.post("/{comp_id}/publish")
 async def publish_competition(comp_id: str, admin: dict = Depends(get_current_admin)):

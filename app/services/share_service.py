@@ -76,7 +76,13 @@ class ShareService:
         comp_id = str(comp.get("_id", ""))
         title = comp.get("title", "Competition")
         category = comp.get("category", "")
-        image_url = comp.get("image_url") or comp.get("banner_image")
+        image_url = (
+            comp.get("share_image_url")
+            or comp.get("banner_image_url")
+            or comp.get("card_image_url")
+            or comp.get("image_url")
+            or comp.get("banner_image")
+        )
         
         base_url = cls.get_frontend_base_url()
         comp_url = f"{base_url}/competitions/{comp_id}"
@@ -94,9 +100,11 @@ class ShareService:
         social_links = {
             "whatsapp": f"https://api.whatsapp.com/send?text={encoded_text}",
             "facebook": f"https://www.facebook.com/sharer/sharer.php?u={encoded_direct_url}",
-            "twitter": f"https://twitter.com/intent/tweet?text={encoded_title}&url={encoded_direct_url}",
+            "x": f"https://x.com/intent/post?text={encoded_title}&url={encoded_direct_url}",
+            "twitter": f"https://x.com/intent/post?text={encoded_title}&url={encoded_direct_url}",
             "linkedin": f"https://www.linkedin.com/sharing/share-offsite/?url={encoded_direct_url}",
-            "telegram": f"https://t.me/share/url?url={encoded_direct_url}&text={encoded_text}"
+            "telegram": f"https://t.me/share/url?url={encoded_direct_url}&text={encoded_text}",
+            "instagram": f"{direct_registration_url}"
         }
         
         return {
@@ -107,6 +115,8 @@ class ShareService:
             "category": category,
             "categories": [c.get("name") if isinstance(c, dict) else c for c in comp.get("categories", [])],
             "image_url": image_url,
+            "poster_url": image_url,
+            "share_image_url": comp.get("share_image_url") or image_url,
             "page_url": comp_url,
             "share_url": share_url,
             "direct_registration_url": direct_registration_url,

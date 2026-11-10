@@ -148,6 +148,7 @@ class CompetitionCreateReq(BaseModel):
     card_image_url: Optional[str] = None
     banner_url: Optional[str] = None
     banner_image_url: Optional[str] = None
+    share_image_url: Optional[str] = None
     type: str = "General"
     category: Optional[str] = "General"
     categories: List[CompetitionCategory] = []
@@ -192,7 +193,7 @@ class CompetitionCreateReq(BaseModel):
     results_published: Optional[bool] = None
     result_status: Optional[str] = None
 
-    @field_validator("image_url", "card_image_url", "banner_url", "banner_image_url", mode="before")
+    @field_validator("image_url", "card_image_url", "banner_url", "banner_image_url", "share_image_url", mode="before")
     @classmethod
     def validate_image_urls(cls, v):
         return check_no_fake_cloudinary(v)
@@ -204,6 +205,7 @@ class CompetitionUpdateReq(BaseModel):
     card_image_url: Optional[str] = None
     banner_url: Optional[str] = None
     banner_image_url: Optional[str] = None
+    share_image_url: Optional[str] = None
     type: Optional[str] = None
     category: Optional[str] = None
     categories: Optional[List[CompetitionCategory]] = None
@@ -248,7 +250,7 @@ class CompetitionUpdateReq(BaseModel):
     results_published: Optional[bool] = None
     result_status: Optional[str] = None
 
-    @field_validator("image_url", "card_image_url", "banner_url", "banner_image_url", mode="before")
+    @field_validator("image_url", "card_image_url", "banner_url", "banner_image_url", "share_image_url", mode="before")
     @classmethod
     def validate_image_urls(cls, v):
         return check_no_fake_cloudinary(v)

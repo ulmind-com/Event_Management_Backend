@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from pydantic import BaseModel
 import re
+import urllib.parse
+import httpx
 from typing import Optional, List, Dict, Any
 from bson import ObjectId
 from app.core.admin_auth import get_current_admin
@@ -249,6 +251,279 @@ async def upload_stage_moment_photo(
     url = upload_image(contents, folder="eventora/stage-moments", filename=file.filename)
     if not url:
         raise HTTPException(status_code=500, detail="Failed to upload stage photo to storage.")
+    return {"url": url, "image_url": url, "filename": file.filename}
+
+
+# ════════════════════════════════════════
+# SPOTLIGHT SOCIAL MEDIA POSTS & PROMOTIONS
+# ════════════════════════════════════════
+DEFAULT_SPOTLIGHT_ITEMS = [
+    {
+        "id": "spotlight-1",
+        "platform": "instagram",
+        "title": "Nrityashastra Arena",
+        "category": "Classical & Semi-Classical",
+        "tag": "Season 2026",
+        "image_url": "https://images.unsplash.com/photo-1547153760-18fc86324498?auto=format&fit=crop&w=1200&q=85",
+        "post_url": "https://instagram.com/upgradetalents",
+    },
+    {
+        "id": "spotlight-2",
+        "platform": "instagram",
+        "title": "Street Dance Showdown",
+        "category": "Hip-Hop & Krump",
+        "tag": "Live Battle",
+        "image_url": "https://images.unsplash.com/photo-1535525153412-5a42439a210d?auto=format&fit=crop&w=1200&q=85",
+        "post_url": "https://instagram.com/upgradetalents",
+    },
+    {
+        "id": "spotlight-3",
+        "platform": "instagram",
+        "title": "Spotlight Solo Battle",
+        "category": "Freestyle All-Styles",
+        "tag": "Arena Spotlight",
+        "image_url": "https://images.unsplash.com/photo-1518834107812-67b0b7c58434?auto=format&fit=crop&w=1200&q=85",
+        "post_url": "https://instagram.com/upgradetalents",
+    },
+    {
+        "id": "spotlight-4",
+        "platform": "instagram",
+        "title": "Grand Championship Stage",
+        "category": "Live Trophy Round",
+        "tag": "Finals",
+        "image_url": "https://images.unsplash.com/photo-1545959570-a94084071b5d?auto=format&fit=crop&w=1200&q=85",
+        "post_url": "https://instagram.com/upgradetalents",
+    },
+    {
+        "id": "spotlight-5",
+        "platform": "instagram",
+        "title": "Choreography Masterclass",
+        "category": "Artist Workshop",
+        "tag": "Live Training",
+        "image_url": "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=1200&q=85",
+        "post_url": "https://events",
+    },
+    {
+        "id": "spotlight-6",
+        "platform": "instagram",
+        "title": "Electrifying Stage Arena",
+        "category": "National Tour 2026",
+        "tag": "Main Stage",
+        "image_url": "https://images.unsplash.com/photo-1540039155733-5bb30b53aa14?auto=format&fit=crop&w=1200&q=85",
+        "post_url": "https://instagram.com/upgradetalents",
+    },
+    {
+        "id": "spotlight-7",
+        "platform": "instagram",
+        "title": "Rhythm & Sync Showcase",
+        "category": "Crew Showdown",
+        "tag": "Group Dance",
+        "image_url": "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?auto=format&fit=crop&w=1200&q=85",
+        "post_url": "https://instagram.com/upgradetalents",
+    },
+    {
+        "id": "spotlight-8",
+        "platform": "instagram",
+        "title": "Live Audience Spectacle",
+        "category": "Live Energy",
+        "tag": "Electric Crowd",
+        "image_url": "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=1200&q=85",
+        "post_url": "https://instagram.com/upgradetalents",
+    },
+]
+
+DEFAULT_SPOTLIGHT_SECTION = {
+    "label": "Live Stage Moments",
+    "title": "Moments in the Spotlight",
+    "subtitle": "Raw passion, electrifying rhythm, and pure stage energy from our dancers and performers across India.",
+    "handle": "upgradetalents",
+    "follow_text": "Follow @upgradetalents on Instagram",
+    "follow_url": "https://instagram.com/upgradetalents",
+    "items": DEFAULT_SPOTLIGHT_ITEMS,
+}
+
+class LinkPreviewReq(BaseModel):
+    url: str
+
+@router.post("/extract-link-preview", tags=["admin-cms"])
+async def extract_link_preview(
+    payload: LinkPreviewReq,
+    admin: dict = Depends(get_current_admin)
+):
+    """
+    Intelligently extracts high-res poster image, video thumbnail, title and metadata
+    from social media links (YouTube, Instagram, X/Twitter, Facebook, etc.) or web pages.
+    """
+    url = (payload.url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is required.")
+
+    lowered = url.lower()
+    platform = "general"
+    if "instagram.com" in lowered:
+        platform = "instagram"
+    elif "youtube.com" in lowered or "youtu.be" in lowered:
+        platform = "youtube"
+    elif "facebook.com" in lowered or "fb.watch" in lowered:
+        platform = "facebook"
+    elif "twitter.com" in lowered or "x.com" in lowered:
+        platform = "x"
+    elif "linkedin.com" in lowered:
+        platform = "linkedin"
+    elif "tiktok.com" in lowered:
+        platform = "tiktok"
+
+    # Direct image check
+    if re.search(r'\.(?:jpg|jpeg|png|webp|gif)(?:\?.*)?$', lowered):
+        return {
+            "success": True,
+            "platform": platform,
+            "title": "Promotional Poster",
+            "image_url": url,
+            "category": "Spotlight Visual",
+            "tag": "Featured Poster"
+        }
+
+    # 1. YouTube specialized extraction
+    if platform == "youtube":
+        m = re.search(r'(?:v=|\/|embed\/|shorts\/)([0-9A-Za-z_-]{11})', url)
+        video_id = m.group(1) if m else None
+        title = "YouTube Video"
+        image_url = f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg" if video_id else None
+        channel_name = ""
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                res = await client.get(f"https://www.youtube.com/oembed?url={urllib.parse.quote(url)}&format=json")
+                if res.status_code == 200:
+                    data = res.json()
+                    title = data.get("title", title)
+                    image_url = data.get("thumbnail_url", image_url)
+                    channel_name = data.get("author_name", "")
+        except Exception:
+            pass
+        return {
+            "success": True,
+            "platform": "youtube",
+            "title": title,
+            "image_url": image_url,
+            "category": channel_name or "YouTube Spotlight",
+            "tag": "Video Showcase"
+        }
+
+    # 2. X / Twitter via vxtwitter
+    if platform == "x":
+        m = re.search(r'status(?:es)?\/([0-9]+)', url)
+        if m:
+            tid = m.group(1)
+            try:
+                async with httpx.AsyncClient(timeout=6.0) as client:
+                    res = await client.get(f"https://api.vxtwitter.com/Twitter/status/{tid}")
+                    if res.status_code == 200:
+                        data = res.json()
+                        text = data.get("text", "")
+                        media_urls = data.get("mediaURLs", [])
+                        image_url = media_urls[0] if media_urls else None
+                        return {
+                            "success": True,
+                            "platform": "x",
+                            "title": (text[:60] + "...") if len(text) > 60 else text or "X Spotlight Post",
+                            "image_url": image_url,
+                            "category": f"@{data.get('user_screen_name', 'X')}",
+                            "tag": "Social Update"
+                        }
+            except Exception:
+                pass
+
+    # 3. Instagram oEmbed attempt
+    if platform == "instagram":
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                oembed_url = f"https://api.instagram.com/oembed/?url={urllib.parse.quote(url)}"
+                res = await client.get(oembed_url)
+                if res.status_code == 200:
+                    data = res.json()
+                    return {
+                        "success": True,
+                        "platform": "instagram",
+                        "title": data.get("title") or "Instagram Spotlight Moment",
+                        "image_url": data.get("thumbnail_url"),
+                        "category": data.get("author_name") or "Instagram Reel",
+                        "tag": "Live Stage"
+                    }
+        except Exception:
+            pass
+
+    # 4. Universal Open Graph extraction with social crawler user agent
+    headers = {
+        "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    }
+    try:
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=8.0) as client:
+            res = await client.get(url)
+            html = res.text
+            og_img = re.search(r'<meta[^>]+property=[\"\']og:image[\"\'][^>]+content=[\"\']([^\"\']+)[\"\']', html, re.I)
+            if not og_img:
+                og_img = re.search(r'<meta[^>]+content=[\"\']([^\"\']+)[\"\'][^>]+property=[\"\']og:image[\"\']', html, re.I)
+            if not og_img:
+                og_img = re.search(r'<meta[^>]+name=[\"\']twitter:image[\"\'][^>]+content=[\"\']([^\"\']+)[\"\']', html, re.I)
+            
+            og_title = re.search(r'<meta[^>]+property=[\"\']og:title[\"\'][^>]+content=[\"\']([^\"\']+)[\"\']', html, re.I)
+            if not og_title:
+                og_title = re.search(r'<meta[^>]+name=[\"\']twitter:title[\"\'][^>]+content=[\"\']([^\"\']+)[\"\']', html, re.I)
+            if not og_title:
+                og_title = re.search(r'<title>([^<]+)</title>', html, re.I)
+
+            img_url = og_img.group(1) if og_img else None
+            title_text = og_title.group(1).strip() if og_title else f"{platform.title()} Spotlight Moment"
+            
+            return {
+                "success": True,
+                "platform": platform,
+                "title": title_text[:70],
+                "image_url": img_url,
+                "category": f"{platform.title()} Spotlight",
+                "tag": "Live Stage"
+            }
+    except Exception as e:
+        return {
+            "success": True,
+            "platform": platform,
+            "title": f"{platform.title()} Spotlight Post",
+            "image_url": None,
+            "category": f"{platform.title()} Post",
+            "tag": "Live Stage",
+            "note": "Could not auto-extract image. Please upload a poster or flyer."
+        }
+
+@router.get("/spotlight-section", tags=["admin-cms"])
+async def get_admin_spotlight_section(admin=Depends(get_current_admin)):
+    settings = await website_settings_collection.find_one({"_type": "settings"})
+    spotlight = (settings or {}).get("spotlight_section")
+    return spotlight if spotlight and isinstance(spotlight, dict) else DEFAULT_SPOTLIGHT_SECTION
+
+@router.put("/spotlight-section", tags=["admin-cms"])
+async def update_admin_spotlight_section(payload: Dict[str, Any], admin=Depends(get_current_admin)):
+    await website_settings_collection.update_one(
+        {"_type": "settings"},
+        {"$set": {"spotlight_section": payload, "updated_at": datetime.now(timezone.utc)}},
+        upsert=True
+    )
+    await log_admin_action(admin["email"], "update", "spotlight_section")
+    return {"message": "Spotlight section updated successfully", "spotlight_section": payload}
+
+@router.post("/upload-spotlight-photo", tags=["admin-cms"])
+async def upload_spotlight_moment_photo(
+    file: UploadFile = File(...),
+    admin: dict = Depends(get_current_admin)
+):
+    """Uploads a spotlight promo poster/photo to Cloudinary storage and returns secure URL."""
+    contents = await file.read()
+    if not contents or len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    url = upload_image(contents, folder="eventora/spotlight", filename=file.filename)
+    if not url:
+        raise HTTPException(status_code=500, detail="Failed to upload spotlight photo to storage.")
     return {"url": url, "image_url": url, "filename": file.filename}
 
 # ════════════════════════════════════════

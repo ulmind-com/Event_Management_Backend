@@ -11,7 +11,7 @@ from app.core.database import (
 )
 from app.services.share_service import ShareService
 from app.schemas.share import ShareLinkResponse
-from app.api.routes.admin_cms import DEFAULT_STAGE_MOMENTS_SECTION
+from app.api.routes.admin_cms import DEFAULT_STAGE_MOMENTS_SECTION, DEFAULT_SPOTLIGHT_SECTION
 
 router = APIRouter()
 
@@ -185,6 +185,8 @@ async def get_homepage():
     gallery_section = (settings or {}).get("gallery_section")
     # Stage Moments / Floor Photos (Ring Showcase)
     stage_moments_section = (settings or {}).get("stage_moments_section")
+    # Spotlight Section (Moments in the Spotlight / Promotional Links)
+    spotlight_section = (settings or {}).get("spotlight_section")
 
     return {
         "brand": {
@@ -232,6 +234,7 @@ async def get_homepage():
             "images": [],
         },
         "stage_moments_section": stage_moments_section if stage_moments_section and isinstance(stage_moments_section, dict) else DEFAULT_STAGE_MOMENTS_SECTION,
+        "spotlight_section": spotlight_section if spotlight_section and isinstance(spotlight_section, dict) else DEFAULT_SPOTLIGHT_SECTION,
     }
 
 # ── Individual Section Endpoints ──
@@ -240,6 +243,12 @@ async def get_public_stage_moments():
     settings = await website_settings_collection.find_one({"_type": "settings"})
     stage = (settings or {}).get("stage_moments_section")
     return stage if stage and isinstance(stage, dict) else DEFAULT_STAGE_MOMENTS_SECTION
+
+@router.get("/spotlight-section", tags=["public"])
+async def get_public_spotlight_section():
+    settings = await website_settings_collection.find_one({"_type": "settings"})
+    spotlight = (settings or {}).get("spotlight_section")
+    return spotlight if spotlight and isinstance(spotlight, dict) else DEFAULT_SPOTLIGHT_SECTION
 @router.get("/competitions/upcoming", tags=["public"])
 async def get_upcoming_competitions(skip: int = 0, limit: int = 20, search: Optional[str] = None):
     q = {"is_published": True, "is_deleted": {"$ne": True}}

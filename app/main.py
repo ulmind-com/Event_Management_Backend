@@ -38,10 +38,18 @@ def root():
 
 @app.on_event("startup")
 async def startup_event():
-    # Pre-warm Firebase Admin SDK safely at startup
+    # Pre-warm Firebase Admin SDK and Google Auth public certs safely at startup
     try:
-        from app.services.firebase_auth_service import init_firebase_admin
+        from app.services.firebase_auth_service import init_firebase_admin, _get_google_public_certs
         init_firebase_admin()
+        await _get_google_public_certs()
+    except Exception:
+        pass
+
+    # Initialize high-performance core database indexes
+    try:
+        from app.core.db_indexes import init_core_database_indexes
+        await init_core_database_indexes()
     except Exception:
         pass
 

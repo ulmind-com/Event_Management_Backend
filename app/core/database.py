@@ -6,12 +6,13 @@ client = AsyncIOMotorClient(
     settings.MONGODB_URI,
     tls=True,
     tlsCAFile=certifi.where(),
-    serverSelectionTimeoutMS=30000,
-    connectTimeoutMS=20000,
-    socketTimeoutMS=20000,
-    maxPoolSize=50,
-    minPoolSize=5,
-    maxIdleTimeMS=45000,
+    serverSelectionTimeoutMS=15000,
+    connectTimeoutMS=10000,
+    socketTimeoutMS=15000,
+    waitQueueTimeoutMS=10000,
+    maxPoolSize=250,
+    minPoolSize=20,
+    maxIdleTimeMS=60000,
 )
 db = client.eventora_db
 

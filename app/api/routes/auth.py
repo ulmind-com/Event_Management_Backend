@@ -764,12 +764,12 @@ async def google_login(req: GoogleLoginReq):
         except Exception:
             pass
 
-    # Ensure referral code exists for this user
-    try:
-        await ReferralService.get_or_create_user_referral_code(email)
-        await ReferralService.qualify_and_reward_referral(email)
-    except Exception:
-        pass
+    # Ensure referral code exists for newly registered users
+    if is_new_user:
+        try:
+            await ReferralService.get_or_create_user_referral_code(email)
+        except Exception:
+            pass
 
     user_role = user_doc.get("role", "USER")
 

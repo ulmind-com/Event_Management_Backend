@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from typing import Dict, Any, Optional
 import razorpay
 from app.core.config import settings
@@ -55,7 +56,7 @@ class PaymentService:
                     "receipt": booking_reference[:40],
                     "notes": order_notes
                 }
-                rzp_order = client.order.create(data=order_payload)
+                rzp_order = await asyncio.to_thread(client.order.create, data=order_payload)
                 provider_order_id = rzp_order.get("id")
                 status = "CREATED"
                 logger.info(f"Created live Razorpay order {provider_order_id} for booking {booking_reference}")

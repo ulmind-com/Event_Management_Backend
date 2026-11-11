@@ -34,29 +34,29 @@ class RankingService:
         final_score = 0.0
         ranking_mode = "UNKNOWN"
 
-        has_judge = bool(judge_score > 0)
-        has_votes = bool(audience_votes > 0)
-
-        eff_judge_enabled = bool(judge_enabled or has_judge)
-        eff_audience_enabled = bool(audience_enabled or has_votes)
-
-        if eff_audience_enabled and not eff_judge_enabled:
+        if audience_enabled and not judge_enabled:
             ranking_mode = "AUDIENCE_VOTING_ONLY"
             final_score = norm_audience if max_audience_votes > 0 else float(audience_votes)
-            
-        elif not eff_audience_enabled and eff_judge_enabled:
+
+        elif not audience_enabled and judge_enabled:
             ranking_mode = "JUDGES_SCORE_ONLY"
-            final_score = norm_judge if max_judge_score > 0 else judge_score
-            
-        elif eff_audience_enabled and eff_judge_enabled:
+            # Preserve exact judge score instead of scaling to 0-100%
+            final_score = float(judge_score)
+
+        elif audience_enabled and judge_enabled:
             ranking_mode = "COMBINED_AUDIENCE_AND_JUDGES"
-            # Ensure weights are applied as fractions
-            a_frac = audience_weight if audience_weight <= 1.0 else (audience_weight / 100.0)
-            j_frac = judge_weight if judge_weight <= 1.0 else (judge_weight / 100.0)
-            if a_frac == 0 and j_frac == 0:
-                a_frac, j_frac = 0.5, 0.5
-            
-            final_score = (norm_audience * a_frac) + (norm_judge * j_frac)
+            if max_audience_votes <= 0:
+                # When 0 audience votes exist (e.g., offline judging), preserve raw judge score
+                # instead of scaling judge_score by judge_weight * (judge_score / max_judge)
+                final_score = float(judge_score)
+            else:
+                # Ensure weights are applied as fractions
+                a_frac = audience_weight if audience_weight <= 1.0 else (audience_weight / 100.0)
+                j_frac = judge_weight if judge_weight <= 1.0 else (judge_weight / 100.0)
+                if a_frac == 0 and j_frac == 0:
+                    a_frac, j_frac = 0.5, 0.5
+
+                final_score = (norm_audience * a_frac) + (norm_judge * j_frac)
         else:
             # Fallback when explicit flags are not set on comp document
             if judge_score > 0 and audience_votes > 0:
@@ -64,19 +64,20 @@ class RankingService:
                 final_score = (norm_audience * 0.5) + (norm_judge * 0.5)
             elif judge_score > 0:
                 ranking_mode = "JUDGES_SCORE_ONLY"
-                final_score = norm_judge or judge_score
+                final_score = float(judge_score)
             elif audience_votes > 0:
                 ranking_mode = "AUDIENCE_VOTING_ONLY"
-                final_score = norm_audience or float(audience_votes)
+                final_score = float(audience_votes)
             else:
                 ranking_mode = "UNKNOWN"
                 final_score = 0.0
 
-        # Safety: If final score evaluated to 0.0 but user has actual points, don't drop points to zero
+        # Safety: If final score evaluated to 0.0 but user has actual enabled points, don't drop points to zero
         if final_score <= 0.0:
-            if judge_score > 0:
-                final_score = judge_score
-            elif audience_votes > 0:
+            neither_flag = not audience_enabled and not judge_enabled
+            if judge_score > 0 and (judge_enabled or neither_flag):
+                final_score = float(judge_score)
+            elif audience_votes > 0 and (audience_enabled or neither_flag):
                 final_score = float(audience_votes)
         
         return {

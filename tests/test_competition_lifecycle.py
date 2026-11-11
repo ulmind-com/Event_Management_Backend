@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 import asyncio
 from httpx import AsyncClient, ASGITransport
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -46,6 +46,45 @@ async def test_ranking_combined():
     leaderboard = RankingService.calculate_leaderboard(participants, 100, 100, comp_settings)
     assert leaderboard[0]["ranking_mode"] == "COMBINED_AUDIENCE_AND_JUDGES"
     assert leaderboard[0]["final_score"] == 88.0
+
+
+@pytest.mark.asyncio
+async def test_ranking_preserves_raw_judge_scores_without_votes():
+    """
+    Regression test for 15 -> 25 and 3 -> 5 leaderboard bug:
+    - Judge-only with max_judge_score=60 must keep 15.0 and 3.0 (not 25.0 and 5.0).
+    - Default combined flags (50/50 weights, criteria max=30) with 0 audience votes
+      must also keep raw judge scores 15.0 and 3.0 instead of scaling by 0.5*(score/30)*100.
+    """
+    participants = [
+        {"participant_id": "suhan", "audience_votes": 0, "judge_score": 15},
+        {"participant_id": "saumendra", "audience_votes": 0, "judge_score": 3},
+        {"participant_id": "joy", "audience_votes": 0, "judge_score": 0},
+    ]
+
+    judge_only = RankingService.calculate_leaderboard(
+        participants,
+        max_audience_votes=0,
+        max_judge_score=60,
+        comp_settings={
+            "audience_voting_enabled": False,
+            "judge_scoring_enabled": True,
+        },
+    )
+    assert [p["final_score"] for p in judge_only] == [15.0, 3.0, 0.0]
+
+    combined_zero_votes = RankingService.calculate_leaderboard(
+        participants,
+        max_audience_votes=0,
+        max_judge_score=30,
+        comp_settings={
+            "audience_voting_enabled": True,
+            "judge_scoring_enabled": True,
+            "audience_vote_weight": 0.5,
+            "judge_score_weight": 0.5,
+        },
+    )
+    assert [p["final_score"] for p in combined_zero_votes] == [15.0, 3.0, 0.0]
 
 @pytest.mark.asyncio
 async def test_lifecycle_and_finalization():

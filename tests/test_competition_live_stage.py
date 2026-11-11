@@ -48,6 +48,10 @@ async def test_live_stage_end_to_end_workflow():
     await admin_collection.delete_many({"email": admin_email})
     await user_collection.delete_many({"email": {"$in": test_emails}})
     await competition_collection.delete_many({"title": "Live Stage Championship 2026"})
+    await competition_registration_collection.delete_many({
+        "registration_reference": {"$in": ["CRG-STAGE-001", "CRG-STAGE-002", "CRG-STAGE-003"]}
+    })
+    await competition_submission_collection.delete_many({"user_email": {"$in": test_emails}})
 
     # Setup admin
     await admin_collection.insert_one({
@@ -327,3 +331,125 @@ async def test_live_stage_end_to_end_workflow():
     await judge_score_collection.delete_many({"competition_id": comp_id})
     await admin_collection.delete_many({"email": admin_email})
     await user_collection.delete_many({"email": {"$in": test_emails}})
+
+
+@pytest.mark.asyncio
+async def test_live_stage_attendance_filtering_and_media_extraction():
+    """
+    Verifies:
+    1. When >=1 participant is marked PRESENT, both admin stage dashboard and public stage
+       lineup exclude ABSENT participants from the active performance lineup.
+    2. Audio/media URLs from submissions are extracted onto participants, current_performer,
+       and judge stage card, while LIVE_STAGE metadata placeholders are ignored.
+    """
+    from app.services.competition_stage_service import CompetitionStageService
+
+    placeholder_media = CompetitionStageService._extract_submission_media({
+        "files": {
+            "type": "LIVE_STAGE",
+            "media_type": "LIVE_PERFORMANCE",
+            "label": "Live Stage Performance",
+        }
+    })
+    assert placeholder_media["files"] == {}
+    assert placeholder_media["media_files"] == []
+    assert placeholder_media["audio_url"] is None
+
+    extracted = CompetitionStageService._extract_submission_media({
+        "files": {
+            "Audition Audio Track": "https://cdn.example.com/tracks/assam-dance.bin",
+            "type": "LIVE_STAGE",
+        }
+    })
+    assert extracted["audio_url"] == "https://cdn.example.com/tracks/assam-dance.bin"
+    assert len(extracted["media_files"]) == 1
+    assert extracted["media_files"][0]["is_audio"] is True
+
+    test_refs = ["CRG-ATT-001", "CRG-ATT-002", "CRG-ATT-003"]
+    test_emails = ["att1@test.com", "att2@test.com", "att3@test.com"]
+    await competition_collection.delete_many({"title": "Attendance Lineup Test Comp"})
+    await competition_registration_collection.delete_many({"registration_reference": {"$in": test_refs}})
+    await competition_submission_collection.delete_many({"user_email": {"$in": test_emails}})
+
+    comp_res = await competition_collection.insert_one({
+        "title": "Attendance Lineup Test Comp",
+        "event_mode": "OFFLINE",
+        "is_offline": True,
+        "judging_criteria": [{"name": "Stage", "max_score": 10.0, "weight": 1.0}],
+        "created_at": datetime.now(timezone.utc),
+    })
+    comp_id = str(comp_res.inserted_id)
+
+    try:
+        await competition_registration_collection.insert_many([
+            {
+                "competition_id": comp_id,
+                "user_email": test_emails[0],
+                "user_name": "Present One",
+                "registration_reference": test_refs[0],
+                "status": "CONFIRMED",
+                "is_present": True,
+                "attendance_status": "PRESENT",
+                "stage_order": 1,
+                "registered_at": datetime.now(timezone.utc),
+            },
+            {
+                "competition_id": comp_id,
+                "user_email": test_emails[1],
+                "user_name": "Present Two",
+                "registration_reference": test_refs[1],
+                "status": "CONFIRMED",
+                "is_present": True,
+                "attendance_status": "PRESENT",
+                "stage_order": 2,
+                "registered_at": datetime.now(timezone.utc),
+            },
+            {
+                "competition_id": comp_id,
+                "user_email": test_emails[2],
+                "user_name": "Absent Three",
+                "registration_reference": test_refs[2],
+                "status": "CONFIRMED",
+                "is_present": False,
+                "attendance_status": "ABSENT",
+                "stage_order": 3,
+                "registered_at": datetime.now(timezone.utc),
+            },
+        ])
+        await competition_submission_collection.insert_one({
+            "competition_id": comp_id,
+            "user_email": test_emails[0],
+            "user_name": "Present One",
+            "title": "Bihu Mix",
+            "status": "APPROVED",
+            "files": {
+                "Audition Audio Track": "https://res.cloudinary.com/demo/video/upload/bihu.mp3",
+            },
+        })
+
+        dash = await CompetitionStageService.get_admin_stage_dashboard(comp_id)
+        assert dash["total_participants"] == 2
+        assert dash["present_count"] == 2
+        assert dash["absent_count"] == 1
+        assert dash["all_registered_count"] == 3
+        assert len(dash["participants"]) == 2
+        assert len(dash["all_participants"]) == 3
+        assert [p["user_email"] for p in dash["participants"]] == [test_emails[0], test_emails[1]]
+        assert dash["participants"][0]["audio_url"] == "https://res.cloudinary.com/demo/video/upload/bihu.mp3"
+
+        pub = await CompetitionStageService.get_public_stage_status(comp_id)
+        assert pub["total_participants"] == 2
+        assert [p["user_email"] for p in pub["lineup"]] == [test_emails[0], test_emails[1]]
+
+        set_res = await CompetitionStageService.set_current_performer(comp_id, test_refs[0])
+        assert set_res["current_performer"]["audio_url"] == "https://res.cloudinary.com/demo/video/upload/bihu.mp3"
+        assert set_res["current_performer"]["media_files"][0]["is_audio"] is True
+
+        judge_card = await CompetitionStageService.get_judge_stage_card(comp_id, "judge@test.com")
+        assert judge_card["current_performer"]["audio_url"] == "https://res.cloudinary.com/demo/video/upload/bihu.mp3"
+        assert len(judge_card["lineup"]) == 2
+    finally:
+        await competition_collection.delete_one({"_id": ObjectId(comp_id)})
+        await competition_registration_collection.delete_many({"registration_reference": {"$in": test_refs}})
+        await competition_submission_collection.delete_many({"user_email": {"$in": test_emails}})
+        await competition_stage_collection.delete_many({"competition_id": comp_id})

@@ -52,6 +52,142 @@ class CompetitionStageService:
             or_list.insert(0, {"_id": ObjectId(cid)})
         return {"$or": or_list}
 
+    @staticmethod
+    def _build_comp_matches(c_str: str, comp: Optional[Dict[str, Any]] = None) -> List[Any]:
+        """Builds deduplicated ObjectId/string identifiers matching a competition document."""
+        matches: List[Any] = [c_str]
+        if ObjectId.is_valid(c_str):
+            matches.append(ObjectId(c_str))
+        if isinstance(comp, dict):
+            if comp.get("_id"):
+                matches.extend([comp["_id"], str(comp["_id"])])
+            if comp.get("id"):
+                matches.extend([comp["id"], str(comp["id"])])
+        return list({str(x): x for x in matches}.values())
+
+    @staticmethod
+    def _extract_submission_media(sub: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Extracts real HTTP(S) media URLs (audio tracks, YouTube links, videos, images)
+        from a competition submission document while ignoring live-stage placeholder metadata.
+        """
+        if not isinstance(sub, dict) or not sub:
+            return {
+                "files": {},
+                "media_files": [],
+                "submission_url": None,
+                "audio_url": None,
+            }
+
+        raw_files = sub.get("files") if isinstance(sub.get("files"), dict) else {}
+        valid_files: Dict[str, str] = {}
+        media_files: List[Dict[str, Any]] = []
+        seen_urls = set()
+
+        audio_exts = (".mp3", ".wav", ".aac", ".ogg", ".m4a", ".flac", ".opus", "/audio/")
+        audio_keywords = ("audio", "song", "track", "music", "sound", "vocal", "bgm")
+
+        def _add_media(label: str, raw_val: Any) -> None:
+            if not isinstance(raw_val, str):
+                return
+            url = raw_val.strip()
+            if not url.startswith(("http://", "https://")):
+                return
+            clean_label = str(label or "Media File").strip() or "Media File"
+            if clean_label not in valid_files:
+                valid_files[clean_label] = url
+            if url in seen_urls:
+                return
+            seen_urls.add(url)
+
+            lu = url.lower()
+            lk = clean_label.lower()
+            is_youtube = "youtube.com" in lu or "youtu.be" in lu
+            is_audio = (not is_youtube) and (
+                any(ext in lu for ext in audio_exts)
+                or any(kw in lk for kw in audio_keywords)
+            )
+            media_files.append({
+                "label": clean_label,
+                "url": url,
+                "is_audio": is_audio,
+                "is_youtube": is_youtube,
+            })
+
+        for k, v in raw_files.items():
+            _add_media(k, v)
+
+        for fallback_key in ("audio_url", "submission_url", "video_link", "file_url", "media_url"):
+            if sub.get(fallback_key):
+                _add_media(fallback_key.replace("_", " ").title(), sub.get(fallback_key))
+
+        audio_url: Optional[str] = None
+        raw_explicit_audio = sub.get("audio_url")
+        if isinstance(raw_explicit_audio, str) and raw_explicit_audio.strip().startswith(("http://", "https://")):
+            audio_url = raw_explicit_audio.strip()
+        else:
+            for item in media_files:
+                if item["is_audio"]:
+                    audio_url = item["url"]
+                    break
+
+        submission_url = audio_url or (media_files[0]["url"] if media_files else None)
+        return {
+            "files": valid_files,
+            "media_files": media_files,
+            "submission_url": submission_url,
+            "audio_url": audio_url,
+        }
+
+    @classmethod
+    def _merge_best_submission(
+        cls,
+        existing: Optional[Dict[str, Any]],
+        candidate: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Prefer submissions with real uploaded media over auto-created live-stage placeholders."""
+        if not existing:
+            return candidate
+        existing_media = cls._extract_submission_media(existing)
+        candidate_media = cls._extract_submission_media(candidate)
+        if candidate_media["media_files"] and not existing_media["media_files"]:
+            return candidate
+        if candidate_media["media_files"] and existing_media["media_files"]:
+            merged_files = dict(existing_media["files"])
+            merged_files.update(candidate_media["files"])
+            merged = dict(existing)
+            merged["files"] = merged_files
+            return merged
+        return existing
+
+    @classmethod
+    async def _find_best_user_submission(
+        cls,
+        c_matches: List[Any],
+        user_email: str,
+        sub_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Finds and merges submission docs for a participant so uploaded audio/media is preserved."""
+        or_clauses: List[Dict[str, Any]] = []
+        clean_email = (user_email or "").strip().lower()
+        if clean_email:
+            or_clauses.append({"user_email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"}})
+        if sub_id:
+            if ObjectId.is_valid(str(sub_id)):
+                or_clauses.append({"_id": ObjectId(str(sub_id))})
+            or_clauses.append({"_id": str(sub_id)})
+        if not or_clauses:
+            return None
+
+        subs = await competition_submission_collection.find({
+            "competition_id": {"$in": c_matches},
+            "$or": or_clauses,
+        }).to_list(length=10)
+        best: Optional[Dict[str, Any]] = None
+        for s in subs:
+            best = cls._merge_best_submission(best, s)
+        return best
+
     @classmethod
     async def get_competition_or_404(cls, comp_id: str) -> Dict[str, Any]:
         """Retrieves competition document or raises 404."""
@@ -155,20 +291,10 @@ class CompetitionStageService:
         """
         c_str = str(comp_id).strip()
         comp = await cls.get_competition_or_404(c_str)
+        c_matches = cls._build_comp_matches(c_str, comp)
         live_stage = comp.get("live_stage") or {}
         curr_performer = live_stage.get("current_performer")
         prev_performer = live_stage.get("previous_performer")
-
-        c_matches = [c_str]
-        if ObjectId.is_valid(c_str):
-            c_matches.append(ObjectId(c_str))
-        if comp.get("_id"):
-            c_matches.append(comp["_id"])
-            c_matches.append(str(comp["_id"]))
-        if comp.get("id"):
-            c_matches.append(comp["id"])
-            c_matches.append(str(comp["id"]))
-        c_matches = list({str(x): x for x in c_matches}.values())
 
         # 1. Fetch all confirmed registrations for this competition
         reg_query: Dict[str, Any] = {
@@ -208,13 +334,13 @@ class CompetitionStageService:
         sub_map: Dict[str, Any] = {}
         if emails:
             subs = await competition_submission_collection.find({
-                "competition_id": {"$in": [c_str, ObjectId(c_str)] if ObjectId.is_valid(c_str) else [c_str]},
+                "competition_id": {"$in": c_matches},
                 "user_email": {"$in": emails}
-            }).to_list(length=len(emails) * 2)
+            }).to_list(length=max(50, len(emails) * 3))
             for s in subs:
                 em = (s.get("user_email") or "").strip().lower()
                 if em:
-                    sub_map[em] = s
+                    sub_map[em] = cls._merge_best_submission(sub_map.get(em), s)
 
         # 4. Batch fetch judge scores
         score_map: Dict[str, List[Any]] = {}
@@ -285,6 +411,7 @@ class CompetitionStageService:
 
             is_present_val = bool(r.get("is_present", False) or r.get("attendance_status") == "PRESENT")
             attendance_stat = r.get("attendance_status", "PRESENT" if is_present_val else "ABSENT")
+            media_info = cls._extract_submission_media(sub)
 
             participants_list.append({
                 "registration_id": r_id,
@@ -313,6 +440,10 @@ class CompetitionStageService:
                 "has_submission": bool(sub),
                 "submission_id": str(sub["_id"]) if sub else None,
                 "entry_title": r.get("entry_title") or sub.get("title") or f"Entry - {name}",
+                "files": media_info["files"],
+                "media_files": media_info["media_files"],
+                "submission_url": media_info["submission_url"],
+                "audio_url": media_info["audio_url"],
                 "is_scored": len(user_scores) > 0,
                 "judge_score_count": len(user_scores),
                 "average_score": avg_score,
@@ -325,6 +456,37 @@ class CompetitionStageService:
         absent_count = len(participants_list) - present_count
         curr_round = int(comp.get("current_round") or 1)
 
+        if curr_performer and isinstance(curr_performer, dict):
+            curr_performer = dict(curr_performer)
+            if not curr_performer.get("media_files") and not curr_performer.get("audio_url"):
+                curr_sub = sub_map.get(current_email)
+                if not curr_sub and current_email:
+                    curr_sub = await cls._find_best_user_submission(
+                        c_matches,
+                        current_email,
+                        curr_performer.get("submission_id"),
+                    )
+                if curr_sub:
+                    curr_media = cls._extract_submission_media(curr_sub)
+                    curr_performer["files"] = curr_media["files"]
+                    curr_performer["media_files"] = curr_media["media_files"]
+                    curr_performer["submission_url"] = curr_media["submission_url"]
+                    curr_performer["audio_url"] = curr_media["audio_url"]
+
+        # If any participants have been marked present, the lineup should only
+        # include present participants (+ anyone currently on stage or completed).
+        # This prevents absent participants from appearing in the stage queue.
+        if present_count > 0:
+            lineup_participants = [
+                p for p in participants_list
+                if p["is_present"] or p["stage_status"] in ("ON_STAGE", "COMPLETED")
+            ]
+        else:
+            # No attendance taken yet — show all participants
+            lineup_participants = participants_list
+
+        lineup_completed = sum(1 for p in lineup_participants if p["stage_status"] == "COMPLETED")
+
         return {
             "competition_id": c_str,
             "competition_title": comp.get("title", "Competition"),
@@ -335,15 +497,17 @@ class CompetitionStageService:
             "has_active_performer": bool(curr_performer),
             "current_performer": curr_performer,
             "previous_performer": prev_performer,
-            "total_participants": len(participants_list),
+            "total_participants": len(lineup_participants),
             "present_count": present_count,
             "absent_count": absent_count,
+            "all_registered_count": len(participants_list),
             "final_present_list": present_list,
-            "completed_performances": completed_count,
-            "completed_count": completed_count,
-            "remaining_performances": max(0, len(participants_list) - completed_count),
-            "remaining_count": max(0, len(participants_list) - completed_count),
-            "participants": participants_list
+            "completed_performances": lineup_completed,
+            "completed_count": lineup_completed,
+            "remaining_performances": max(0, len(lineup_participants) - lineup_completed),
+            "remaining_count": max(0, len(lineup_participants) - lineup_completed),
+            "participants": lineup_participants,
+            "all_participants": participants_list,
         }
 
 
@@ -366,16 +530,7 @@ class CompetitionStageService:
         comp = await cls.get_competition_or_404(c_str)
         clean_id = str(identifier).strip()
 
-        c_matches = [c_str]
-        if ObjectId.is_valid(c_str):
-            c_matches.append(ObjectId(c_str))
-        if comp.get("_id"):
-            c_matches.append(comp["_id"])
-            c_matches.append(str(comp["_id"]))
-        if comp.get("id"):
-            c_matches.append(comp["id"])
-            c_matches.append(str(comp["id"]))
-        c_matches = list({str(x): x for x in c_matches}.values())
+        c_matches = cls._build_comp_matches(c_str, comp)
 
         # Build registration lookup query
         reg_or: List[Dict[str, Any]] = [
@@ -441,6 +596,8 @@ class CompetitionStageService:
             user_name=user_name,
             reg_id=reg_id
         )
+        best_sub = await cls._find_best_user_submission(c_matches, user_email, submission_id)
+        perf_media = cls._extract_submission_media(best_sub)
 
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
@@ -502,7 +659,11 @@ class CompetitionStageService:
             "is_present": is_perf_present,
             "attendance_status": perf_attendance_status,
             "submission_id": submission_id,
-            "entry_title": reg.get("entry_title") or f"Stage Performance - {user_name}",
+            "entry_title": reg.get("entry_title") or (best_sub.get("title") if best_sub else None) or f"Stage Performance - {user_name}",
+            "files": perf_media["files"],
+            "media_files": perf_media["media_files"],
+            "submission_url": perf_media["submission_url"],
+            "audio_url": perf_media["audio_url"],
             "stage_status": "ON_STAGE",
             "started_at": now_iso,
             "notes": notes
@@ -573,20 +734,10 @@ class CompetitionStageService:
         """
         c_str = str(comp_id).strip()
         comp = await cls.get_competition_or_404(c_str)
+        c_matches = cls._build_comp_matches(c_str, comp)
         live_stage = comp.get("live_stage") or {}
         curr_performer = live_stage.get("current_performer")
         current_email = (curr_performer.get("user_email") or "").lower().strip() if curr_performer else ""
-
-        c_matches = [c_str]
-        if ObjectId.is_valid(c_str):
-            c_matches.append(ObjectId(c_str))
-        if comp.get("_id"):
-            c_matches.append(comp["_id"])
-            c_matches.append(str(comp["_id"]))
-        if comp.get("id"):
-            c_matches.append(comp["id"])
-            c_matches.append(str(comp["id"]))
-        c_matches = list({str(x): x for x in c_matches}.values())
 
         # Find next unperformed contestant
         query: Dict[str, Any] = {
@@ -676,6 +827,7 @@ class CompetitionStageService:
         """
         c_str = str(comp_id).strip()
         comp = await cls.get_competition_or_404(c_str)
+        c_matches = cls._build_comp_matches(c_str, comp)
         live_stage = comp.get("live_stage") or {}
         curr_performer = live_stage.get("current_performer")
 
@@ -837,6 +989,13 @@ class CompetitionStageService:
                     or u_doc.get("kyc_status") == "VERIFIED"
                 )
 
+        curr_media = cls._extract_submission_media(curr)
+        if not curr_media["media_files"] and (user_email or sub_id):
+            c_match_list = [c_str, ObjectId(c_str)] if ObjectId.is_valid(c_str) else [c_str]
+            best_sub = await cls._find_best_user_submission(c_match_list, user_email, sub_id)
+            if best_sub:
+                curr_media = cls._extract_submission_media(best_sub)
+
         card_data = {
             "submission_id": sub_id,
             "registration_id": curr.get("registration_id"),
@@ -853,6 +1012,10 @@ class CompetitionStageService:
             "verified_tick": is_user_verified,
             "verification_status": "VERIFIED" if is_user_verified else "NOT_VERIFIED",
             "entry_title": curr.get("entry_title"),
+            "files": curr_media["files"],
+            "media_files": curr_media["media_files"],
+            "submission_url": curr_media["submission_url"],
+            "audio_url": curr_media["audio_url"],
             "started_at": curr.get("started_at"),
             "stage_status": curr.get("stage_status", "ON_STAGE"),
             "is_scored_by_me": is_scored,
@@ -900,6 +1063,7 @@ class CompetitionStageService:
         """
         c_str = str(comp_id).strip()
         comp = await cls.get_competition_or_404(c_str)
+        c_matches = cls._build_comp_matches(c_str, comp)
         live_stage = comp.get("live_stage") or {}
         curr = live_stage.get("current_performer")
         prev = live_stage.get("previous_performer")
@@ -1020,6 +1184,11 @@ class CompetitionStageService:
             })
 
         present_lineup = [p for p in lineup if p.get("is_present")]
+        effective_lineup = (
+            [p for p in lineup if p.get("is_present") or p.get("stage_status") in ("ON_STAGE", "COMPLETED")]
+            if present_lineup
+            else lineup
+        )
 
         return {
             "competition_id": c_str,
@@ -1030,11 +1199,12 @@ class CompetitionStageService:
             "has_active_performer": bool(public_curr),
             "current_performer": public_curr,
             "previous_performer": public_prev,
-            "total_participants": len(lineup),
+            "total_participants": len(effective_lineup),
+            "all_registered_count": len(lineup),
             "present_count": len(present_lineup),
             "final_present_lineup": present_lineup,
-            "completed_count": sum(1 for p in lineup if p.get("stage_status") == "COMPLETED"),
-            "lineup": lineup,
+            "completed_count": sum(1 for p in effective_lineup if p.get("stage_status") == "COMPLETED"),
+            "lineup": effective_lineup,
             "updated_at": live_stage.get("updated_at")
         }
 

@@ -612,6 +612,54 @@ async def upload_partner_logo(
     return {"url": url, "logo_url": url, "filename": file.filename}
 
 # ════════════════════════════════════════
+# GRAND SPONSOR POP-UP (WEBSITE OPENING MODAL)
+# ════════════════════════════════════════
+DEFAULT_SPONSOR_POPUP = {
+    "is_enabled": False,
+    "sponsor_name": "Platinum Sponsor",
+    "badge_text": "OFFICIAL TITLE SPONSOR",
+    "title": "Grand National Championship 2026",
+    "subtitle": "Presented by our Mega Platinum Partner — Win Cash Prizes & National Recognition",
+    "banner_image_url": "https://images.unsplash.com/photo-1547153760-18fc86324498?q=80&w=1920&auto=format&fit=crop",
+    "mobile_image_url": "",
+    "cta_text": "Explore Exclusive Offer",
+    "cta_link": "/competitions",
+    "show_mode": "once_per_session",  # "once_per_session", "once_per_day", "always"
+    "auto_close_seconds": 0,
+}
+
+@router.get("/sponsor-popup", tags=["admin-cms"])
+async def get_admin_sponsor_popup(admin=Depends(get_current_admin)):
+    settings = await website_settings_collection.find_one({"_type": "settings"})
+    popup = (settings or {}).get("sponsor_popup")
+    return popup if popup and isinstance(popup, dict) else DEFAULT_SPONSOR_POPUP
+
+@router.put("/sponsor-popup", tags=["admin-cms"])
+async def update_admin_sponsor_popup(payload: Dict[str, Any], admin=Depends(get_current_admin)):
+    await website_settings_collection.update_one(
+        {"_type": "settings"},
+        {"$set": {"sponsor_popup": payload, "updated_at": datetime.now(timezone.utc)}},
+        upsert=True
+    )
+    await log_admin_action(admin["email"], "update", "sponsor_popup")
+    return {"message": "Grand sponsor popup settings updated successfully", "sponsor_popup": payload}
+
+@router.post("/upload-sponsor-popup-image", tags=["admin-cms"])
+async def upload_sponsor_popup_image(
+    file: UploadFile = File(...),
+    admin: dict = Depends(get_current_admin)
+):
+    """Uploads a high-resolution grand sponsor popup banner to Cloudinary storage."""
+    contents = await file.read()
+    if not contents or len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    url = upload_image(contents, folder="eventora/sponsor-popup", filename=file.filename)
+    if not url:
+        raise HTTPException(status_code=500, detail="Failed to upload sponsor popup image to storage.")
+    return {"url": url, "image_url": url, "filename": file.filename}
+
+
+# ════════════════════════════════════════
 # EVENTS
 # ════════════════════════════════════════
 def normalize_event_categories(doc: dict) -> dict:

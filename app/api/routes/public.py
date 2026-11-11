@@ -15,6 +15,7 @@ from app.api.routes.admin_cms import (
     DEFAULT_STAGE_MOMENTS_SECTION,
     DEFAULT_SPOTLIGHT_SECTION,
     DEFAULT_PARTNERS_SECTION,
+    DEFAULT_SPONSOR_POPUP,
 )
 
 router = APIRouter()
@@ -193,6 +194,8 @@ async def get_homepage():
     spotlight_section = (settings or {}).get("spotlight_section")
     # Partners & Sponsors Section
     partners_section = (settings or {}).get("partners_section")
+    # Grand Sponsor Popup (Website Opening Modal)
+    sponsor_popup = (settings or {}).get("sponsor_popup")
 
     return {
         "brand": {
@@ -242,9 +245,16 @@ async def get_homepage():
         "stage_moments_section": stage_moments_section if stage_moments_section and isinstance(stage_moments_section, dict) else DEFAULT_STAGE_MOMENTS_SECTION,
         "spotlight_section": spotlight_section if spotlight_section and isinstance(spotlight_section, dict) else DEFAULT_SPOTLIGHT_SECTION,
         "partners_section": partners_section if partners_section and isinstance(partners_section, dict) else DEFAULT_PARTNERS_SECTION,
+        "sponsor_popup": sponsor_popup if sponsor_popup and isinstance(sponsor_popup, dict) else DEFAULT_SPONSOR_POPUP,
     }
 
 # ── Individual Section Endpoints ──
+@router.get("/sponsor-popup", tags=["public"])
+async def get_public_sponsor_popup():
+    settings = await website_settings_collection.find_one({"_type": "settings"})
+    popup = (settings or {}).get("sponsor_popup")
+    return popup if popup and isinstance(popup, dict) else DEFAULT_SPONSOR_POPUP
+
 @router.get("/stage-moments", tags=["public"])
 async def get_public_stage_moments():
     settings = await website_settings_collection.find_one({"_type": "settings"})

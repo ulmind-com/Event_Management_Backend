@@ -188,6 +188,18 @@ def evaluate_competition_registration_status(
             "reason": f"Registration is closed because the competition is {general_status.lower()}.",
         }
 
+    # Rule B2: Multi-round tournament progression — Round 1 concluded / Stage 2+ underway
+    curr_round = int(comp.get("current_round") or 1)
+    r1_completed = bool(comp.get("round_1_completed") or curr_round > 1)
+    if r1_completed:
+        return {
+            **base_result,
+            "can_register": False,
+            "is_registration_open": False,
+            "registration_status": "CLOSED",
+            "reason": f"Registration is closed because Round 1 has concluded. Stage {curr_round} is currently underway.",
+        }
+
     # Rule C: Explicit administrative toggle (is_registration_open: False)
     if comp.get("is_registration_open") is False:
         return {

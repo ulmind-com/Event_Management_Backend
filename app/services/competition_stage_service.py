@@ -627,6 +627,19 @@ class CompetitionStageService:
             prev_performer["stage_status"] = "COMPLETED"
             prev_performer["completed_at"] = now_iso
 
+        # Single performer invariant: Ensure NO OTHER registration has stage_status == "ON_STAGE"
+        await competition_registration_collection.update_many(
+            {
+                "competition_id": {"$in": c_matches},
+                "_id": {"$ne": reg["_id"]},
+                "stage_status": "ON_STAGE"
+            },
+            {"$set": {
+                "stage_status": "COMPLETED",
+                "stage_completed_at": now
+            }}
+        )
+
         # Build new performer details
         is_user_verified = bool(
             usr and (
@@ -644,6 +657,7 @@ class CompetitionStageService:
         new_performer = {
             "registration_id": reg_id,
             "registration_reference": reg_ref,
+            "stage_order": reg.get("stage_order"),
             "user_email": user_email,
             "user_name": user_name,
             "full_name": user_name,
@@ -855,6 +869,18 @@ class CompetitionStageService:
                 )
             curr_performer["stage_status"] = "COMPLETED"
             curr_performer["completed_at"] = now_iso
+
+        # Single performer invariant: Ensure ALL registrations in this competition have stage_status cleared from ON_STAGE
+        await competition_registration_collection.update_many(
+            {
+                "competition_id": {"$in": c_matches},
+                "stage_status": "ON_STAGE"
+            },
+            {"$set": {
+                "stage_status": "COMPLETED",
+                "stage_completed_at": now
+            }}
+        )
 
         stage_update = {
             "stage_status": "IDLE",
@@ -1080,7 +1106,11 @@ class CompetitionStageService:
             public_curr = {
                 "participant_name": curr.get("user_name"),
                 "user_name": curr.get("user_name"),
+                "user_email": (curr.get("user_email") or "").strip().lower(),
                 "registration_reference": curr.get("registration_reference"),
+                "registration_id": str(curr.get("registration_id") or ""),
+                "submission_id": str(curr.get("submission_id") or ""),
+                "stage_order": curr.get("stage_order"),
                 "user_photo": curr.get("user_photo"),
                 "avatar": curr.get("user_photo"),
                 "entry_title": curr.get("entry_title"),
@@ -1162,6 +1192,9 @@ class CompetitionStageService:
             is_on_stage = bool(curr_email and em == curr_email)
             if is_on_stage:
                 stage_stat = "ON_STAGE"
+            elif stage_stat == "ON_STAGE":
+                # If database had stale ON_STAGE but live_stage current_performer changed/ended
+                stage_stat = "COMPLETED"
 
             is_p = bool(r.get("is_present", False) or r.get("attendance_status") == "PRESENT")
             lineup.append({
@@ -1189,6 +1222,12 @@ class CompetitionStageService:
             if present_lineup
             else lineup
         )
+
+        # Sequentialize order 1..N for the active present lineup
+        for seq_idx, item in enumerate(effective_lineup, start=1):
+            item["order"] = seq_idx
+            if public_curr and public_curr.get("user_email") and (item.get("user_email") or "").lower() == (public_curr.get("user_email") or "").lower():
+                public_curr["stage_order"] = seq_idx
 
         return {
             "competition_id": c_str,

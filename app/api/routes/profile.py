@@ -289,6 +289,8 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user_allow_i
             
             c_title = c_info.get("title") if c_info else "Competition"
             is_confirmed = (ar.get("status") == "CONFIRMED" or ar.get("payment_status") in ("PAID", "NOT_REQUIRED"))
+            live_stg = (c_info.get("live_stage") or {}) if c_info else {}
+            curr_perf = live_stg.get("current_performer")
             comp_entry = {
                 "_id": str(ar["_id"]),
                 "registration_reference": ar.get("registration_reference"),
@@ -300,6 +302,17 @@ async def get_my_dashboard(current_user: dict = Depends(get_current_user_allow_i
                 "status": ar.get("status"),
                 "payment_status": ar.get("payment_status"),
                 "is_confirmed": is_confirmed,
+                "is_present": bool(ar.get("is_present") or ar.get("attendance_status") == "PRESENT"),
+                "attendance_status": ar.get("attendance_status", "PRESENT" if ar.get("is_present") else "ABSENT"),
+                "stage_status": ar.get("stage_status", "NOT_STARTED"),
+                "stage_order": ar.get("stage_order"),
+                "live_stage_status": live_stg.get("stage_status", "IDLE"),
+                "has_active_performer": bool(curr_perf),
+                "current_performer": {
+                    "user_name": curr_perf.get("user_name"),
+                    "stage_order": curr_perf.get("stage_order"),
+                    "stage_status": curr_perf.get("stage_status", "ON_STAGE")
+                } if curr_perf else None,
                 "fee": ar.get("fee", 0),
                 "has_submitted": bool(sub),
                 "submission_id": str(sub["_id"]) if sub else None,

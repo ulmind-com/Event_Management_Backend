@@ -1594,6 +1594,8 @@ async def list_competition_participants(
         reg_stage_status = r.get("stage_status", "NOT_STARTED")
         if is_on_stage:
             reg_stage_status = "ON_STAGE"
+        elif reg_stage_status == "ON_STAGE":
+            reg_stage_status = "COMPLETED"
 
         # Check user verification status (Admin Manual Verification)
         is_user_verified = bool(

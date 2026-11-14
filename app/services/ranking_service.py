@@ -45,8 +45,8 @@ class RankingService:
 
         elif audience_enabled and judge_enabled:
             ranking_mode = "COMBINED_AUDIENCE_AND_JUDGES"
-            if max_audience_votes <= 0:
-                # When 0 audience votes exist (e.g., offline judging), preserve raw judge score
+            if max_audience_votes <= 0 or audience_votes <= 0:
+                # When 0 audience votes exist (e.g., offline judging or no votes recorded), preserve raw judge score
                 # instead of scaling judge_score by judge_weight * (judge_score / max_judge)
                 final_score = float(judge_score)
             else:
@@ -107,6 +107,12 @@ class RankingService:
         `participants` must contain: participant_id, audience_votes, judge_score.
         """
         leaderboard = []
+        is_offline_comp = bool(
+            comp_settings.get("is_offline", False)
+            or str(comp_settings.get("event_mode", "")).upper() == "OFFLINE"
+        )
+        effective_audience_enabled = False if is_offline_comp else comp_settings.get("audience_voting_enabled", False)
+
         for p in participants:
             result = RankingService.calculate_final_score(
                 participant_id=p["participant_id"],
@@ -114,7 +120,7 @@ class RankingService:
                 max_audience_votes=max_audience_votes,
                 judge_score=p.get("judge_score", 0.0),
                 max_judge_score=max_judge_score,
-                audience_enabled=comp_settings.get("audience_voting_enabled", False),
+                audience_enabled=effective_audience_enabled,
                 judge_enabled=comp_settings.get("judge_scoring_enabled", False),
                 audience_weight=comp_settings.get("audience_vote_weight", 0.0),
                 judge_weight=comp_settings.get("judge_score_weight", 0.0)

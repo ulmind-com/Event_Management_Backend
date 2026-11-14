@@ -412,6 +412,14 @@ class CompetitionStageService:
             is_present_val = bool(r.get("is_present", False) or r.get("attendance_status") == "PRESENT")
             attendance_stat = r.get("attendance_status", "PRESENT" if is_present_val else "ABSENT")
             media_info = cls._extract_submission_media(sub)
+            cat_val = (
+                r.get("category")
+                or r.get("division")
+                or (sub.get("category") if sub else None)
+                or usr.get("category")
+                or comp.get("category")
+                or "General"
+            )
 
             participants_list.append({
                 "registration_id": r_id,
@@ -421,6 +429,8 @@ class CompetitionStageService:
                 "full_name": name,
                 "user_phone": phone,
                 "user_photo": photo,
+                "category": cat_val,
+                "division": r.get("division") or cat_val,
                 "is_verified": is_user_verified,
                 "is_id_verified": is_user_verified,
                 "is_govt_id_verified": is_user_verified,
@@ -472,6 +482,28 @@ class CompetitionStageService:
                     curr_performer["media_files"] = curr_media["media_files"]
                     curr_performer["submission_url"] = curr_media["submission_url"]
                     curr_performer["audio_url"] = curr_media["audio_url"]
+            if not curr_performer.get("category"):
+                matching_p = next((p for p in participants_list if (p.get("user_email") or "").lower() == current_email), None)
+                if matching_p:
+                    curr_performer["category"] = matching_p.get("category")
+                    curr_performer["division"] = matching_p.get("division")
+
+        # Extract all available categories for filtering
+        raw_comp_cats = comp.get("categories") or comp.get("sub_categories") or []
+        comp_categories: List[str] = []
+        for c in raw_comp_cats:
+            if isinstance(c, dict) and c.get("name"):
+                c_name = str(c.get("name")).strip()
+                if c_name and c_name not in comp_categories:
+                    comp_categories.append(c_name)
+            elif isinstance(c, str) and c.strip():
+                c_name = c.strip()
+                if c_name and c_name not in comp_categories:
+                    comp_categories.append(c_name)
+        for p in participants_list:
+            p_cat = p.get("category")
+            if p_cat and isinstance(p_cat, str) and p_cat.strip() and p_cat.strip() not in comp_categories:
+                comp_categories.append(p_cat.strip())
 
         # If any participants have been marked present, the lineup should only
         # include present participants (+ anyone currently on stage or completed).
@@ -506,6 +538,7 @@ class CompetitionStageService:
             "completed_count": lineup_completed,
             "remaining_performances": max(0, len(lineup_participants) - lineup_completed),
             "remaining_count": max(0, len(lineup_participants) - lineup_completed),
+            "categories": comp_categories,
             "participants": lineup_participants,
             "all_participants": participants_list,
         }
@@ -670,6 +703,8 @@ class CompetitionStageService:
             "verified_badge": is_user_verified,
             "verified_tick": is_user_verified,
             "verification_status": "VERIFIED" if is_user_verified else (usr.get("verification_status", "NOT_VERIFIED") if usr else "NOT_VERIFIED"),
+            "category": reg.get("category") or reg.get("division") or (best_sub.get("category") if best_sub else None) or (usr.get("category") if usr else None) or comp.get("category") or "General",
+            "division": reg.get("division") or reg.get("category") or "General",
             "is_present": is_perf_present,
             "attendance_status": perf_attendance_status,
             "submission_id": submission_id,
@@ -1197,6 +1232,13 @@ class CompetitionStageService:
                 stage_stat = "COMPLETED"
 
             is_p = bool(r.get("is_present", False) or r.get("attendance_status") == "PRESENT")
+            p_cat = (
+                r.get("category")
+                or r.get("division")
+                or usr.get("category")
+                or comp.get("category")
+                or "General"
+            )
             lineup.append({
                 "order": r.get("stage_order", idx + 1),
                 "registration_id": str(r["_id"]),
@@ -1206,6 +1248,8 @@ class CompetitionStageService:
                 "user_email": em,
                 "user_photo": photo,
                 "avatar": photo,
+                "category": p_cat,
+                "division": r.get("division") or p_cat,
                 "entry_title": r.get("entry_title") or f"Performance - {name}",
                 "stage_status": stage_stat,
                 "is_current_performer": is_on_stage,
@@ -1229,6 +1273,23 @@ class CompetitionStageService:
             if public_curr and public_curr.get("user_email") and (item.get("user_email") or "").lower() == (public_curr.get("user_email") or "").lower():
                 public_curr["stage_order"] = seq_idx
 
+        # Collect available categories
+        raw_comp_cats = comp.get("categories") or comp.get("sub_categories") or []
+        public_categories: List[str] = []
+        for c in raw_comp_cats:
+            if isinstance(c, dict) and c.get("name"):
+                c_name = str(c.get("name")).strip()
+                if c_name and c_name not in public_categories:
+                    public_categories.append(c_name)
+            elif isinstance(c, str) and c.strip():
+                c_name = c.strip()
+                if c_name and c_name not in public_categories:
+                    public_categories.append(c_name)
+        for p in effective_lineup:
+            c_name = p.get("category")
+            if c_name and isinstance(c_name, str) and c_name.strip() and c_name.strip() not in public_categories:
+                public_categories.append(c_name.strip())
+
         return {
             "competition_id": c_str,
             "competition_title": comp.get("title", "Competition"),
@@ -1243,6 +1304,7 @@ class CompetitionStageService:
             "present_count": len(present_lineup),
             "final_present_lineup": present_lineup,
             "completed_count": sum(1 for p in effective_lineup if p.get("stage_status") == "COMPLETED"),
+            "categories": public_categories,
             "lineup": effective_lineup,
             "updated_at": live_stage.get("updated_at")
         }

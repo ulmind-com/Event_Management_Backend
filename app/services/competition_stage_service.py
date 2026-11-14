@@ -657,6 +657,7 @@ class CompetitionStageService:
         new_performer = {
             "registration_id": reg_id,
             "registration_reference": reg_ref,
+            "stage_order": reg.get("stage_order"),
             "user_email": user_email,
             "user_name": user_name,
             "full_name": user_name,
@@ -1105,7 +1106,11 @@ class CompetitionStageService:
             public_curr = {
                 "participant_name": curr.get("user_name"),
                 "user_name": curr.get("user_name"),
+                "user_email": (curr.get("user_email") or "").strip().lower(),
                 "registration_reference": curr.get("registration_reference"),
+                "registration_id": str(curr.get("registration_id") or ""),
+                "submission_id": str(curr.get("submission_id") or ""),
+                "stage_order": curr.get("stage_order"),
                 "user_photo": curr.get("user_photo"),
                 "avatar": curr.get("user_photo"),
                 "entry_title": curr.get("entry_title"),
@@ -1217,6 +1222,12 @@ class CompetitionStageService:
             if present_lineup
             else lineup
         )
+
+        # Sequentialize order 1..N for the active present lineup
+        for seq_idx, item in enumerate(effective_lineup, start=1):
+            item["order"] = seq_idx
+            if public_curr and public_curr.get("user_email") and (item.get("user_email") or "").lower() == (public_curr.get("user_email") or "").lower():
+                public_curr["stage_order"] = seq_idx
 
         return {
             "competition_id": c_str,

@@ -4,6 +4,7 @@ from app.core.config import settings
 
 client = AsyncIOMotorClient(
     settings.MONGODB_URI,
+    tz_aware=True,
     tls=True,
     tlsCAFile=certifi.where(),
     serverSelectionTimeoutMS=15000,

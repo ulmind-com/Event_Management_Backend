@@ -627,6 +627,19 @@ class CompetitionStageService:
             prev_performer["stage_status"] = "COMPLETED"
             prev_performer["completed_at"] = now_iso
 
+        # Single performer invariant: Ensure NO OTHER registration has stage_status == "ON_STAGE"
+        await competition_registration_collection.update_many(
+            {
+                "competition_id": {"$in": c_matches},
+                "_id": {"$ne": reg["_id"]},
+                "stage_status": "ON_STAGE"
+            },
+            {"$set": {
+                "stage_status": "COMPLETED",
+                "stage_completed_at": now
+            }}
+        )
+
         # Build new performer details
         is_user_verified = bool(
             usr and (
@@ -855,6 +868,18 @@ class CompetitionStageService:
                 )
             curr_performer["stage_status"] = "COMPLETED"
             curr_performer["completed_at"] = now_iso
+
+        # Single performer invariant: Ensure ALL registrations in this competition have stage_status cleared from ON_STAGE
+        await competition_registration_collection.update_many(
+            {
+                "competition_id": {"$in": c_matches},
+                "stage_status": "ON_STAGE"
+            },
+            {"$set": {
+                "stage_status": "COMPLETED",
+                "stage_completed_at": now
+            }}
+        )
 
         stage_update = {
             "stage_status": "IDLE",
@@ -1162,6 +1187,9 @@ class CompetitionStageService:
             is_on_stage = bool(curr_email and em == curr_email)
             if is_on_stage:
                 stage_stat = "ON_STAGE"
+            elif stage_stat == "ON_STAGE":
+                # If database had stale ON_STAGE but live_stage current_performer changed/ended
+                stage_stat = "COMPLETED"
 
             is_p = bool(r.get("is_present", False) or r.get("attendance_status") == "PRESENT")
             lineup.append({

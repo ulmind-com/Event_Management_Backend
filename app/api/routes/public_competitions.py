@@ -69,6 +69,30 @@ async def get_public_final_present_participants(comp_id: str, category: Optional
             if (r.get("category") or comp.get("category") or "General").strip().lower() == c_clean
         ]
 
+    # Sort present_regs chronologically by attended_at (first to attend is first in the list)
+    def _parse_ts(val: Any) -> float:
+        if not val:
+            return float('inf')
+        if isinstance(val, (int, float)):
+            return float(val)
+        if isinstance(val, str):
+            try:
+                val = datetime.fromisoformat(val.replace("Z", "+00:00"))
+            except Exception:
+                return float('inf')
+        if hasattr(val, "timestamp"):
+            try:
+                return val.timestamp()
+            except Exception:
+                return float('inf')
+        return float('inf')
+
+    present_regs.sort(key=lambda r: (
+        _parse_ts(r.get("attended_at")),
+        r.get("stage_order") if (r.get("stage_order") and r.get("stage_order") > 0) else float('inf'),
+        _parse_ts(r.get("registered_at") or r.get("created_at"))
+    ))
+
     from app.core.database import user_collection
     emails = list({(r.get("user_email") or r.get("email") or "").strip().lower() for r in present_regs if (r.get("user_email") or r.get("email"))})
     users_map = {}
@@ -116,11 +140,12 @@ async def get_public_final_present_participants(comp_id: str, category: Optional
             "user_photo": photo,
             "avatar": photo,
             "category": r.get("category") or comp.get("category") or "General",
-            "stage_order": r.get("stage_order", idx + 1),
+            "stage_order": idx + 1,
             "stage_status": stage_stat,
             "is_current_performer": is_on_stage,
             "is_present": True,
             "attendance_status": "PRESENT",
+            "attended_at": r.get("attended_at"),
             "is_verified": is_v,
             "verified_badge": is_v,
             "verified_tick": is_v

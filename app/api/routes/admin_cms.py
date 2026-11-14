@@ -1997,6 +1997,28 @@ async def get_event_attendance_dashboard(event_id: str, admin=Depends(get_curren
         if is_p:
             final_present.append(item)
 
+    def _parse_ts(val: Any) -> float:
+        if not val:
+            return float('inf')
+        if isinstance(val, (int, float)):
+            return float(val)
+        if isinstance(val, str):
+            try:
+                val = datetime.fromisoformat(val.replace("Z", "+00:00"))
+            except Exception:
+                return float('inf')
+        if hasattr(val, "timestamp"):
+            try:
+                return val.timestamp()
+            except Exception:
+                return float('inf')
+        return float('inf')
+
+    final_present.sort(key=lambda x: (
+        _parse_ts(x.get("attended_at")),
+        _parse_ts(x.get("booked_at"))
+    ))
+
     present_count = len(final_present)
     absent_count = len(all_attendees) - present_count
 

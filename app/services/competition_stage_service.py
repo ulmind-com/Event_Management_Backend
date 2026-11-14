@@ -44,6 +44,24 @@ logger = logging.getLogger(__name__)
 class CompetitionStageService:
 
     @staticmethod
+    def _parse_ts(val: Any) -> float:
+        if not val:
+            return float('inf')
+        if isinstance(val, (int, float)):
+            return float(val)
+        if isinstance(val, str):
+            try:
+                val = datetime.fromisoformat(val.replace("Z", "+00:00"))
+            except Exception:
+                return float('inf')
+        if hasattr(val, "timestamp"):
+            try:
+                return val.timestamp()
+            except Exception:
+                return float('inf')
+        return float('inf')
+
+    @staticmethod
     def _resolve_comp_query(comp_id: str) -> Dict[str, Any]:
         """Builds MongoDB query supporting both ObjectId and string IDs."""
         cid = str(comp_id).strip()
@@ -462,6 +480,15 @@ class CompetitionStageService:
             })
 
         present_list = [p for p in participants_list if p["is_present"]]
+        # Sort present_list chronologically by attended_at (first attended is first in list)
+        present_list.sort(key=lambda p: (
+            cls._parse_ts(p.get("attended_at")),
+            p.get("stage_order") if (p.get("stage_order") and p.get("stage_order") > 0) else float('inf'),
+            cls._parse_ts(p.get("registered_at"))
+        ))
+        for seq_idx, p in enumerate(present_list, start=1):
+            p["stage_order"] = seq_idx
+
         present_count = len(present_list)
         absent_count = len(participants_list) - present_count
         curr_round = int(comp.get("current_round") or 1)
@@ -509,10 +536,10 @@ class CompetitionStageService:
         # include present participants (+ anyone currently on stage or completed).
         # This prevents absent participants from appearing in the stage queue.
         if present_count > 0:
-            lineup_participants = [
-                p for p in participants_list
-                if p["is_present"] or p["stage_status"] in ("ON_STAGE", "COMPLETED")
-            ]
+            active_or_done = [p for p in participants_list if p["stage_status"] in ("ON_STAGE", "COMPLETED")]
+            active_emails = {p.get("user_email") for p in active_or_done if p.get("user_email")}
+            pending_present = [p for p in present_list if p.get("user_email") not in active_emails]
+            lineup_participants = active_or_done + pending_present
         else:
             # No attendance taken yet — show all participants
             lineup_participants = participants_list
@@ -820,9 +847,10 @@ class CompetitionStageService:
             else:
                 query["$and"] = and_clauses
 
+        sort_order = [("attended_at", 1), ("stage_order", 1), ("registered_at", 1)] if (is_offline or present_count > 0) else [("stage_order", 1), ("registered_at", 1)]
         next_reg = await competition_registration_collection.find_one(
             query,
-            sort=[("stage_order", 1), ("registered_at", 1)]
+            sort=sort_order
         )
 
         if not next_reg:
@@ -1255,17 +1283,25 @@ class CompetitionStageService:
                 "is_current_performer": is_on_stage,
                 "is_present": is_p,
                 "attendance_status": r.get("attendance_status", "PRESENT" if is_p else "ABSENT"),
+                "attended_at": r.get("attended_at"),
+                "registered_at": r.get("registered_at") or r.get("created_at"),
                 "is_verified": is_v,
                 "verified_badge": is_v,
                 "verified_tick": is_v
             })
 
         present_lineup = [p for p in lineup if p.get("is_present")]
-        effective_lineup = (
-            [p for p in lineup if p.get("is_present") or p.get("stage_status") in ("ON_STAGE", "COMPLETED")]
-            if present_lineup
-            else lineup
-        )
+        # Sort present lineup chronologically by attended_at (first attended is first)
+        present_lineup.sort(key=lambda p: (
+            cls._parse_ts(p.get("attended_at")),
+            p.get("order") if (p.get("order") and p.get("order") > 0) else float('inf'),
+            cls._parse_ts(p.get("registered_at"))
+        ))
+        if present_lineup:
+            active_or_done = [p for p in lineup if p.get("stage_status") in ("ON_STAGE", "COMPLETED") and not p.get("is_present")]
+            effective_lineup = active_or_done + present_lineup
+        else:
+            effective_lineup = lineup
 
         # Sequentialize order 1..N for the active present lineup
         for seq_idx, item in enumerate(effective_lineup, start=1):

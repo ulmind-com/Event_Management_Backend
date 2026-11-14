@@ -599,6 +599,205 @@
         }
       }
     },
+    "/api/auth/passkey/register/options": {
+      "post": {
+        "tags": [
+          "user-webauthn"
+        ],
+        "summary": "Register Options",
+        "operationId": "register_options_api_auth_passkey_register_options_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/auth/passkey/register/verify": {
+      "post": {
+        "tags": [
+          "user-webauthn"
+        ],
+        "summary": "Register Verify",
+        "operationId": "register_verify_api_auth_passkey_register_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/auth/passkey/login/options": {
+      "post": {
+        "tags": [
+          "user-webauthn"
+        ],
+        "summary": "Login Options",
+        "operationId": "login_options_api_auth_passkey_login_options_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/passkey/login/verify": {
+      "post": {
+        "tags": [
+          "user-webauthn"
+        ],
+        "summary": "Login Verify",
+        "operationId": "login_verify_api_auth_passkey_login_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/passkey/credentials": {
+      "get": {
+        "tags": [
+          "user-webauthn"
+        ],
+        "summary": "List Credentials",
+        "operationId": "list_credentials_api_auth_passkey_credentials_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/auth/passkey/credentials/{credential_id}": {
+      "delete": {
+        "tags": [
+          "user-webauthn"
+        ],
+        "summary": "Delete Credential",
+        "operationId": "delete_credential_api_auth_passkey_credentials__credential_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Credential Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/profile/me": {
       "get": {
         "tags": [
@@ -810,7 +1009,7 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "default": 10,
+              "default": 50,
               "title": "Limit"
             }
           },
@@ -972,6 +1171,47 @@
         }
       }
     },
+    "/api/activities/events/{event_id}/booked-seats": {
+      "get": {
+        "tags": [
+          "activities"
+        ],
+        "summary": "Get Event Booked Seats",
+        "description": "Returns the real-time set of occupied/booked seats for an event so\nthe BookMyShow-style visual seating arena disables them.",
+        "operationId": "get_event_booked_seats_api_activities_events__event_id__booked_seats_get",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/activities/tickets": {
       "get": {
         "tags": [
@@ -1012,7 +1252,7 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "default": 20,
+              "default": 50,
               "title": "Limit"
             }
           }
@@ -1542,15 +1782,54 @@
         ],
         "summary": "Create Booking",
         "operationId": "create_booking_api_bookings__post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Idempotency-Key"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/BookingCreateReq"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -1558,8 +1837,8 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Create Booking Api Bookings  Post"
                 }
               }
@@ -1575,12 +1854,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
+        }
       }
     },
     "/api/bookings/my": {
@@ -1721,23 +1995,108 @@
         }
       }
     },
+    "/api/bookings/tickets/{ticket_ref}/send-email": {
+      "post": {
+        "tags": [
+          "bookings"
+        ],
+        "summary": "Send Ticket Email Manual",
+        "description": "Allows attendee to receive or re-send their ultra-pro admission pass & QR code directly to their email inbox.",
+        "operationId": "send_ticket_email_manual_api_bookings_tickets__ticket_ref__send_email_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ticket_ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticket Ref"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/payments/verify-razorpay": {
       "post": {
         "tags": [
           "payments"
         ],
         "summary": "Verify Razorpay Payment",
-        "description": "Authoritative Razorpay payment signature verification endpoint.\nCalled by client frontend after Razorpay modal completes successfully.\nConfirms booking, stores payment reference, and initiates ticket generation.",
+        "description": "Authoritative, idempotent Razorpay payment signature verification endpoint.\nExecuted inside multi-document ACID transactions with automated duplicate prevention.",
         "operationId": "verify_razorpay_payment_api_payments_verify_razorpay_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Idempotency-Key"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/RazorpayVerifyReq"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -1758,12 +2117,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
+        }
       }
     },
     "/api/payments/create-order/{booking_id}": {
@@ -1858,6 +2212,31 @@
             }
           }
         }
+      }
+    },
+    "/api/payments/reconcile-pending": {
+      "post": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Trigger Payment Reconciliation",
+        "description": "On-demand payment reconciliation trigger.\nInspects Razorpay status for pending orders and auto-recovers captured payments.",
+        "operationId": "trigger_payment_reconciliation_api_payments_reconcile_pending_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/api/payments/verify-mock/{booking_id}": {
@@ -6455,6 +6834,38 @@
               ],
               "title": "Date Of Birth"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Idempotency-Key"
+            }
           }
         ],
         "requestBody": {
@@ -6597,6 +7008,38 @@
                 }
               ],
               "title": "Date Of Birth"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Idempotency-Key"
             }
           }
         ],
@@ -6741,6 +7184,38 @@
               ],
               "title": "Date Of Birth"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Idempotency-Key"
+            }
           }
         ],
         "requestBody": {
@@ -6884,6 +7359,38 @@
               ],
               "title": "Date Of Birth"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Idempotency-Key"
+            }
           }
         ],
         "requestBody": {
@@ -6987,7 +7494,7 @@
           "advanced-competitions"
         ],
         "summary": "Verify Competition Payment",
-        "description": "Client-side verification for paid competition registration checkout.\nVerifies Razorpay cryptographic HMAC signature and marks registration as CONFIRMED.",
+        "description": "Authoritative, idempotent verification for paid competition registration checkout.\nExecutes inside atomic multi-document transaction and synchronizes gateway state.",
         "operationId": "verify_competition_payment_api_v1_competitions__comp_id__verify_payment_post",
         "security": [
           {
@@ -7002,6 +7509,38 @@
             "schema": {
               "type": "string",
               "title": "Comp Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Idempotency-Key"
             }
           }
         ],
@@ -9232,6 +9771,516 @@
         ]
       }
     },
+    "/api/admin/stage-moments": {
+      "get": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Get Admin Stage Moments",
+        "operationId": "get_admin_stage_moments_api_admin_stage_moments_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Update Admin Stage Moments",
+        "operationId": "update_admin_stage_moments_api_admin_stage_moments_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/upload-stage-photo": {
+      "post": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Upload Stage Moment Photo",
+        "description": "Uploads a stage photo to Cloudinary storage and returns secure URL.",
+        "operationId": "upload_stage_moment_photo_api_admin_upload_stage_photo_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_stage_moment_photo_api_admin_upload_stage_photo_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/extract-link-preview": {
+      "post": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Extract Link Preview",
+        "description": "Intelligently extracts high-res poster image, video thumbnail, title and metadata\nfrom social media links (YouTube, Instagram, X/Twitter, Facebook, etc.) or web pages.",
+        "operationId": "extract_link_preview_api_admin_extract_link_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkPreviewReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/spotlight-section": {
+      "get": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Get Admin Spotlight Section",
+        "operationId": "get_admin_spotlight_section_api_admin_spotlight_section_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Update Admin Spotlight Section",
+        "operationId": "update_admin_spotlight_section_api_admin_spotlight_section_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/upload-spotlight-photo": {
+      "post": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Upload Spotlight Moment Photo",
+        "description": "Uploads a spotlight promo poster/photo to Cloudinary storage and returns secure URL.",
+        "operationId": "upload_spotlight_moment_photo_api_admin_upload_spotlight_photo_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_spotlight_moment_photo_api_admin_upload_spotlight_photo_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/partners-section": {
+      "get": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Get Admin Partners Section",
+        "operationId": "get_admin_partners_section_api_admin_partners_section_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Update Admin Partners Section",
+        "operationId": "update_admin_partners_section_api_admin_partners_section_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/upload-partner-logo": {
+      "post": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Upload Partner Logo",
+        "description": "Uploads a partner/sponsor logo to Cloudinary storage and returns secure URL.",
+        "operationId": "upload_partner_logo_api_admin_upload_partner_logo_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_partner_logo_api_admin_upload_partner_logo_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sponsor-popup": {
+      "get": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Get Admin Sponsor Popup",
+        "operationId": "get_admin_sponsor_popup_api_admin_sponsor_popup_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Update Admin Sponsor Popup",
+        "operationId": "update_admin_sponsor_popup_api_admin_sponsor_popup_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/upload-sponsor-popup-image": {
+      "post": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Upload Sponsor Popup Image",
+        "description": "Uploads a high-resolution grand sponsor popup banner to Cloudinary storage.",
+        "operationId": "upload_sponsor_popup_image_api_admin_upload_sponsor_popup_image_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_sponsor_popup_image_api_admin_upload_sponsor_popup_image_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/admin/events": {
       "get": {
         "tags": [
@@ -9262,7 +10311,7 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "default": 50,
+              "default": 200,
               "title": "Limit"
             }
           },
@@ -16776,6 +17825,96 @@
         ]
       }
     },
+    "/api/admin/checkin/verify": {
+      "post": {
+        "tags": [
+          "admin-checkin"
+        ],
+        "summary": "Verify Ticket",
+        "description": "Scans the QR token and returns comprehensive ticket status and multi-person capacity.",
+        "operationId": "verify_ticket_api_admin_checkin_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TicketScanReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/checkin/check-in": {
+      "post": {
+        "tags": [
+          "admin-checkin"
+        ],
+        "summary": "Check In Ticket",
+        "description": "Atomically checks in attendees on this ticket.\nSupports multi-person admissions (e.g. 3 people). Once all admitted, ticket is fully USED and invalid for reuse.",
+        "operationId": "check_in_ticket_api_admin_checkin_check_in_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TicketScanReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/admin/advanced-competitions/": {
       "get": {
         "tags": [
@@ -16947,6 +18086,51 @@
             "multipart/form-data": {
               "schema": {
                 "$ref": "#/components/schemas/Body_upload_competition_banner_api_admin_advanced_competitions_upload_banner_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/advanced-competitions/upload-share-image": {
+      "post": {
+        "tags": [
+          "admin-advanced-competitions"
+        ],
+        "summary": "Upload Competition Share Image",
+        "description": "Uploads a competition social share / OG image to Cloudinary and returns secure URL.",
+        "operationId": "upload_competition_share_image_api_admin_advanced_competitions_upload_share_image_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_competition_share_image_api_admin_advanced_competitions_upload_share_image_post"
               }
             }
           },
@@ -17355,6 +18539,62 @@
         }
       }
     },
+    "/api/admin/advanced-competitions/{comp_id}/upload-share-image": {
+      "post": {
+        "tags": [
+          "admin-advanced-competitions"
+        ],
+        "summary": "Upload Share Image To Competition",
+        "description": "Uploads social share / OG image and attaches directly to the specified competition.",
+        "operationId": "upload_share_image_to_competition_api_admin_advanced_competitions__comp_id__upload_share_image_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "comp_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Comp Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_share_image_to_competition_api_admin_advanced_competitions__comp_id__upload_share_image_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/advanced-competitions/{comp_id}/publish": {
       "post": {
         "tags": [
@@ -17604,6 +18844,128 @@
             "schema": {
               "type": "string",
               "title": "Comp Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/advanced-competitions/{comp_id}/toggle-public-scores": {
+      "post": {
+        "tags": [
+          "admin-advanced-competitions"
+        ],
+        "summary": "Toggle Public Scores",
+        "description": "Super Admin switch: Score visible for public (ON / OFF).\nWhen OFF: Scores remain private to individual contestants; public leaderboard hides scores.\nWhen ON: The complete official leaderboard and scores are public for everyone.",
+        "operationId": "toggle_public_scores_api_admin_advanced_competitions__comp_id__toggle_public_scores_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "comp_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Comp Id"
+            }
+          },
+          {
+            "name": "enabled",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Enabled"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "admin-advanced-competitions"
+        ],
+        "summary": "Toggle Public Scores",
+        "description": "Super Admin switch: Score visible for public (ON / OFF).\nWhen OFF: Scores remain private to individual contestants; public leaderboard hides scores.\nWhen ON: The complete official leaderboard and scores are public for everyone.",
+        "operationId": "toggle_public_scores_api_admin_advanced_competitions__comp_id__toggle_public_scores_patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "comp_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Comp Id"
+            }
+          },
+          {
+            "name": "enabled",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Enabled"
             }
           }
         ],
@@ -18455,6 +19817,114 @@
         "summary": "Revert Participant Cash",
         "description": "Reverts cash payment status back to PENDING.",
         "operationId": "revert_participant_cash_api_admin_advanced_competitions__comp_id__participants__reg_id__revert_cash_patch",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "comp_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Comp Id"
+            }
+          },
+          {
+            "name": "reg_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Reg Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/advanced-competitions/{comp_id}/participants/{reg_id}/confirm-payment": {
+      "post": {
+        "tags": [
+          "admin-advanced-competitions"
+        ],
+        "summary": "Confirm Participant Payment",
+        "description": "Super Admin confirms participant payment (Online, UPI, or Cash).\nMarks payment_status as 'PAID' and registration status as 'CONFIRMED'.\nThe contestant is immediately admitted into the official confirmed performance lineup.",
+        "operationId": "confirm_participant_payment_api_admin_advanced_competitions__comp_id__participants__reg_id__confirm_payment_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "comp_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Comp Id"
+            }
+          },
+          {
+            "name": "reg_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Reg Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "admin-advanced-competitions"
+        ],
+        "summary": "Confirm Participant Payment",
+        "description": "Super Admin confirms participant payment (Online, UPI, or Cash).\nMarks payment_status as 'PAID' and registration status as 'CONFIRMED'.\nThe contestant is immediately admitted into the official confirmed performance lineup.",
+        "operationId": "confirm_participant_payment_api_admin_advanced_competitions__comp_id__participants__reg_id__confirm_payment_patch",
         "security": [
           {
             "HTTPBearer": []
@@ -21334,6 +22804,86 @@
         }
       }
     },
+    "/api/v1/sponsor-popup": {
+      "get": {
+        "tags": [
+          "public",
+          "public"
+        ],
+        "summary": "Get Public Sponsor Popup",
+        "operationId": "get_public_sponsor_popup_api_v1_sponsor_popup_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stage-moments": {
+      "get": {
+        "tags": [
+          "public",
+          "public"
+        ],
+        "summary": "Get Public Stage Moments",
+        "operationId": "get_public_stage_moments_api_v1_stage_moments_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/spotlight-section": {
+      "get": {
+        "tags": [
+          "public",
+          "public"
+        ],
+        "summary": "Get Public Spotlight Section",
+        "operationId": "get_public_spotlight_section_api_v1_spotlight_section_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/partners-section": {
+      "get": {
+        "tags": [
+          "public",
+          "public"
+        ],
+        "summary": "Get Public Partners Section",
+        "operationId": "get_public_partners_section_api_v1_partners_section_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/competitions/upcoming": {
       "get": {
         "tags": [
@@ -21891,6 +23441,86 @@
         "summary": "Get Homepage",
         "description": "Returns ALL published, visible, eligible homepage content in a single structured response.",
         "operationId": "get_homepage_api_public_homepage_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/sponsor-popup": {
+      "get": {
+        "tags": [
+          "public",
+          "public"
+        ],
+        "summary": "Get Public Sponsor Popup",
+        "operationId": "get_public_sponsor_popup_api_public_sponsor_popup_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/stage-moments": {
+      "get": {
+        "tags": [
+          "public",
+          "public"
+        ],
+        "summary": "Get Public Stage Moments",
+        "operationId": "get_public_stage_moments_api_public_stage_moments_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/spotlight-section": {
+      "get": {
+        "tags": [
+          "public",
+          "public"
+        ],
+        "summary": "Get Public Spotlight Section",
+        "operationId": "get_public_spotlight_section_api_public_spotlight_section_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/partners-section": {
+      "get": {
+        "tags": [
+          "public",
+          "public"
+        ],
+        "summary": "Get Public Partners Section",
+        "operationId": "get_public_partners_section_api_public_partners_section_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -22653,7 +24283,7 @@
           "public-competitions"
         ],
         "summary": "Public Results",
-        "description": "Public API: Returns official leaderboard ONLY if results are published.",
+        "description": "Public API: Returns official leaderboard ONLY if results are published or public scores are enabled.",
         "operationId": "public_results_api_v1_competitions__comp_id__results_get",
         "parameters": [
           {
@@ -23283,7 +24913,7 @@
           "public-competitions"
         ],
         "summary": "Public Results",
-        "description": "Public API: Returns official leaderboard ONLY if results are published.",
+        "description": "Public API: Returns official leaderboard ONLY if results are published or public scores are enabled.",
         "operationId": "public_results_api_public_competitions__comp_id__results_get",
         "parameters": [
           {
@@ -27894,6 +29524,20 @@
         ],
         "title": "Body_upload_competition_image_api_admin_advanced_competitions_upload_image_post"
       },
+      "Body_upload_competition_share_image_api_admin_advanced_competitions_upload_share_image_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_competition_share_image_api_admin_advanced_competitions_upload_share_image_post"
+      },
       "Body_upload_merchandise_image_api_admin_merchandise_upload_image_post": {
         "properties": {
           "file": {
@@ -27907,6 +29551,76 @@
           "file"
         ],
         "title": "Body_upload_merchandise_image_api_admin_merchandise_upload_image_post"
+      },
+      "Body_upload_partner_logo_api_admin_upload_partner_logo_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_partner_logo_api_admin_upload_partner_logo_post"
+      },
+      "Body_upload_share_image_to_competition_api_admin_advanced_competitions__comp_id__upload_share_image_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_share_image_to_competition_api_admin_advanced_competitions__comp_id__upload_share_image_post"
+      },
+      "Body_upload_sponsor_popup_image_api_admin_upload_sponsor_popup_image_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_sponsor_popup_image_api_admin_upload_sponsor_popup_image_post"
+      },
+      "Body_upload_spotlight_moment_photo_api_admin_upload_spotlight_photo_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_spotlight_moment_photo_api_admin_upload_spotlight_photo_post"
+      },
+      "Body_upload_stage_moment_photo_api_admin_upload_stage_photo_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_stage_moment_photo_api_admin_upload_stage_photo_post"
       },
       "Body_verify_aadhaar_document_api_kyc_verify_document_post": {
         "properties": {
@@ -28067,6 +29781,20 @@
               }
             ],
             "title": "Holder Names"
+          },
+          "seats": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seats"
           },
           "payment_method": {
             "anyOf": [
@@ -28448,6 +30176,17 @@
             ],
             "title": "Banner Image Url"
           },
+          "share_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share Image Url"
+          },
           "type": {
             "type": "string",
             "title": "Type",
@@ -28760,6 +30499,39 @@
               }
             ],
             "title": "Total Rounds"
+          },
+          "score_visible_for_public": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Visible For Public"
+          },
+          "results_published": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Results Published"
+          },
+          "result_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Status"
           }
         },
         "type": "object",
@@ -29054,6 +30826,17 @@
               }
             ],
             "title": "Banner Image Url"
+          },
+          "share_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share Image Url"
           },
           "type": {
             "anyOf": [
@@ -29463,6 +31246,39 @@
               }
             ],
             "title": "Total Rounds"
+          },
+          "score_visible_for_public": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Visible For Public"
+          },
+          "results_published": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Results Published"
+          },
+          "result_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Status"
           }
         },
         "type": "object",
@@ -30524,6 +32340,39 @@
             ],
             "title": "Image Url"
           },
+          "card_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Image Url"
+          },
+          "banner_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Banner Url"
+          },
+          "banner_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Banner Image Url"
+          },
           "date": {
             "type": "string",
             "title": "Date"
@@ -30682,6 +32531,39 @@
               }
             ],
             "title": "Image Url"
+          },
+          "card_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Image Url"
+          },
+          "banner_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Banner Url"
+          },
+          "banner_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Banner Image Url"
           },
           "date": {
             "anyOf": [
@@ -31270,6 +33152,19 @@
           "reason"
         ],
         "title": "KYCOverrideRequest"
+      },
+      "LinkPreviewReq": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "LinkPreviewReq"
       },
       "LiveEventCreate": {
         "properties": {

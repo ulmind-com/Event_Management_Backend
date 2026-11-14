@@ -573,6 +573,29 @@ async def list_contestants(
 
     if only_present:
         subs = [x for x in subs if x.get("is_present")]
+        def _parse_ts(val: Any) -> float:
+            if not val:
+                return float('inf')
+            if isinstance(val, (int, float)):
+                return float(val)
+            if isinstance(val, str):
+                try:
+                    val = datetime.fromisoformat(val.replace("Z", "+00:00"))
+                except Exception:
+                    return float('inf')
+            if hasattr(val, "timestamp"):
+                try:
+                    return val.timestamp()
+                except Exception:
+                    return float('inf')
+            return float('inf')
+
+        subs.sort(key=lambda x: (
+            _parse_ts(x.get("attended_at")),
+            x.get("stage_order") if (x.get("stage_order") and x.get("stage_order") > 0) else float('inf')
+        ))
+        for s_idx, s_item in enumerate(subs, start=1):
+            s_item["stage_order"] = s_idx
 
     return subs
 

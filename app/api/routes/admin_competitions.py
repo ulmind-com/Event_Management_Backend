@@ -2068,6 +2068,32 @@ async def get_competition_attendance(comp_id: str, admin: dict = Depends(get_cur
         if is_p:
             final_present.append(item)
 
+    # Sort final_present chronologically by attended_at (first to give attendance is first in the list)
+    def _parse_ts(val: Any) -> float:
+        if not val:
+            return float('inf')
+        if isinstance(val, (int, float)):
+            return float(val)
+        if isinstance(val, str):
+            try:
+                val = datetime.fromisoformat(val.replace("Z", "+00:00"))
+            except Exception:
+                return float('inf')
+        if hasattr(val, "timestamp"):
+            try:
+                return val.timestamp()
+            except Exception:
+                return float('inf')
+        return float('inf')
+
+    final_present.sort(key=lambda x: (
+        _parse_ts(x.attended_at),
+        x.stage_order if (x.stage_order and x.stage_order > 0) else float('inf'),
+        _parse_ts(x.registered_at)
+    ))
+    for seq_idx, p_item in enumerate(final_present, start=1):
+        p_item.stage_order = seq_idx
+
     present_count = len(final_present)
     absent_count = len(all_items) - present_count
 
@@ -2155,9 +2181,17 @@ async def update_participant_attendance(
     if is_present:
         update_fields["attended_at"] = now
         update_fields["attended_by"] = admin_email
+        if not reg.get("stage_order") or reg.get("stage_order") == 0:
+            existing_present_cnt = await competition_registration_collection.count_documents({
+                "competition_id": {"$in": comp_match},
+                "$or": [{"is_present": True}, {"attendance_status": "PRESENT"}],
+                "_id": {"$ne": reg["_id"]}
+            })
+            update_fields["stage_order"] = existing_present_cnt + 1
     else:
         update_fields["attended_at"] = None
         update_fields["attended_by"] = None
+        update_fields["stage_order"] = 0
 
     if req.notes:
         update_fields["attendance_notes"] = req.notes
@@ -2261,17 +2295,19 @@ async def bulk_update_attendance(
         if ObjectId.is_valid(s_rid):
             target_ids.append(ObjectId(s_rid))
 
-    update_fields = {
+    # Bulk update fields
+    bulk_update_fields = {
         "is_present": is_present,
         "attendance_status": stat,
         "updated_at": now
     }
     if is_present:
-        update_fields["attended_at"] = now
-        update_fields["attended_by"] = admin_email
+        bulk_update_fields["attended_at"] = now
+        bulk_update_fields["attended_by"] = admin_email
     else:
-        update_fields["attended_at"] = None
-        update_fields["attended_by"] = None
+        bulk_update_fields["attended_at"] = None
+        bulk_update_fields["attended_by"] = None
+        bulk_update_fields["stage_order"] = 0
 
     res1 = await competition_registration_collection.update_many(
         {
@@ -2282,7 +2318,7 @@ async def bulk_update_attendance(
                 {"user_email": {"$in": [str(x).lower() for x in req.registration_ids]}}
             ]
         },
-        {"$set": update_fields}
+        {"$set": bulk_update_fields}
     )
 
     res2 = await registration_collection.update_many(
@@ -2297,7 +2333,7 @@ async def bulk_update_attendance(
                 {"email": {"$in": [str(x).lower() for x in req.registration_ids]}}
             ]
         },
-        {"$set": update_fields}
+        {"$set": bulk_update_fields}
     )
 
     total_modified = res1.modified_count + res2.modified_count

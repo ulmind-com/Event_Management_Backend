@@ -233,3 +233,63 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
         "remaining": max(0, quantity - new_admitted),
         "is_fully_used": is_now_fully_used,
     }
+
+
+@router.get("/assigned-events")
+async def get_volunteer_assigned_events(scanner: dict = Depends(get_scanner_user)):
+    """
+    Returns events assigned to the logged-in Volunteer (or all active events if Admin).
+    """
+    scanner_email = (scanner.get("email") or "").lower().strip()
+    is_admin = bool(scanner.get("role") in ["SUPER_ADMIN", "ADMIN"] or scanner.get("is_super_admin"))
+
+    if is_admin:
+        events = await event_collection.find({}).sort("date", -1).to_list(length=100)
+    else:
+        events = await event_collection.find({
+            "$or": [
+                {"volunteers.email": scanner_email},
+                {"volunteers.email": {"$regex": f"^{scanner_email}$", "$options": "i"}},
+            ]
+        }).sort("date", -1).to_list(length=100)
+
+        # Fallback to user document's assigned_events
+        if not events:
+            assigned_ids = []
+            for ev in scanner.get("assigned_events", []):
+                eid = ev.get("event_id")
+                if eid and ObjectId.is_valid(eid):
+                    assigned_ids.append(ObjectId(eid))
+            if assigned_ids:
+                events = await event_collection.find({"_id": {"$in": assigned_ids}}).to_list(length=100)
+
+    results = []
+    for ev in events:
+        eid = str(ev["_id"])
+        volunteers = ev.get("volunteers") or []
+        my_role = "Entrance Gate Scanner"
+        for v in volunteers:
+            if str(v.get("email", "")).lower() == scanner_email:
+                my_role = v.get("role") or my_role
+                break
+
+        results.append({
+            "event_id": eid,
+            "id": eid,
+            "title": ev.get("title", "Event"),
+            "date": ev.get("date", ""),
+            "time": ev.get("time", ""),
+            "venue": ev.get("venue", ""),
+            "status": ev.get("event_status") or "UPCOMING",
+            "is_published": ev.get("is_published", False),
+            "cover_image": (
+                ev.get("card_image_url")
+                or ev.get("image_url")
+                or ev.get("banner_url")
+                or ev.get("banner_image_url")
+            ),
+            "my_role": my_role,
+            "total_volunteers": len(volunteers),
+        })
+
+    return results

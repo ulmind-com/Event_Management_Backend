@@ -738,6 +738,140 @@ class EmailService:
         return _send_email_payload(to_email=email, subject="🎟️ Volunteer Access Granted: Upgrade Talents India Ticket Scanner", html=html, sender_name="Upgrade Talents India")
 
     @staticmethod
+    def send_volunteer_event_assignment(
+        email: str,
+        password: str,
+        event_title: str,
+        event_date: Optional[str] = None,
+        event_time: Optional[str] = None,
+        event_venue: Optional[str] = None,
+        name: Optional[str] = None,
+        role: Optional[str] = "Entrance Gate Scanner",
+    ) -> bool:
+        """Sends official event assignment email with secure login credentials and scanner instructions."""
+        login_url = "https://www.upgradetalentsindia.in/volunteer/login"
+        safe_email = _escape(email)
+        safe_password = _escape(password)
+        safe_title = _escape(event_title)
+        safe_date = _escape(event_date or "To be announced")
+        safe_time = _escape(event_time or "IST")
+        safe_venue = _escape(event_venue or "Main Venue")
+        safe_role = _escape(role or "Entrance Gate Scanner")
+        greeting = f"Hello {_escape(name)}," if name else "Hello Volunteer,"
+
+        content = f"""
+          <h1 style="margin: 0 0 10px 0; font-size: 22px; font-weight: 800; color: #F8FAFC; letter-spacing: -0.4px;">
+            Event Volunteer Assignment &#127915;
+          </h1>
+          <p style="margin: 0 0 16px 0; font-size: 15px; color: #CBD5E1; line-height: 1.6;">
+            {greeting}
+          </p>
+          <p style="margin: 0 0 20px 0; font-size: 14px; color: #94A3B8; line-height: 1.6;">
+            You have been officially assigned as an event volunteer for <strong>{safe_title}</strong>. Please find your event schedule, gate assignment, and login credentials below.
+          </p>
+
+          <!-- Event Details Card -->
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #111827; border: 1px solid #1F2937; border-radius: 14px; padding: 20px; margin: 0 0 20px 0;">
+            <tr>
+              <td>
+                <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; color: #10B981; margin-bottom: 12px;">
+                  &#128197; Event &amp; Gate Details
+                </div>
+                <table role="presentation" border="0" cellpadding="4" cellspacing="0" width="100%" style="font-size: 13px; color: #CBD5E1;">
+                  <tr>
+                    <td style="color: #94A3B8; width: 110px; font-weight: 600;">Event:</td>
+                    <td style="color: #F8FAFC; font-weight: 700;">{safe_title}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #94A3B8; font-weight: 600;">Date &amp; Time:</td>
+                    <td style="color: #F8FAFC;">{safe_date} &bull; {safe_time}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #94A3B8; font-weight: 600;">Venue:</td>
+                    <td style="color: #F8FAFC;">{safe_venue}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #94A3B8; font-weight: 600;">Role / Duty:</td>
+                    <td style="color: #10B981; font-weight: 700;">{safe_role}</td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+
+          <!-- Credentials Card -->
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(56, 189, 248, 0.08) 100%); border: 1.5px solid rgba(16, 185, 129, 0.4); border-radius: 14px; padding: 22px; margin: 0 0 24px 0;">
+            <tr>
+              <td>
+                <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; color: #34D399; margin-bottom: 14px;">
+                  &#128273; Your Volunteer Portal Login Credentials
+                </div>
+                <div style="margin-bottom: 10px;">
+                  <span style="font-size: 12px; color: #94A3B8; display: block; margin-bottom: 4px;">Registered Email:</span>
+                  <div style="background: #0B0F17; border: 1px solid #1E293B; border-radius: 8px; padding: 10px 14px; font-family: monospace; font-size: 14px; color: #F8FAFC; word-break: break-all;">
+                    {safe_email}
+                  </div>
+                </div>
+                <div style="margin-bottom: 14px;">
+                  <span style="font-size: 12px; color: #94A3B8; display: block; margin-bottom: 4px;">Access Password:</span>
+                  <div style="background: #0B0F17; border: 1px solid rgba(16, 185, 129, 0.5); border-radius: 8px; padding: 10px 14px; font-family: monospace; font-size: 18px; font-weight: 800; letter-spacing: 2px; color: #34D399; user-select: all;">
+                    {safe_password}
+                  </div>
+                </div>
+                <p style="margin: 0; font-size: 12px; color: #94A3B8; line-height: 1.5;">
+                  &#10003; Copy the password above and use it to log in directly. You can also sign in via Email OTP anytime.
+                </p>
+              </td>
+            </tr>
+          </table>
+
+          <!-- Big Action Button -->
+          <div style="text-align: center; margin: 24px 0 16px 0;">
+            <a href="{login_url}" style="display: inline-block; background: linear-gradient(135deg, #059669 0%, #10B981 100%); color: #FFFFFF; text-decoration: none; padding: 15px 36px; border-radius: 9999px; font-size: 15px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);">
+              Open Volunteer Scanner &amp; Login &rarr;
+            </a>
+          </div>
+
+          <!-- Instructions Card -->
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #0F172A; border: 1px solid #1E293B; border-radius: 12px; padding: 16px; margin: 20px 0 10px 0;">
+            <tr>
+              <td>
+                <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #38BDF8; margin-bottom: 8px;">
+                  Quick Entrance Gate Guide:
+                </div>
+                <ol style="margin: 0; padding-left: 18px; font-size: 12px; color: #94A3B8; line-height: 1.7;">
+                  <li>Open the portal and log in with your email and access password.</li>
+                  <li>Select your assigned event and gate on your mobile device.</li>
+                  <li>Scan attendee ticket QR codes using your phone camera.</li>
+                  <li>Listen for the entrance gate chime confirming authorized admission!</li>
+                </ol>
+              </td>
+            </tr>
+          </table>
+
+          <p style="text-align: center; margin: 16px 0 0 0; font-size: 11.5px; color: #64748B;">
+            Direct Portal URL: <a href="{login_url}" style="color: #34D399; text-decoration: underline;">{login_url}</a>
+          </p>
+        """
+
+        html = _render_base_email(
+            title=f"Volunteer Assignment: {event_title}",
+            preheader=f"You have been assigned as a Volunteer for {event_title}. Here are your login credentials and gate details.",
+            badge_text="VOLUNTEER GATE PASS",
+            badge_color="#10B981",
+            badge_bg="rgba(16, 185, 129, 0.15)",
+            badge_border="rgba(16, 185, 129, 0.35)",
+            content_html=content,
+            recipient_email=email
+        )
+        return _send_email_payload(
+            to_email=email,
+            subject=f"🎟️ Volunteer Assignment & Gate Credentials: {event_title}",
+            html=html,
+            sender_name="Upgrade Talents India"
+        )
+
+    @staticmethod
     def send_certificate_email(
         email: str,
         name: str,

@@ -2197,3 +2197,46 @@ async def bulk_update_event_attendance(
         "is_present": is_present,
         "attendance_status": stat
     }
+
+
+# ── EVENT VOLUNTEERS INTEGRATION ────────────────────────────────────
+
+@router.get("/events/{event_id}/volunteers", tags=["admin-volunteers"])
+async def cms_get_event_volunteers(event_id: str, admin=Depends(get_current_admin)):
+    """Retrieve all assigned and available volunteers for an event."""
+    from app.api.routes.admin_volunteers import get_event_volunteers
+    return await get_event_volunteers(event_id, admin)
+
+
+@router.post("/events/{event_id}/volunteers", tags=["admin-volunteers"])
+async def cms_assign_event_volunteers(
+    event_id: str,
+    req: dict,
+    admin=Depends(get_current_admin)
+):
+    """Assign volunteers to an event and email them their credentials."""
+    from app.api.routes.admin_volunteers import assign_event_volunteers, AssignEventVolunteersReq
+    parsed_req = AssignEventVolunteersReq(**req)
+    return await assign_event_volunteers(event_id, parsed_req, admin)
+
+
+@router.delete("/events/{event_id}/volunteers/{email}", tags=["admin-volunteers"])
+async def cms_remove_event_volunteer(
+    event_id: str,
+    email: str,
+    admin=Depends(get_current_admin)
+):
+    """Unassign volunteer from an event."""
+    from app.api.routes.admin_volunteers import remove_event_volunteer
+    return await remove_event_volunteer(event_id, email, admin)
+
+
+@router.post("/events/{event_id}/volunteers/{email}/resend-credentials", tags=["admin-volunteers"])
+async def cms_resend_event_volunteer_credentials(
+    event_id: str,
+    email: str,
+    admin=Depends(get_current_admin)
+):
+    """Resend credentials and gate pass to an assigned volunteer."""
+    from app.api.routes.admin_volunteers import resend_event_volunteer_credentials
+    return await resend_event_volunteer_credentials(event_id, email, admin)

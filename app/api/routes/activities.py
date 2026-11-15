@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 import re
 from bson import ObjectId
+from app.core.cache import FastCache
 from app.core.database import event_collection, ticket_collection, competition_collection, course_collection, merchandise_collection, booking_collection, issued_ticket_collection
 from app.services.ticket import TicketService
 from app.services.competition_lifecycle import evaluate_competition_registration_status
@@ -24,20 +25,24 @@ async def get_events(
     search: Optional[str] = None,
     category: Optional[str] = None
 ):
-    query = {"is_deleted": {"$ne": True}}
-    if search:
-        query["title"] = {"$regex": search, "$options": "i"}
-    if category and category.strip() and category.upper() != "ALL":
-        c_clean = category.strip()
-        cat_regex = {"$regex": f"^{re.escape(c_clean)}$", "$options": "i"}
-        query["$or"] = [
-            {"category": cat_regex},
-            {"categories.name": cat_regex}
-        ]
-    events = await event_collection.find(query).sort([("display_order", 1), ("updated_at", -1), ("created_at", -1)]).skip(skip).limit(limit).to_list(length=limit)
-    for ev in events:
-        ShareService.enrich_event(ev)
-    return clean_ids(events)
+    async def _f():
+        query = {"is_deleted": {"$ne": True}}
+        if search:
+            query["title"] = {"$regex": search, "$options": "i"}
+        if category and category.strip() and category.upper() != "ALL":
+            c_clean = category.strip()
+            cat_regex = {"$regex": f"^{re.escape(c_clean)}$", "$options": "i"}
+            query["$or"] = [
+                {"category": cat_regex},
+                {"categories.name": cat_regex}
+            ]
+        events = await event_collection.find(query).sort([("display_order", 1), ("updated_at", -1), ("created_at", -1)]).skip(skip).limit(limit).to_list(length=limit)
+        for ev in events:
+            ShareService.enrich_event(ev)
+        return clean_ids(events)
+
+    ck = f"act_events_{skip}_{limit}_{search or ''}_{category or ''}"
+    return await FastCache.cached_or_fetch(ck, 20, _f)
 
 @router.get("/events/by-category")
 async def get_events_by_category():
@@ -365,46 +370,53 @@ async def get_competitions(
     search: Optional[str] = None,
     category: Optional[str] = None
 ):
-    query = {}
-    if search:
-        query["title"] = {"$regex": search, "$options": "i"}
-    if category and category.strip() and category.upper() != "ALL":
-        c_clean = category.strip()
-        cat_regex = {"$regex": f"^{re.escape(c_clean)}$", "$options": "i"}
-        query["$or"] = [
-            {"category": cat_regex},
-            {"categories.name": cat_regex}
-        ]
-    competitions = await competition_collection.find(query).sort("created_at", -1).skip(skip).limit(limit).to_list(length=limit)
-    for comp in competitions:
+    async def _f():
+        query = {}
+        if search:
+            query["title"] = {"$regex": search, "$options": "i"}
+        if category and category.strip() and category.upper() != "ALL":
+            c_clean = category.strip()
+            cat_regex = {"$regex": f"^{re.escape(c_clean)}$", "$options": "i"}
+            query["$or"] = [
+                {"category": cat_regex},
+                {"categories.name": cat_regex}
+            ]
+        competitions = await competition_collection.find(query).sort("created_at", -1).skip(skip).limit(limit).to_list(length=limit)
+        for comp in competitions:
+            reg_eval = evaluate_competition_registration_status(comp)
+            comp["registration_status"] = reg_eval["registration_status"]
+            comp["is_registration_open"] = reg_eval["is_registration_open"]
+            comp["can_register"] = reg_eval["can_register"]
+            comp["registration_reason"] = reg_eval["reason"]
+            enrich_competition_submission_config(comp)
+            ShareService.enrich_competition(comp)
+        return clean_ids(competitions)
+
+    ck = f"act_comps_{skip}_{limit}_{search or ''}_{category or ''}"
+    return await FastCache.cached_or_fetch(ck, 20, _f)
+
+@router.get("/competitions/{comp_id}")
+async def get_competition_activity(comp_id: str):
+    async def _f():
+        try:
+            c_id = ObjectId(comp_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid competition ID")
+        comp = await competition_collection.find_one({"_id": c_id})
+        if not comp:
+            raise HTTPException(status_code=404, detail="Competition not found")
+        comp["_id"] = str(comp["_id"])
         reg_eval = evaluate_competition_registration_status(comp)
         comp["registration_status"] = reg_eval["registration_status"]
         comp["is_registration_open"] = reg_eval["is_registration_open"]
         comp["can_register"] = reg_eval["can_register"]
         comp["registration_reason"] = reg_eval["reason"]
-        enrich_competition_submission_config(comp)
+        comp = enrich_competition_submission_config(comp)
+        comp["score_visible_for_public"] = bool(comp.get("score_visible_for_public", comp.get("results_published", False)) or comp.get("result_status") == "PUBLISHED")
         ShareService.enrich_competition(comp)
-    return clean_ids(competitions)
+        return comp
 
-@router.get("/competitions/{comp_id}")
-async def get_competition_activity(comp_id: str):
-    try:
-        c_id = ObjectId(comp_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid competition ID")
-    comp = await competition_collection.find_one({"_id": c_id})
-    if not comp:
-        raise HTTPException(status_code=404, detail="Competition not found")
-    comp["_id"] = str(comp["_id"])
-    reg_eval = evaluate_competition_registration_status(comp)
-    comp["registration_status"] = reg_eval["registration_status"]
-    comp["is_registration_open"] = reg_eval["is_registration_open"]
-    comp["can_register"] = reg_eval["can_register"]
-    comp["registration_reason"] = reg_eval["reason"]
-    comp = enrich_competition_submission_config(comp)
-    comp["score_visible_for_public"] = bool(comp.get("score_visible_for_public", comp.get("results_published", False)) or comp.get("result_status") == "PUBLISHED")
-    ShareService.enrich_competition(comp)
-    return comp
+    return await FastCache.cached_or_fetch(f"act_comp_{comp_id}", 15, _f)
 
 @router.get("/courses")
 async def get_courses(skip: int = 0, limit: int = 10, search: Optional[str] = None):

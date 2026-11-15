@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Query, Request, HTTPException, status
 from fastapi.responses import RedirectResponse
+import asyncio
 from typing import Optional
 from datetime import datetime, timezone
 from bson import ObjectId
+from app.core.cache import FastCache
 from app.core.database import (
     website_settings_collection, event_collection, live_event_collection,
     ticket_collection, banner_collection, testimonial_collection,
@@ -76,177 +78,167 @@ DEFAULT_FEATURED_TILES = [
 # ── Full Homepage (all sections in one response) ──
 @router.get("/homepage", tags=["public"])
 async def get_homepage():
-    """Returns ALL published, visible, eligible homepage content in a single structured response."""
-    now = datetime.now(timezone.utc)
-    now_str = now.isoformat()
+    """Returns ALL published, visible, eligible homepage content in a single structured response with concurrency protection & in-memory caching."""
+    async def _fetch():
+        (
+            settings,
+            events,
+            live_events_raw,
+            banners,
+            testimonials,
+            courses,
+            workshops,
+            contest_promos,
+            app_promo,
+            links,
+            competitions
+        ) = await asyncio.gather(
+            website_settings_collection.find_one({"_type": "settings"}, {"_id": 0, "_type": 0}),
+            event_collection.find({
+                "is_published": True, "is_visible": True, "is_deleted": {"$ne": True}
+            }).sort("display_order", 1).to_list(length=20),
+            live_event_collection.find({
+                "is_published": True, "is_visible": True
+            }).sort("display_order", 1).to_list(length=10),
+            banner_collection.find({
+                "is_published": True, "is_visible": True, "is_deleted": {"$ne": True}
+            }).sort("display_order", 1).to_list(length=30),
+            testimonial_collection.find({
+                "is_approved": True, "is_published": True
+            }).sort("display_order", 1).to_list(length=20),
+            course_collection.find({
+                "is_published": True, "is_visible": True, "is_deleted": {"$ne": True},
+                "course_type": "course"
+            }).sort("display_order", 1).to_list(length=20),
+            course_collection.find({
+                "is_published": True, "is_visible": True, "is_deleted": {"$ne": True},
+                "course_type": "workshop"
+            }).sort("display_order", 1).to_list(length=20),
+            contest_promotion_collection.find({
+                "is_published": True, "is_visible": True
+            }).sort("display_order", 1).to_list(length=10),
+            app_promotion_collection.find_one({"_type": "app_promo", "is_enabled": True, "is_published": True}, {"_id": 0, "_type": 0}),
+            important_link_collection.find({"is_enabled": True}).sort("display_order", 1).to_list(length=50),
+            competition_collection.find({
+                "is_published": True, "is_deleted": {"$ne": True}
+            }).sort([("display_order", 1), ("start_date", 1), ("created_at", -1)]).to_list(length=20)
+        )
 
-    # Brand / Settings
-    settings = await website_settings_collection.find_one({"_type": "settings"}, {"_id": 0, "_type": 0})
+        for ev in events:
+            ShareService.enrich_event(ev)
+        clean_list(events)
 
-    # Upcoming Events (published + visible + not deleted)
-    events = await event_collection.find({
-        "is_published": True, "is_visible": True, "is_deleted": {"$ne": True}
-    }).sort("display_order", 1).to_list(length=20)
-    for ev in events:
-        ShareService.enrich_event(ev)
-    clean_list(events)
+        live_events = []
+        for le in live_events_raw:
+            le["_id"] = str(le["_id"])
+            le.pop("stream_url", None)  # Never expose private stream URL
+            live_events.append(le)
 
-    # Live Events (published + visible, hide private stream_url)
-    live_events_raw = await live_event_collection.find({
-        "is_published": True, "is_visible": True
-    }).sort("display_order", 1).to_list(length=10)
-    live_events = []
-    for le in live_events_raw:
-        le["_id"] = str(le["_id"])
-        le.pop("stream_url", None)  # Never expose private stream URL
-        live_events.append(le)
+        for b in banners:
+            if not b.get("image_url_desktop"):
+                b["image_url_desktop"] = b.get("image_url")
+            if not b.get("image_url") and b.get("image_url_desktop"):
+                b["image_url"] = b.get("image_url_desktop")
+            if not b.get("image_url_mobile") and b.get("mobile_image_url"):
+                b["image_url_mobile"] = b.get("mobile_image_url")
+        clean_list(banners)
 
-    # Sponsored Banners (published + visible + not deleted + date-valid)
-    banners = await banner_collection.find({
-        "is_published": True, "is_visible": True, "is_deleted": {"$ne": True}
-    }).sort("display_order", 1).to_list(length=30)
-    for b in banners:
-        if not b.get("image_url_desktop"):
-            b["image_url_desktop"] = b.get("image_url")
-        if not b.get("image_url") and b.get("image_url_desktop"):
-            b["image_url"] = b.get("image_url_desktop")
-        if not b.get("image_url_mobile") and b.get("mobile_image_url"):
-            b["image_url_mobile"] = b.get("mobile_image_url")
-    clean_list(banners)
+        clean_list(testimonials)
+        clean_list(courses)
+        clean_list(workshops)
+        clean_list(contest_promos)
+        clean_list(links)
 
-    # Testimonials (approved + published)
-    testimonials = await testimonial_collection.find({
-        "is_approved": True, "is_published": True
-    }).sort("display_order", 1).to_list(length=20)
-    clean_list(testimonials)
+        for c in competitions:
+            c["_id"] = str(c["_id"])
+            if not c.get("card_image_url") and c.get("image_url"):
+                c["card_image_url"] = c.get("image_url")
+            if not c.get("image_url") and c.get("card_image_url"):
+                c["image_url"] = c.get("card_image_url")
+            if not c.get("banner_image_url") and c.get("banner_url"):
+                c["banner_image_url"] = c.get("banner_url")
+        clean_list(competitions)
 
-    # Courses (published + visible + not deleted + type=course)
-    courses = await course_collection.find({
-        "is_published": True, "is_visible": True, "is_deleted": {"$ne": True},
-        "course_type": "course"
-    }).sort("display_order", 1).to_list(length=20)
-    clean_list(courses)
+        contact = None
+        if settings:
+            contact = {
+                "contact_email": settings.get("contact_email"),
+                "contact_phone": settings.get("contact_phone"),
+                "office_address": settings.get("office_address"),
+                "social_media": settings.get("social_media"),
+            }
 
-    # Workshops (published + visible + not deleted + type=workshop)
-    workshops = await course_collection.find({
-        "is_published": True, "is_visible": True, "is_deleted": {"$ne": True},
-        "course_type": "workshop"
-    }).sort("display_order", 1).to_list(length=20)
-    clean_list(workshops)
+        featured_tiles = (settings or {}).get("featured_tiles")
+        if not featured_tiles or not isinstance(featured_tiles, list) or len(featured_tiles) == 0:
+            featured_tiles = DEFAULT_FEATURED_TILES
 
-    # Contest/Voting Promotions (published + visible)
-    contest_promos = await contest_promotion_collection.find({
-        "is_published": True, "is_visible": True
-    }).sort("display_order", 1).to_list(length=10)
-    clean_list(contest_promos)
+        stats_list = (settings or {}).get("homepage_stats")
+        if not stats_list or not isinstance(stats_list, list) or len(stats_list) == 0:
+            stats_list = [
+                {"label": "Live events", "value": 12, "suffix": "+", "icon": "calendar"},
+                {"label": "Dancers on stage", "value": 25000, "suffix": "+", "icon": "users"},
+                {"label": "Masterclasses", "value": 40, "suffix": "+", "icon": "graduation"},
+                {"label": "Cities covered", "value": 28, "suffix": "", "icon": "trophy"},
+            ]
 
-    # App Promotion
-    app_promo = await app_promotion_collection.find_one({"_type": "app_promo", "is_enabled": True, "is_published": True}, {"_id": 0, "_type": 0})
+        gallery_section = (settings or {}).get("gallery_section")
+        stage_moments_section = (settings or {}).get("stage_moments_section")
+        spotlight_section = (settings or {}).get("spotlight_section")
+        partners_section = (settings or {}).get("partners_section")
+        sponsor_popup = (settings or {}).get("sponsor_popup")
 
-    # Contact Info
-    contact = None
-    if settings:
-        contact = {
-            "contact_email": settings.get("contact_email"),
-            "contact_phone": settings.get("contact_phone"),
-            "office_address": settings.get("office_address"),
-            "social_media": settings.get("social_media"),
+        return {
+            "brand": {
+                "name": settings.get("brand_name") if settings else None,
+                "logo": settings.get("logo_url") if settings else None,
+                "favicon": settings.get("favicon_url") if settings else None,
+                "tagline": settings.get("tagline") if settings else None,
+                "title": settings.get("homepage_title") if settings else None,
+                "description": settings.get("homepage_description") if settings else None,
+            } if settings else {},
+            "upcoming_events": events,
+            "upcoming_competitions": competitions,
+            "competitions_section": {
+                "title": settings.get("competitions_section_title") or "Upcoming Competitions" if settings else "Upcoming Competitions",
+                "label": settings.get("competitions_section_label") or "What's next" if settings else "What's next",
+                "view_all_url": settings.get("competitions_section_link") or "/competitions" if settings else "/competitions",
+            } if settings else {
+                "title": "Upcoming Competitions",
+                "label": "What's next",
+                "view_all_url": "/competitions",
+            },
+            "live_stage_section": {
+                "title": settings.get("live_stage_title") or "Live Stage" if settings else "Live Stage",
+                "label": settings.get("live_stage_label") or "Streaming right now" if settings else "Streaming right now",
+            } if settings else {
+                "title": "Live Stage",
+                "label": "Streaming right now",
+            },
+            "homepage_stats": stats_list,
+            "live_events": live_events,
+            "sponsored_banners": banners,
+            "testimonials": testimonials,
+            "courses": courses,
+            "workshops": workshops,
+            "contest_promotions": contest_promos,
+            "app_promotion": app_promo,
+            "contact": contact,
+            "important_links": links,
+            "featured_tiles": featured_tiles,
+            "gallery_section": gallery_section if gallery_section and isinstance(gallery_section, dict) else {
+                "title": "A stage worth watching",
+                "label": "In motion",
+                "description": "Every performance, workshop and showdown — captured and brought to life. Scroll through the moments that make Upgrade Talents unforgettable.",
+                "view_all_url": "/gallery",
+                "images": [],
+            },
+            "stage_moments_section": stage_moments_section if stage_moments_section and isinstance(stage_moments_section, dict) else DEFAULT_STAGE_MOMENTS_SECTION,
+            "spotlight_section": spotlight_section if spotlight_section and isinstance(spotlight_section, dict) else DEFAULT_SPOTLIGHT_SECTION,
+            "partners_section": partners_section if partners_section and isinstance(partners_section, dict) else DEFAULT_PARTNERS_SECTION,
+            "sponsor_popup": sponsor_popup if sponsor_popup and isinstance(sponsor_popup, dict) else DEFAULT_SPONSOR_POPUP,
         }
 
-    # Important Links
-    links = await important_link_collection.find({"is_enabled": True}).sort("display_order", 1).to_list(length=50)
-    clean_list(links)
-
-    # Upcoming Competitions (published + not deleted)
-    competitions = await competition_collection.find({
-        "is_published": True, "is_deleted": {"$ne": True}
-    }).sort([("display_order", 1), ("start_date", 1), ("created_at", -1)]).to_list(length=20)
-    for c in competitions:
-        c["_id"] = str(c["_id"])
-        if not c.get("card_image_url") and c.get("image_url"):
-            c["card_image_url"] = c.get("image_url")
-        if not c.get("image_url") and c.get("card_image_url"):
-            c["image_url"] = c.get("card_image_url")
-        if not c.get("banner_image_url") and c.get("banner_url"):
-            c["banner_image_url"] = c.get("banner_url")
-    clean_list(competitions)
-
-    # Featured Category Tiles (4 tiles)
-    featured_tiles = (settings or {}).get("featured_tiles")
-    if not featured_tiles or not isinstance(featured_tiles, list) or len(featured_tiles) == 0:
-        featured_tiles = DEFAULT_FEATURED_TILES
-
-    # Homepage Stats (4 counter items)
-    stats_list = (settings or {}).get("homepage_stats")
-    if not stats_list or not isinstance(stats_list, list) or len(stats_list) == 0:
-        stats_list = [
-            {"label": "Live events", "value": 12, "suffix": "+", "icon": "calendar"},
-            {"label": "Dancers on stage", "value": 25000, "suffix": "+", "icon": "users"},
-            {"label": "Masterclasses", "value": 40, "suffix": "+", "icon": "graduation"},
-            {"label": "Cities covered", "value": 28, "suffix": "", "icon": "trophy"},
-        ]
-
-    # Gallery Section
-    gallery_section = (settings or {}).get("gallery_section")
-    # Stage Moments / Floor Photos (Ring Showcase)
-    stage_moments_section = (settings or {}).get("stage_moments_section")
-    # Spotlight Section (Moments in the Spotlight / Promotional Links)
-    spotlight_section = (settings or {}).get("spotlight_section")
-    # Partners & Sponsors Section
-    partners_section = (settings or {}).get("partners_section")
-    # Grand Sponsor Popup (Website Opening Modal)
-    sponsor_popup = (settings or {}).get("sponsor_popup")
-
-    return {
-        "brand": {
-            "name": settings.get("brand_name") if settings else None,
-            "logo": settings.get("logo_url") if settings else None,
-            "favicon": settings.get("favicon_url") if settings else None,
-            "tagline": settings.get("tagline") if settings else None,
-            "title": settings.get("homepage_title") if settings else None,
-            "description": settings.get("homepage_description") if settings else None,
-        } if settings else {},
-        "upcoming_events": events,
-        "upcoming_competitions": competitions,
-        "competitions_section": {
-            "title": settings.get("competitions_section_title") or "Upcoming Competitions" if settings else "Upcoming Competitions",
-            "label": settings.get("competitions_section_label") or "What's next" if settings else "What's next",
-            "view_all_url": settings.get("competitions_section_link") or "/competitions" if settings else "/competitions",
-        } if settings else {
-            "title": "Upcoming Competitions",
-            "label": "What's next",
-            "view_all_url": "/competitions",
-        },
-        "live_stage_section": {
-            "title": settings.get("live_stage_title") or "Live Stage" if settings else "Live Stage",
-            "label": settings.get("live_stage_label") or "Streaming right now" if settings else "Streaming right now",
-        } if settings else {
-            "title": "Live Stage",
-            "label": "Streaming right now",
-        },
-        "homepage_stats": stats_list,
-        "live_events": live_events,
-        "sponsored_banners": banners,
-        "testimonials": testimonials,
-        "courses": courses,
-        "workshops": workshops,
-        "contest_promotions": contest_promos,
-        "app_promotion": app_promo,
-        "contact": contact,
-        "important_links": links,
-        "featured_tiles": featured_tiles,
-        "gallery_section": gallery_section if gallery_section and isinstance(gallery_section, dict) else {
-            "title": "A stage worth watching",
-            "label": "In motion",
-            "description": "Every performance, workshop and showdown — captured and brought to life. Scroll through the moments that make Upgrade Talents unforgettable.",
-            "view_all_url": "/gallery",
-            "images": [],
-        },
-        "stage_moments_section": stage_moments_section if stage_moments_section and isinstance(stage_moments_section, dict) else DEFAULT_STAGE_MOMENTS_SECTION,
-        "spotlight_section": spotlight_section if spotlight_section and isinstance(spotlight_section, dict) else DEFAULT_SPOTLIGHT_SECTION,
-        "partners_section": partners_section if partners_section and isinstance(partners_section, dict) else DEFAULT_PARTNERS_SECTION,
-        "sponsor_popup": sponsor_popup if sponsor_popup and isinstance(sponsor_popup, dict) else DEFAULT_SPONSOR_POPUP,
-    }
+    return await FastCache.cached_or_fetch("homepage", 25, _fetch)
 
 # ── Individual Section Endpoints ──
 @router.get("/sponsor-popup", tags=["public"])
@@ -290,47 +282,60 @@ async def get_upcoming_competitions(skip: int = 0, limit: int = 20, search: Opti
 
 @router.get("/featured-tiles", tags=["public"])
 async def get_public_featured_tiles():
-    settings = await website_settings_collection.find_one({"_type": "settings"}, {"_id": 0, "featured_tiles": 1})
-    tiles = (settings or {}).get("featured_tiles")
-    return tiles if tiles and isinstance(tiles, list) and len(tiles) > 0 else DEFAULT_FEATURED_TILES
+    async def _f():
+        settings = await website_settings_collection.find_one({"_type": "settings"}, {"_id": 0, "featured_tiles": 1})
+        tiles = (settings or {}).get("featured_tiles")
+        return tiles if tiles and isinstance(tiles, list) and len(tiles) > 0 else DEFAULT_FEATURED_TILES
+    return await FastCache.cached_or_fetch("public_featured_tiles", 30, _f)
 
 @router.get("/website-settings", tags=["public"])
 async def get_public_settings():
-    doc = await website_settings_collection.find_one({"_type": "settings"}, {"_id": 0, "_type": 0})
-    return doc if doc else {}
+    async def _f():
+        doc = await website_settings_collection.find_one({"_type": "settings"}, {"_id": 0, "_type": 0})
+        return doc if doc else {}
+    return await FastCache.cached_or_fetch("public_settings", 30, _f)
 
 @router.get("/events/upcoming", tags=["public"])
 async def get_upcoming_events(skip: int = 0, limit: int = 10, search: Optional[str] = None):
-    q = {"is_published": True, "is_visible": True, "is_deleted": {"$ne": True}}
-    if search:
-        q["title"] = {"$regex": search, "$options": "i"}
-    docs = await event_collection.find(q).sort("display_order", 1).skip(skip).limit(limit).to_list(length=limit)
-    return clean_list(docs)
+    async def _f():
+        q = {"is_published": True, "is_visible": True, "is_deleted": {"$ne": True}}
+        if search:
+            q["title"] = {"$regex": search, "$options": "i"}
+        docs = await event_collection.find(q).sort("display_order", 1).skip(skip).limit(limit).to_list(length=limit)
+        return clean_list(docs)
+    ck = f"public_events_{skip}_{limit}_{search or ''}"
+    return await FastCache.cached_or_fetch(ck, 20, _f)
 
 @router.get("/events/live", tags=["public"])
 async def get_live_events():
-    docs = await live_event_collection.find({"is_published": True, "is_visible": True}).sort("display_order", 1).to_list(length=10)
-    for d in docs:
-        d["_id"] = str(d["_id"])
-        d.pop("stream_url", None)  # Hide private stream URL
-    return docs
+    async def _f():
+        docs = await live_event_collection.find({"is_published": True, "is_visible": True}).sort("display_order", 1).to_list(length=10)
+        for d in docs:
+            d["_id"] = str(d["_id"])
+            d.pop("stream_url", None)  # Hide private stream URL
+        return docs
+    return await FastCache.cached_or_fetch("public_live_events", 15, _f)
 
 @router.get("/banners", tags=["public"])
 async def get_public_banners():
-    docs = await banner_collection.find({"is_published": True, "is_visible": True, "is_deleted": {"$ne": True}}).sort("display_order", 1).to_list(length=30)
-    for b in docs:
-        if not b.get("image_url_desktop"):
-            b["image_url_desktop"] = b.get("image_url")
-        if not b.get("image_url") and b.get("image_url_desktop"):
-            b["image_url"] = b.get("image_url_desktop")
-        if not b.get("image_url_mobile") and b.get("mobile_image_url"):
-            b["image_url_mobile"] = b.get("mobile_image_url")
-    return clean_list(docs)
+    async def _f():
+        docs = await banner_collection.find({"is_published": True, "is_visible": True, "is_deleted": {"$ne": True}}).sort("display_order", 1).to_list(length=30)
+        for b in docs:
+            if not b.get("image_url_desktop"):
+                b["image_url_desktop"] = b.get("image_url")
+            if not b.get("image_url") and b.get("image_url_desktop"):
+                b["image_url"] = b.get("image_url_desktop")
+            if not b.get("image_url_mobile") and b.get("mobile_image_url"):
+                b["image_url_mobile"] = b.get("mobile_image_url")
+        return clean_list(docs)
+    return await FastCache.cached_or_fetch("public_banners", 25, _f)
 
 @router.get("/testimonials", tags=["public"])
 async def get_public_testimonials():
-    docs = await testimonial_collection.find({"is_approved": True, "is_published": True}).sort("display_order", 1).to_list(length=20)
-    return clean_list(docs)
+    async def _f():
+        docs = await testimonial_collection.find({"is_approved": True, "is_published": True}).sort("display_order", 1).to_list(length=20)
+        return clean_list(docs)
+    return await FastCache.cached_or_fetch("public_testimonials", 60, _f)
 
 
 def calculate_dynamic_status(doc):

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import Optional, List, Dict, Any
 from bson import ObjectId
+from app.core.cache import FastCache
 from app.core.database import judge_feedback_collection, competition_collection, leaderboard_result_collection
 from app.services.competition_stage_service import CompetitionStageService
 from app.services.competition_round_service import CompetitionRoundService
@@ -14,7 +15,9 @@ async def get_public_competition_live_stage(comp_id: str):
     Public API: Returns the current live stage performance status for a competition.
     Visible to all audiences, competitors, judges, and viewers in real-time.
     """
-    return await CompetitionStageService.get_public_stage_status(comp_id)
+    async def _f():
+        return await CompetitionStageService.get_public_stage_status(comp_id)
+    return await FastCache.cached_or_fetch(f"pub_live_stage_{comp_id}", 3, _f)
 
 
 @router.get("/competitions/{comp_id}/final-participants")
@@ -24,144 +27,147 @@ async def get_public_final_present_participants(comp_id: str, category: Optional
     Public & User API: Returns the official final lineup of PRESENT participants for an offline competition.
     Shows the confirmed contestants who are attending the venue and performing on stage.
     """
-    c_str = str(comp_id).strip()
-    comp = None
-    if ObjectId.is_valid(c_str):
-        comp = await competition_collection.find_one({"_id": ObjectId(c_str)})
-    if not comp:
-        comp = await competition_collection.find_one({"$or": [{"_id": c_str}, {"id": c_str}]})
-    if not comp:
-        raise HTTPException(status_code=404, detail="Competition not found")
+    async def _fetch():
+        c_str = str(comp_id).strip()
+        comp = None
+        if ObjectId.is_valid(c_str):
+            comp = await competition_collection.find_one({"_id": ObjectId(c_str)})
+        if not comp:
+            comp = await competition_collection.find_one({"$or": [{"_id": c_str}, {"id": c_str}]})
+        if not comp:
+            raise HTTPException(status_code=404, detail="Competition not found")
 
-    comp_matches = [c_str]
-    if ObjectId.is_valid(c_str):
-        comp_matches.append(ObjectId(c_str))
-    if comp.get("_id"):
-        comp_matches.append(comp["_id"])
-        comp_matches.append(str(comp["_id"]))
-    comp_matches = list({str(x): x for x in comp_matches}.values())
+        comp_matches = [c_str]
+        if ObjectId.is_valid(c_str):
+            comp_matches.append(ObjectId(c_str))
+        if comp.get("_id"):
+            comp_matches.append(comp["_id"])
+            comp_matches.append(str(comp["_id"]))
+        comp_matches = list({str(x): x for x in comp_matches}.values())
 
-    # Fetch registrations
-    all_regs = await competition_registration_collection.find({
-        "competition_id": {"$in": comp_matches}
-    }).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=2000)
+        # Fetch registrations
+        all_regs = await competition_registration_collection.find({
+            "competition_id": {"$in": comp_matches}
+        }).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=2000)
 
-    if not all_regs:
-        from app.core.database import registration_collection
-        all_regs = await registration_collection.find({
-            "$or": [
-                {"activity_id": {"$in": comp_matches}},
-                {"competition_id": {"$in": comp_matches}}
-            ]
-        }).sort([("created_at", 1)]).to_list(length=2000)
+        if not all_regs:
+            from app.core.database import registration_collection
+            all_regs = await registration_collection.find({
+                "$or": [
+                    {"activity_id": {"$in": comp_matches}},
+                    {"competition_id": {"$in": comp_matches}}
+                ]
+            }).sort([("created_at", 1)]).to_list(length=2000)
 
-    # Filter strictly to PRESENT participants
-    present_regs = [
-        r for r in all_regs
-        if r.get("is_present") or r.get("attendance_status") == "PRESENT"
-    ]
-
-    # Category filter if provided
-    if category and category.strip():
-        c_clean = category.strip().lower()
+        # Filter strictly to PRESENT participants
         present_regs = [
-            r for r in present_regs
-            if (r.get("category") or comp.get("category") or "General").strip().lower() == c_clean
+            r for r in all_regs
+            if r.get("is_present") or r.get("attendance_status") == "PRESENT"
         ]
 
-    # Sort present_regs chronologically by attended_at (first to attend is first in the list)
-    def _parse_ts(val: Any) -> float:
-        if not val:
+        # Category filter if provided
+        if category and category.strip():
+            c_clean = category.strip().lower()
+            present_regs = [
+                r for r in present_regs
+                if (r.get("category") or comp.get("category") or "General").strip().lower() == c_clean
+            ]
+
+        # Sort present_regs chronologically by attended_at (first to attend is first in the list)
+        def _parse_ts(val: Any) -> float:
+            if not val:
+                return float('inf')
+            if isinstance(val, (int, float)):
+                return float(val)
+            if isinstance(val, str):
+                try:
+                    val = datetime.fromisoformat(val.replace("Z", "+00:00"))
+                except Exception:
+                    return float('inf')
+            if hasattr(val, "timestamp"):
+                try:
+                    return val.timestamp()
+                except Exception:
+                    return float('inf')
             return float('inf')
-        if isinstance(val, (int, float)):
-            return float(val)
-        if isinstance(val, str):
-            try:
-                val = datetime.fromisoformat(val.replace("Z", "+00:00"))
-            except Exception:
-                return float('inf')
-        if hasattr(val, "timestamp"):
-            try:
-                return val.timestamp()
-            except Exception:
-                return float('inf')
-        return float('inf')
 
-    present_regs.sort(key=lambda r: (
-        _parse_ts(r.get("attended_at")),
-        r.get("stage_order") if (r.get("stage_order") and r.get("stage_order") > 0) else float('inf'),
-        _parse_ts(r.get("registered_at") or r.get("created_at"))
-    ))
+        present_regs.sort(key=lambda r: (
+            _parse_ts(r.get("attended_at")),
+            r.get("stage_order") if (r.get("stage_order") and r.get("stage_order") > 0) else float('inf'),
+            _parse_ts(r.get("registered_at") or r.get("created_at"))
+        ))
 
-    from app.core.database import user_collection
-    emails = list({(r.get("user_email") or r.get("email") or "").strip().lower() for r in present_regs if (r.get("user_email") or r.get("email"))})
-    users_map = {}
-    if emails:
-        usrs = await user_collection.find({"email": {"$in": emails}}).to_list(length=len(emails) * 2)
-        users_map = {(u.get("email") or "").strip().lower(): u for u in usrs}
+        from app.core.database import user_collection
+        emails = list({(r.get("user_email") or r.get("email") or "").strip().lower() for r in present_regs if (r.get("user_email") or r.get("email"))})
+        users_map = {}
+        if emails:
+            usrs = await user_collection.find({"email": {"$in": emails}}).to_list(length=len(emails) * 2)
+            users_map = {(u.get("email") or "").strip().lower(): u for u in usrs}
 
-    live_stage = comp.get("live_stage") or {}
-    curr_performer = live_stage.get("current_performer") or {}
-    curr_email = (curr_performer.get("user_email") or "").strip().lower()
+        live_stage = comp.get("live_stage") or {}
+        curr_performer = live_stage.get("current_performer") or {}
+        curr_email = (curr_performer.get("user_email") or "").strip().lower()
 
-    final_list = []
-    for idx, r in enumerate(present_regs):
-        em = (r.get("user_email") or r.get("email") or "").strip().lower()
-        usr = users_map.get(em, {})
+        final_list = []
+        for idx, r in enumerate(present_regs):
+            em = (r.get("user_email") or r.get("email") or "").strip().lower()
+            usr = users_map.get(em, {})
 
-        name = (
-            r.get("user_name")
-            or usr.get("full_name")
-            or usr.get("name")
-            or r.get("participant_name")
-            or (em.split("@")[0].title() if em else f"Participant #{idx+1}")
-        )
-        photo = usr.get("profile_photo") or usr.get("avatar") or r.get("profile_photo") or ""
-        is_v = bool(
-            usr.get("is_verified")
-            or usr.get("is_id_verified")
-            or usr.get("is_govt_id_verified")
-            or usr.get("verified_badge")
-            or usr.get("verified_tick")
-            or usr.get("kyc_status") == "VERIFIED"
-        )
+            name = (
+                r.get("user_name")
+                or usr.get("full_name")
+                or usr.get("name")
+                or r.get("participant_name")
+                or (em.split("@")[0].title() if em else f"Participant #{idx+1}")
+            )
+            photo = usr.get("profile_photo") or usr.get("avatar") or r.get("profile_photo") or ""
+            is_v = bool(
+                usr.get("is_verified")
+                or usr.get("is_id_verified")
+                or usr.get("is_govt_id_verified")
+                or usr.get("verified_badge")
+                or usr.get("verified_tick")
+                or usr.get("kyc_status") == "VERIFIED"
+            )
 
-        stage_stat = r.get("stage_status", "NOT_STARTED")
-        is_on_stage = bool(curr_email and em == curr_email)
-        if is_on_stage:
-            stage_stat = "ON_STAGE"
+            stage_stat = r.get("stage_status", "NOT_STARTED")
+            is_on_stage = bool(curr_email and em == curr_email)
+            if is_on_stage:
+                stage_stat = "ON_STAGE"
 
-        final_list.append({
-            "registration_id": str(r["_id"]),
-            "registration_reference": r.get("registration_reference") or f"CRG-{str(r['_id'])[:8]}",
-            "participant_name": name,
-            "user_name": name,
-            "user_email": em,
-            "user_photo": photo,
-            "avatar": photo,
-            "category": r.get("category") or comp.get("category") or "General",
-            "stage_order": idx + 1,
-            "stage_status": stage_stat,
-            "is_current_performer": is_on_stage,
-            "is_present": True,
-            "attendance_status": "PRESENT",
-            "attended_at": r.get("attended_at"),
-            "is_verified": is_v,
-            "verified_badge": is_v,
-            "verified_tick": is_v
-        })
+            final_list.append({
+                "registration_id": str(r["_id"]),
+                "registration_reference": r.get("registration_reference") or f"CRG-{str(r['_id'])[:8]}",
+                "participant_name": name,
+                "user_name": name,
+                "user_email": em,
+                "user_photo": photo,
+                "avatar": photo,
+                "category": r.get("category") or comp.get("category") or "General",
+                "stage_order": idx + 1,
+                "stage_status": stage_stat,
+                "is_current_performer": is_on_stage,
+                "is_present": True,
+                "attendance_status": "PRESENT",
+                "attended_at": r.get("attended_at"),
+                "is_verified": is_v,
+                "verified_badge": is_v,
+                "verified_tick": is_v
+            })
 
-    return {
-        "competition_id": c_str,
-        "competition_title": comp.get("title", "Competition"),
-        "is_offline": bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE"),
-        "venue": comp.get("venue"),
-        "total_registered": len(all_regs),
-        "present_count": len(final_list),
-        "category": category,
-        "final_participants": final_list,
-        "final_present_list": final_list
-    }
+        return {
+            "competition_id": c_str,
+            "competition_title": comp.get("title", "Competition"),
+            "is_offline": bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE"),
+            "venue": comp.get("venue"),
+            "total_registered": len(all_regs),
+            "present_count": len(final_list),
+            "category": category,
+            "final_participants": final_list,
+            "final_present_list": final_list
+        }
+
+    return await FastCache.cached_or_fetch(f"pub_final_parts_{comp_id}_{category or ''}", 6, _fetch)
 
 
 @router.get("/competitions/{comp_id}/results")
@@ -484,13 +490,11 @@ async def get_public_round_contestants(
     """
     return await CompetitionRoundService.get_round_contestants(comp_id, round_number=round_number, category=category)
 
-@router.get("/competitions/{comp_id}/leaderboard")
-async def provisional_leaderboard(
+async def _calc_provisional_leaderboard(
     comp_id: str,
-    category: Optional[str] = Query(None),
-    round_number: Optional[int] = Query(None)
+    category: Optional[str] = None,
+    round_number: Optional[int] = None
 ):
-    """Returns the real-time provisional leaderboard calculated by the ranking service, supporting round and category filtering."""
     if round_number is not None:
         return await CompetitionRoundService.get_round_leaderboard(comp_id, round_number=round_number, category=category)
 
@@ -700,3 +704,17 @@ async def provisional_leaderboard(
         "leaderboard": target_lb,
         "category_leaderboards": category_leaderboards
     }
+
+
+@router.get("/competitions/{comp_id}/leaderboard")
+async def provisional_leaderboard(
+    comp_id: str,
+    category: Optional[str] = Query(None),
+    round_number: Optional[int] = Query(None)
+):
+    """Returns the real-time provisional leaderboard calculated by the ranking service, supporting round and category filtering with high-speed in-memory caching."""
+    return await FastCache.cached_or_fetch(
+        f"pub_lb_{comp_id}_{category or ''}_{round_number or ''}",
+        6,
+        lambda: _calc_provisional_leaderboard(comp_id, category, round_number)
+    )

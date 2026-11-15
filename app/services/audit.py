@@ -23,3 +23,10 @@ async def log_admin_action(
         safe_meta = {k: v for k, v in metadata.items() if k.lower() not in ("password", "token", "secret", "otp")}
         entry["metadata"] = safe_meta
     await audit_log_collection.insert_one(entry)
+
+    # Invalidate public in-memory cache whenever admin changes any configuration
+    try:
+        from app.core.cache import FastCache
+        FastCache.clear()
+    except Exception:
+        pass

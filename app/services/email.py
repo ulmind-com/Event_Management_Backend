@@ -748,9 +748,12 @@ class EmailService:
         name: Optional[str] = None,
         role: Optional[str] = "Entrance Gate Scanner",
     ) -> bool:
-        """Sends official event assignment email with secure login credentials and scanner instructions."""
-        login_url = "https://www.upgradetalentsindia.in/volunteer/login"
-        safe_email = _escape(email)
+        """Sends official event assignment email with secure login credentials, copy button, and scanner link."""
+        base_login_url = "https://www.upgradetalentsindia.in/volunteer/login"
+        encoded_email = urllib.parse.quote(email.strip())
+        login_url = f"{base_login_url}?email={encoded_email}"
+
+        safe_email = _escape(email.strip())
         safe_password = _escape(password)
         safe_title = _escape(event_title)
         safe_date = _escape(event_date or "To be announced")
@@ -761,25 +764,25 @@ class EmailService:
 
         content = f"""
           <h1 style="margin: 0 0 10px 0; font-size: 22px; font-weight: 800; color: #F8FAFC; letter-spacing: -0.4px;">
-            Event Volunteer Assignment &#127915;
+            Volunteer Gate Assignment &#127915;
           </h1>
-          <p style="margin: 0 0 16px 0; font-size: 15px; color: #CBD5E1; line-height: 1.6;">
+          <p style="margin: 0 0 14px 0; font-size: 15px; color: #CBD5E1; line-height: 1.6;">
             {greeting}
           </p>
           <p style="margin: 0 0 20px 0; font-size: 14px; color: #94A3B8; line-height: 1.6;">
-            You have been officially assigned as an event volunteer for <strong>{safe_title}</strong>. Please find your event schedule, gate assignment, and login credentials below.
+            You have been officially assigned as a gate scanner for <strong>{safe_title}</strong>. Please use your credentials below to access the volunteer scanner.
           </p>
 
-          <!-- Event Details Card -->
-          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #111827; border: 1px solid #1F2937; border-radius: 14px; padding: 20px; margin: 0 0 20px 0;">
+          <!-- Event Details Summary -->
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #111827; border: 1px solid #1F2937; border-radius: 14px; padding: 18px 20px; margin: 0 0 20px 0;">
             <tr>
               <td>
-                <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; color: #10B981; margin-bottom: 12px;">
-                  &#128197; Event &amp; Gate Details
+                <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; color: #10B981; margin-bottom: 10px;">
+                  &#128197; Event &amp; Gate Assignment
                 </div>
                 <table role="presentation" border="0" cellpadding="4" cellspacing="0" width="100%" style="font-size: 13px; color: #CBD5E1;">
                   <tr>
-                    <td style="color: #94A3B8; width: 110px; font-weight: 600;">Event:</td>
+                    <td style="color: #94A3B8; width: 100px; font-weight: 600;">Event:</td>
                     <td style="color: #F8FAFC; font-weight: 700;">{safe_title}</td>
                   </tr>
                   <tr>
@@ -791,7 +794,7 @@ class EmailService:
                     <td style="color: #F8FAFC;">{safe_venue}</td>
                   </tr>
                   <tr>
-                    <td style="color: #94A3B8; font-weight: 600;">Role / Duty:</td>
+                    <td style="color: #94A3B8; font-weight: 600;">Duty:</td>
                     <td style="color: #10B981; font-weight: 700;">{safe_role}</td>
                   </tr>
                 </table>
@@ -799,58 +802,64 @@ class EmailService:
             </tr>
           </table>
 
-          <!-- Credentials Card -->
-          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(56, 189, 248, 0.08) 100%); border: 1.5px solid rgba(16, 185, 129, 0.4); border-radius: 14px; padding: 22px; margin: 0 0 24px 0;">
+          <!-- Login Credentials Card with Direct Copy Styling -->
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(56, 189, 248, 0.08) 100%); border: 1.5px solid rgba(16, 185, 129, 0.4); border-radius: 14px; padding: 20px; margin: 0 0 22px 0;">
             <tr>
               <td>
-                <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; color: #34D399; margin-bottom: 14px;">
-                  &#128273; Your Volunteer Portal Login Credentials
+                <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; color: #34D399; margin-bottom: 12px;">
+                  &#128273; Your Login Credentials
                 </div>
+
+                <!-- Email Row with Copy Pill -->
+                <div style="margin-bottom: 12px;">
+                  <span style="font-size: 12px; color: #94A3B8; display: block; margin-bottom: 5px; font-weight: 600;">Registered Email:</span>
+                  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background: #0B0F17; border: 1px solid #1E293B; border-radius: 8px;">
+                    <tr>
+                      <td style="padding: 10px 14px; font-family: monospace; font-size: 14px; color: #F8FAFC; word-break: break-all; -webkit-user-select: all; user-select: all;">
+                        {safe_email}
+                      </td>
+                      <td style="padding: 6px 12px; text-align: right; width: 85px;">
+                        <span style="display: inline-block; background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #34D399; font-size: 10px; font-weight: 700; padding: 4px 8px; border-radius: 6px; letter-spacing: 0.5px; text-transform: uppercase;">
+                          COPY
+                        </span>
+                      </td>
+                    </tr>
+                  </table>
+                </div>
+
+                <!-- Password Row with Copy Pill -->
                 <div style="margin-bottom: 10px;">
-                  <span style="font-size: 12px; color: #94A3B8; display: block; margin-bottom: 4px;">Registered Email:</span>
-                  <div style="background: #0B0F17; border: 1px solid #1E293B; border-radius: 8px; padding: 10px 14px; font-family: monospace; font-size: 14px; color: #F8FAFC; word-break: break-all;">
-                    {safe_email}
-                  </div>
+                  <span style="font-size: 12px; color: #94A3B8; display: block; margin-bottom: 5px; font-weight: 600;">Access Password:</span>
+                  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background: #0B0F17; border: 1px solid rgba(16, 185, 129, 0.5); border-radius: 8px;">
+                    <tr>
+                      <td style="padding: 10px 14px; font-family: monospace; font-size: 18px; font-weight: 800; letter-spacing: 2px; color: #34D399; -webkit-user-select: all; user-select: all;">
+                        {safe_password}
+                      </td>
+                      <td style="padding: 6px 12px; text-align: right; width: 85px;">
+                        <span style="display: inline-block; background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #34D399; font-size: 10px; font-weight: 700; padding: 4px 8px; border-radius: 6px; letter-spacing: 0.5px; text-transform: uppercase;">
+                          COPY
+                        </span>
+                      </td>
+                    </tr>
+                  </table>
                 </div>
-                <div style="margin-bottom: 14px;">
-                  <span style="font-size: 12px; color: #94A3B8; display: block; margin-bottom: 4px;">Access Password:</span>
-                  <div style="background: #0B0F17; border: 1px solid rgba(16, 185, 129, 0.5); border-radius: 8px; padding: 10px 14px; font-family: monospace; font-size: 18px; font-weight: 800; letter-spacing: 2px; color: #34D399; user-select: all;">
-                    {safe_password}
-                  </div>
-                </div>
-                <p style="margin: 0; font-size: 12px; color: #94A3B8; line-height: 1.5;">
-                  &#10003; Copy the password above and use it to log in directly. You can also sign in via Email OTP anytime.
+
+                <p style="margin: 6px 0 0 0; font-size: 11.5px; color: #94A3B8; line-height: 1.5;">
+                  &#10003; Tap or click above to copy your email and password instantly.
                 </p>
               </td>
             </tr>
           </table>
 
-          <!-- Big Action Button -->
+          <!-- Direct Access Button (Email Pre-filled) -->
           <div style="text-align: center; margin: 24px 0 16px 0;">
-            <a href="{login_url}" style="display: inline-block; background: linear-gradient(135deg, #059669 0%, #10B981 100%); color: #FFFFFF; text-decoration: none; padding: 15px 36px; border-radius: 9999px; font-size: 15px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);">
+            <a href="{login_url}" style="display: inline-block; background: linear-gradient(135deg, #059669 0%, #10B981 100%); color: #FFFFFF; text-decoration: none; padding: 14px 34px; border-radius: 9999px; font-size: 15px; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4);">
               Open Volunteer Scanner &amp; Login &rarr;
             </a>
           </div>
 
-          <!-- Instructions Card -->
-          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #0F172A; border: 1px solid #1E293B; border-radius: 12px; padding: 16px; margin: 20px 0 10px 0;">
-            <tr>
-              <td>
-                <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #38BDF8; margin-bottom: 8px;">
-                  Quick Entrance Gate Guide:
-                </div>
-                <ol style="margin: 0; padding-left: 18px; font-size: 12px; color: #94A3B8; line-height: 1.7;">
-                  <li>Open the portal and log in with your email and access password.</li>
-                  <li>Select your assigned event and gate on your mobile device.</li>
-                  <li>Scan attendee ticket QR codes using your phone camera.</li>
-                  <li>Listen for the entrance gate chime confirming authorized admission!</li>
-                </ol>
-              </td>
-            </tr>
-          </table>
-
-          <p style="text-align: center; margin: 16px 0 0 0; font-size: 11.5px; color: #64748B;">
-            Direct Portal URL: <a href="{login_url}" style="color: #34D399; text-decoration: underline;">{login_url}</a>
+          <p style="text-align: center; margin: 14px 0 0 0; font-size: 11.5px; color: #64748B;">
+            Direct Portal URL: <a href="{base_login_url}" style="color: #34D399; text-decoration: underline;">{base_login_url}</a>
           </p>
         """
 

@@ -55,3 +55,4 @@ class PaymentVerifyReq(BaseModel):
 class TicketScanReq(BaseModel):
     qr_token: str
     admit_count: Optional[int] = None
+    event_id: Optional[str] = None

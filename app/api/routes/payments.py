@@ -99,6 +99,7 @@ async def verify_razorpay_payment(
             booking = await booking_collection.find_one({"provider_order_id": req.razorpay_order_id})
 
         # Check competition registration fallback if not found in bookings
+        clean_user_email = (user_email or "").strip().lower()
         if not booking and req.booking_id and (req.booking_id.startswith("CRG-") or ObjectId.is_valid(req.booking_id)):
             reg = await competition_registration_collection.find_one({
                 "$or": [
@@ -107,8 +108,9 @@ async def verify_razorpay_payment(
                 ]
             })
             if reg:
-                # Confirm competition registration transactionally
-                if reg.get("user_email") != user_email and current_user.get("role") != "super_admin":
+                # Confirm competition registration transactionally (case-insensitive email match)
+                reg_email = (reg.get("user_email") or "").strip().lower()
+                if reg_email and clean_user_email and reg_email != clean_user_email and current_user.get("role") != "super_admin":
                     await IdempotencyManager.fail(clean_idem_key, "Unauthorized")
                     raise HTTPException(status_code=403, detail="Unauthorized")
                 
@@ -125,7 +127,8 @@ async def verify_razorpay_payment(
         if not booking and req.razorpay_order_id:
             reg = await competition_registration_collection.find_one({"provider_order_id": req.razorpay_order_id})
             if reg:
-                if reg.get("user_email") != user_email and current_user.get("role") != "super_admin":
+                reg_email = (reg.get("user_email") or "").strip().lower()
+                if reg_email and clean_user_email and reg_email != clean_user_email and current_user.get("role") != "super_admin":
                     await IdempotencyManager.fail(clean_idem_key, "Unauthorized")
                     raise HTTPException(status_code=403, detail="Unauthorized")
                 
@@ -142,8 +145,9 @@ async def verify_razorpay_payment(
             await IdempotencyManager.fail(clean_idem_key, "Booking not found")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
 
-        # 4. Ownership check
-        if booking.get("user_email") != user_email and current_user.get("role") != "super_admin":
+        # 4. Ownership check (case-insensitive email match)
+        bkg_email = (booking.get("user_email") or "").strip().lower()
+        if bkg_email and clean_user_email and bkg_email != clean_user_email and current_user.get("role") != "super_admin":
             await IdempotencyManager.fail(clean_idem_key, "Unauthorized booking payment verification")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized booking payment verification")
 

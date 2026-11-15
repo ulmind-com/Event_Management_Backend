@@ -31,6 +31,46 @@ async def get_scanner_user(credentials: HTTPAuthorizationCredentials = Depends(s
         
     raise HTTPException(status_code=403, detail="Not authorized to scan tickets. Must be Admin or Volunteer.")
 
+
+async def get_volunteer_authorized_event_ids(scanner: dict):
+    """
+    Returns set of authorized event IDs (as strings) for the scanner.
+    If the scanner is Super Admin or Admin, returns None (meaning unrestricted global access).
+    If the scanner is a Volunteer, returns the set of event IDs assigned to them.
+    """
+    is_admin = bool(
+        scanner.get("role") in ["SUPER_ADMIN", "ADMIN"]
+        or scanner.get("is_super_admin")
+    )
+    if is_admin:
+        return None  # Unrestricted
+
+    scanner_email = (scanner.get("email") or "").lower().strip()
+    authorized_eids = set()
+
+    # 1. From user document's assigned_events
+    for ev in scanner.get("assigned_events") or []:
+        eid = str(ev.get("event_id", "")).strip()
+        if eid:
+            authorized_eids.add(eid)
+
+    # 2. From event_collection volunteers array
+    if scanner_email:
+        cursor = event_collection.find(
+            {
+                "$or": [
+                    {"volunteers.email": scanner_email},
+                    {"volunteers.email": {"$regex": f"^{scanner_email}$", "$options": "i"}},
+                ]
+            },
+            {"_id": 1}
+        )
+        async for doc in cursor:
+            authorized_eids.add(str(doc["_id"]))
+
+    return authorized_eids
+
+
 async def _resolve_ticket(raw_token: str):
     """
     Resolves a ticket from cryptographic QR token, raw ticket reference, or booking reference.
@@ -84,9 +124,45 @@ async def verify_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanner_
     elif ticket.get("booking_ref"):
         booking = await booking_collection.find_one({"booking_reference": ticket["booking_ref"]})
 
+    raw_event_id = str(
+        ticket.get("event_id")
+        or (booking.get("event_id") if booking else "")
+        or ticket.get("activity_id")
+        or ""
+    ).strip()
+
     event = None
-    if ticket.get("event_id") and ObjectId.is_valid(ticket["event_id"]):
+    if raw_event_id and ObjectId.is_valid(raw_event_id):
+        event = await event_collection.find_one({"_id": ObjectId(raw_event_id)})
+    elif ticket.get("event_id") and ObjectId.is_valid(ticket["event_id"]):
         event = await event_collection.find_one({"_id": ObjectId(ticket["event_id"])})
+
+    ticket_event_title = (
+        (event.get("title") if event else None)
+        or ticket.get("event_title")
+        or (booking.get("event_title") if booking else None)
+        or "Unknown Event"
+    )
+
+    # ── Strict Volunteer Event-Level Access Control ──
+    authorized_eids = await get_volunteer_authorized_event_ids(scanner)
+    if authorized_eids is not None:
+        if not raw_event_id or raw_event_id not in authorized_eids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access Denied: This ticket is for '{ticket_event_title}'. You are only authorized to scan tickets for your assigned event(s)."
+            )
+
+    # Gate verification if gate/event_id was explicitly passed
+    if req.event_id and str(req.event_id).strip():
+        req_eid = str(req.event_id).strip()
+        if raw_event_id and raw_event_id != req_eid:
+            gate_event = await event_collection.find_one({"_id": ObjectId(req_eid)}) if ObjectId.is_valid(req_eid) else None
+            gate_title = gate_event.get("title") if gate_event else "Assigned Gate Event"
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Event Mismatch: This ticket is for '{ticket_event_title}', but your scanner is set to '{gate_title}'."
+            )
 
     # Multi-person calculation
     quantity = int(ticket.get("quantity") or (booking.get("quantity") if booking else 1) or 1)
@@ -106,7 +182,29 @@ async def verify_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanner_
     ) if event else ticket.get("event_cover")
 
     seats = ticket.get("seats") or (booking.get("seats") if booking else [])
-    holder_names = ticket.get("holder_names") or (booking.get("holder_names") if booking else [])
+
+    # Robust participant/attendee list extraction
+    extracted_names = []
+    if ticket.get("holder_names") and isinstance(ticket["holder_names"], list):
+        extracted_names.extend([str(n).strip() for n in ticket["holder_names"] if n and str(n).strip()])
+
+    if not extracted_names and booking:
+        if booking.get("holder_names") and isinstance(booking["holder_names"], list):
+            extracted_names.extend([str(n).strip() for n in booking["holder_names"] if n and str(n).strip()])
+        if not extracted_names and booking.get("items") and isinstance(booking["items"], list):
+            for it in booking["items"]:
+                if isinstance(it, dict):
+                    if it.get("holder_names") and isinstance(it["holder_names"], list):
+                        extracted_names.extend([str(n).strip() for n in it["holder_names"] if n and str(n).strip()])
+                    elif it.get("holder_name"):
+                        extracted_names.append(str(it["holder_name"]).strip())
+
+    if not extracted_names:
+        primary = ticket.get("holder_name") or (booking.get("user_name") if booking else None)
+        if primary:
+            extracted_names = [str(primary).strip()]
+
+    holder_names = extracted_names
     category = ticket.get("category") or (booking.get("category") if booking else "General")
     total_amount = (booking.get("total_amount") if booking else None) or ticket.get("total_amount") or ticket.get("total_booking_amount")
     unit_price = (booking.get("unit_price") if booking else None) or ticket.get("unit_price")
@@ -114,12 +212,14 @@ async def verify_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanner_
         unit_price = round(total_amount / quantity, 2)
 
     return {
-        "is_valid": True,
+        "is_valid": not is_fully_used,
+        "event_id": raw_event_id,
         "ticket": {
             "ticket_ref": ticket["ticket_ref"],
             "holder_name": ticket.get("holder_name") or (booking.get("user_name") if booking else "Guest"),
             "holder_names": holder_names,
             "holder_email": ticket.get("holder_email") or (booking.get("user_email") if booking else ""),
+            "user_phone": ticket.get("holder_phone") or (booking.get("user_phone") if booking else ""),
             "ticket_type": ticket.get("ticket_type", "General Access"),
             "category": category,
             "quantity": quantity,
@@ -136,7 +236,7 @@ async def verify_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanner_
             "total_amount": total_amount,
             "unit_price": unit_price,
         },
-        "event_title": event.get("title") if event else ticket.get("event_title"),
+        "event_title": ticket_event_title,
         "event_date": event.get("date") if event else ticket.get("event_date"),
         "event_time": event.get("time") if event else ticket.get("event_time"),
         "event_venue": event.get("venue") if event else ticket.get("event_venue"),
@@ -150,6 +250,7 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
     """
     Atomically checks in attendees on this ticket.
     Supports multi-person admissions (e.g. 3 people). Once all admitted, ticket is fully USED and invalid for reuse.
+    Strictly verifies volunteer assignment against ticket event before admission.
     """
     ticket = await _resolve_ticket(req.qr_token)
 
@@ -158,6 +259,46 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
         booking = await booking_collection.find_one({"_id": ObjectId(ticket["booking_id"])})
     elif ticket.get("booking_ref"):
         booking = await booking_collection.find_one({"booking_reference": ticket["booking_ref"]})
+
+    raw_event_id = str(
+        ticket.get("event_id")
+        or (booking.get("event_id") if booking else "")
+        or ticket.get("activity_id")
+        or ""
+    ).strip()
+
+    event = None
+    if raw_event_id and ObjectId.is_valid(raw_event_id):
+        event = await event_collection.find_one({"_id": ObjectId(raw_event_id)})
+    elif ticket.get("event_id") and ObjectId.is_valid(ticket["event_id"]):
+        event = await event_collection.find_one({"_id": ObjectId(ticket["event_id"])})
+
+    ticket_event_title = (
+        (event.get("title") if event else None)
+        or ticket.get("event_title")
+        or (booking.get("event_title") if booking else None)
+        or "Unknown Event"
+    )
+
+    # ── Strict Volunteer Event-Level Access Control ──
+    authorized_eids = await get_volunteer_authorized_event_ids(scanner)
+    if authorized_eids is not None:
+        if not raw_event_id or raw_event_id not in authorized_eids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access Denied: This ticket is for '{ticket_event_title}'. You are only authorized to admit attendees for your assigned event(s)."
+            )
+
+    # Gate verification if gate/event_id was explicitly passed
+    if req.event_id and str(req.event_id).strip():
+        req_eid = str(req.event_id).strip()
+        if raw_event_id and raw_event_id != req_eid:
+            gate_event = await event_collection.find_one({"_id": ObjectId(req_eid)}) if ObjectId.is_valid(req_eid) else None
+            gate_title = gate_event.get("title") if gate_event else "Assigned Gate Event"
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Event Mismatch: This ticket is for '{ticket_event_title}', but your scanner is set to '{gate_title}'."
+            )
 
     quantity = int(ticket.get("quantity") or (booking.get("quantity") if booking else 1) or 1)
     current_admitted = int(ticket.get("admitted_count", 0))

@@ -481,6 +481,9 @@ async def create_booking(
 
         # ── Post-Commit Operations ──
         response_data = {
+            "booking_id": str(booking_oid),
+            "_id": str(booking_oid),
+            "id": str(booking_oid),
             "message": "",
             "booking_reference": booking_ref,
             "category": primary_category,
@@ -519,6 +522,7 @@ async def create_booking(
                 notes={
                     "user_email": current_user["email"],
                     "booking_id": str(booking_oid),
+                    "booking_reference": booking_ref,
                     "event_id": str(e_id)
                 }
             )
@@ -541,8 +545,17 @@ async def create_booking(
         updated_ticket = await ticket_collection.find_one({"_id": ObjectId(first_tid)})
         norm = TicketService.normalize_ticket_data(updated_ticket) if updated_ticket else {}
         response_data.update({
+            "booking_id": str(booking_oid),
+            "_id": str(booking_oid),
+            "id": str(booking_oid),
+            "ticket_id": str(first_tid),
+            "total_tickets": norm.get("total_quantity", 0),
+            "remaining_tickets": norm.get("available", 0),
             "available_seats": norm.get("available", 0),
             "total_seats": norm.get("total_quantity", 0),
+            "sold_count": norm.get("sold_count", 0),
+            "quantity_booked": total_quantity,
+            "expires_at": expires_at.isoformat() if total_amount > 0.0 and expires_at else None,
             "sold_out": norm.get("is_sold_out", False)
         })
         return response_data
@@ -554,21 +567,6 @@ async def create_booking(
         logger.error(f"Error creating booking: {e}", exc_info=True)
         await IdempotencyManager.fail(clean_idem_key, str(e))
         raise HTTPException(status_code=500, detail="Failed to create booking due to a database transaction error.")
-
-    # Fetch primary updated ticket metrics to return real-time remaining count
-    updated_ticket = await ticket_collection.find_one({"_id": ObjectId(first_tid)})
-    norm = TicketService.normalize_ticket_data(updated_ticket) if updated_ticket else {}
-    response_data.update({
-        "booking_id": str(res.inserted_id),
-        "ticket_id": first_tid,
-        "total_tickets": norm.get("total_quantity", 0),
-        "remaining_tickets": norm.get("available", 0),
-        "available": norm.get("available", 0),
-        "sold_count": norm.get("sold_count", 0),
-        "quantity_booked": total_quantity,
-        "expires_at": expires_at.isoformat() if total_amount > 0.0 else None,
-    })
-    return response_data
 
 @router.get("/my")
 async def get_my_bookings(current_user: dict = Depends(get_current_user)):

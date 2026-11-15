@@ -24,7 +24,7 @@ logger = logging.getLogger("eventora.payments_route")
 
 
 class RazorpayVerifyReq(BaseModel):
-    booking_id: str = Field(..., description="Booking MongoDB ID or booking_reference")
+    booking_id: Optional[str] = Field(None, description="Booking MongoDB ID or booking_reference")
     razorpay_order_id: str = Field(..., description="Razorpay Order ID")
     razorpay_payment_id: str = Field(..., description="Razorpay Payment ID")
     razorpay_signature: str = Field(..., description="Razorpay HMAC signature from checkout")
@@ -80,21 +80,26 @@ async def verify_razorpay_payment(
     try:
         # 3. Find booking or competition registration
         booking = None
-        try:
-            booking = await booking_collection.find_one({"_id": ObjectId(req.booking_id)})
-        except Exception:
-            pass
+        if req.booking_id:
+            try:
+                booking = await booking_collection.find_one({"_id": ObjectId(req.booking_id)})
+            except Exception:
+                pass
 
-        if not booking:
-            booking = await booking_collection.find_one({
-                "$or": [
-                    {"booking_reference": req.booking_id},
-                    {"_id": req.booking_id}
-                ]
-            })
+            if not booking:
+                booking = await booking_collection.find_one({
+                    "$or": [
+                        {"booking_reference": req.booking_id},
+                        {"_id": req.booking_id}
+                    ]
+                })
+
+        # Fallback: Find booking by Razorpay provider order id
+        if not booking and req.razorpay_order_id:
+            booking = await booking_collection.find_one({"provider_order_id": req.razorpay_order_id})
 
         # Check competition registration fallback if not found in bookings
-        if not booking and (req.booking_id.startswith("CRG-") or ObjectId.is_valid(req.booking_id)):
+        if not booking and req.booking_id and (req.booking_id.startswith("CRG-") or ObjectId.is_valid(req.booking_id)):
             reg = await competition_registration_collection.find_one({
                 "$or": [
                     {"registration_reference": req.booking_id},
@@ -103,6 +108,23 @@ async def verify_razorpay_payment(
             })
             if reg:
                 # Confirm competition registration transactionally
+                if reg.get("user_email") != user_email and current_user.get("role") != "super_admin":
+                    await IdempotencyManager.fail(clean_idem_key, "Unauthorized")
+                    raise HTTPException(status_code=403, detail="Unauthorized")
+                
+                result = await PaymentReconciliationService.confirm_competition_registration_transactionally(
+                    reg=reg,
+                    payment_id=req.razorpay_payment_id,
+                    order_id=req.razorpay_order_id,
+                    source="CLIENT_VERIFICATION"
+                )
+                await IdempotencyManager.complete(clean_idem_key, result, status_code=200)
+                return result
+
+        # Competition registration fallback by provider_order_id
+        if not booking and req.razorpay_order_id:
+            reg = await competition_registration_collection.find_one({"provider_order_id": req.razorpay_order_id})
+            if reg:
                 if reg.get("user_email") != user_email and current_user.get("role") != "super_admin":
                     await IdempotencyManager.fail(clean_idem_key, "Unauthorized")
                     raise HTTPException(status_code=403, detail="Unauthorized")

@@ -1,4 +1,4 @@
-﻿from app.core.database import audit_log_collection
+from app.core.database import audit_log_collection
 from datetime import datetime, timezone
 
 async def log_admin_action(

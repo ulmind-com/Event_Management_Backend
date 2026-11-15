@@ -1994,10 +1994,10 @@ async def get_competition_attendance(comp_id: str, admin: dict = Depends(get_cur
         comp_match.append(str(comp["_id"]))
     comp_match = list({str(x): x for x in comp_match}.values())
 
-    # Fetch all registrations
+    # Fetch all registrations (support up to 5000 participants)
     regs = await competition_registration_collection.find(
         {"competition_id": {"$in": comp_match}}
-    ).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=2000)
+    ).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=5000)
 
     if not regs:
         regs = await registration_collection.find({
@@ -2005,7 +2005,7 @@ async def get_competition_attendance(comp_id: str, admin: dict = Depends(get_cur
                 {"activity_id": {"$in": comp_match}},
                 {"competition_id": {"$in": comp_match}}
             ]
-        }).sort([("created_at", 1)]).to_list(length=2000)
+        }).sort([("created_at", 1)]).to_list(length=5000)
 
     emails = list({(r.get("user_email") or r.get("email") or "").strip().lower() for r in regs if (r.get("user_email") or r.get("email"))})
     user_map = {}
@@ -2181,13 +2181,12 @@ async def update_participant_attendance(
     if is_present:
         update_fields["attended_at"] = now
         update_fields["attended_by"] = admin_email
-        if not reg.get("stage_order") or reg.get("stage_order") == 0:
-            existing_present_cnt = await competition_registration_collection.count_documents({
-                "competition_id": {"$in": comp_match},
-                "$or": [{"is_present": True}, {"attendance_status": "PRESENT"}],
-                "_id": {"$ne": reg["_id"]}
-            })
-            update_fields["stage_order"] = existing_present_cnt + 1
+        existing_present_cnt = await competition_registration_collection.count_documents({
+            "competition_id": {"$in": comp_match},
+            "$or": [{"is_present": True}, {"attendance_status": "PRESENT"}],
+            "_id": {"$ne": reg["_id"]}
+        })
+        update_fields["stage_order"] = existing_present_cnt + 1
     else:
         update_fields["attended_at"] = None
         update_fields["attended_by"] = None
@@ -2207,15 +2206,15 @@ async def update_participant_attendance(
             {"$set": update_fields}
         )
 
-    # Compute updated counts for this competition
-    all_regs = await competition_registration_collection.find({"competition_id": {"$in": comp_match}}).to_list(length=2000)
+    # Compute updated counts for this competition (up to 5000)
+    all_regs = await competition_registration_collection.find({"competition_id": {"$in": comp_match}}).to_list(length=5000)
     if not all_regs:
         all_regs = await registration_collection.find({
             "$or": [
                 {"activity_id": {"$in": comp_match}},
                 {"competition_id": {"$in": comp_match}}
             ]
-        }).to_list(length=2000)
+        }).to_list(length=5000)
 
     present_count = sum(1 for r in all_regs if r.get("is_present") or r.get("attendance_status") == "PRESENT")
     absent_count = max(0, len(all_regs) - present_count)

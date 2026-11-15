@@ -322,20 +322,20 @@ class CompetitionStageService:
         regs = await competition_registration_collection.find(reg_query).sort([
             ("stage_order", 1),
             ("registered_at", 1)
-        ]).to_list(length=2000)
+        ]).to_list(length=5000)
 
         # Fallback if no status: CONFIRMED found, include all registrations for testing/flexibility
         if not regs:
             regs = await competition_registration_collection.find({
                 "competition_id": {"$in": c_matches}
-            }).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=2000)
+            }).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=5000)
 
         if not regs:
             legacy_or = [
                 {"activity_id": {"$in": c_matches}},
                 {"competition_id": {"$in": c_matches}}
             ]
-            regs = await registration_collection.find({"$or": legacy_or}).sort([("created_at", 1)]).to_list(length=2000)
+            regs = await registration_collection.find({"$or": legacy_or}).sort([("created_at", 1)]).to_list(length=5000)
 
         emails = list({(r.get("user_email") or "").strip().lower() for r in regs if r.get("user_email")})
 
@@ -479,18 +479,71 @@ class CompetitionStageService:
                 "registered_at": r.get("registered_at")
             })
 
-        present_list = [p for p in participants_list if p["is_present"]]
-        # Sort present_list chronologically by attended_at (first attended is first in list)
+        # Strict chronological ordering rule requested by client:
+        # Group 1: Currently active on-stage performer
+        # Group 2: Completed performers
+        # Group 3: Confirmed present contestants, sorted strictly by attended_at ascending (first to give attendance is #1)
+        # Group 4: Waiting contestants (registered, not yet present), sorted by original registered_at ascending
+        active_on_stage = [p for p in participants_list if p.get("is_current_performer") or p.get("stage_status") == "ON_STAGE"]
+        active_emails = {p.get("user_email") for p in active_on_stage if p.get("user_email")}
+        active_ids = {p.get("registration_id") for p in active_on_stage if p.get("registration_id")}
+
+        completed_performers = [
+            p for p in participants_list
+            if p.get("stage_status") == "COMPLETED"
+            and p.get("user_email") not in active_emails
+            and p.get("registration_id") not in active_ids
+        ]
+        completed_performers.sort(key=lambda p: (
+            cls._parse_ts(p.get("attended_at")),
+            cls._parse_ts(p.get("registered_at"))
+        ))
+
+        handled_emails = active_emails | {p.get("user_email") for p in completed_performers if p.get("user_email")}
+        handled_ids = active_ids | {p.get("registration_id") for p in completed_performers if p.get("registration_id")}
+
+        # Confirmed present performers awaiting stage (1st present = 1st, 2nd present = 2nd)
+        present_list = [
+            p for p in participants_list
+            if p.get("is_present")
+            and p.get("user_email") not in handled_emails
+            and p.get("registration_id") not in handled_ids
+        ]
         present_list.sort(key=lambda p: (
             cls._parse_ts(p.get("attended_at")),
             p.get("stage_order") if (p.get("stage_order") and p.get("stage_order") > 0) else float('inf'),
             cls._parse_ts(p.get("registered_at"))
         ))
-        for seq_idx, p in enumerate(present_list, start=1):
+
+        # Assign venue_entry_number to all present participants based on arrival time
+        all_present_group = active_on_stage + completed_performers + present_list
+        for v_idx, p in enumerate(all_present_group, start=1):
+            p["venue_entry_number"] = v_idx
+
+        # Waiting registered participants (not yet marked present at the venue)
+        waiting_list = [
+            p for p in participants_list
+            if not p.get("is_present")
+            and p.get("user_email") not in handled_emails
+            and p.get("registration_id") not in handled_ids
+        ]
+        waiting_list.sort(key=lambda p: (
+            cls._parse_ts(p.get("registered_at")),
+            p.get("stage_order") if (p.get("stage_order") and p.get("stage_order") > 0) else float('inf')
+        ))
+        for p in waiting_list:
+            p["venue_entry_number"] = None
+            p["attendance_status"] = "WAITING_CHECKIN"
+
+        # The complete running lineup includes ALL participants:
+        # Present participants at the top in chronological order of arrival,
+        # followed by waiting participants in registration order.
+        lineup_participants = all_present_group + waiting_list
+        for seq_idx, p in enumerate(lineup_participants, start=1):
             p["stage_order"] = seq_idx
 
-        present_count = len(present_list)
-        absent_count = len(participants_list) - present_count
+        present_count = len(all_present_group)
+        absent_count = len(waiting_list)
         curr_round = int(comp.get("current_round") or 1)
 
         if curr_performer and isinstance(curr_performer, dict):
@@ -532,19 +585,7 @@ class CompetitionStageService:
             if p_cat and isinstance(p_cat, str) and p_cat.strip() and p_cat.strip() not in comp_categories:
                 comp_categories.append(p_cat.strip())
 
-        # If any participants have been marked present, the lineup should only
-        # include present participants (+ anyone currently on stage or completed).
-        # This prevents absent participants from appearing in the stage queue.
-        if present_count > 0:
-            active_or_done = [p for p in participants_list if p["stage_status"] in ("ON_STAGE", "COMPLETED")]
-            active_emails = {p.get("user_email") for p in active_or_done if p.get("user_email")}
-            pending_present = [p for p in present_list if p.get("user_email") not in active_emails]
-            lineup_participants = active_or_done + pending_present
-        else:
-            # No attendance taken yet — show all participants
-            lineup_participants = participants_list
-
-        lineup_completed = sum(1 for p in lineup_participants if p["stage_status"] == "COMPLETED")
+        lineup_completed = sum(1 for p in lineup_participants if p.get("stage_status") == "COMPLETED")
 
         return {
             "competition_id": c_str,
@@ -559,15 +600,19 @@ class CompetitionStageService:
             "total_participants": len(lineup_participants),
             "present_count": present_count,
             "absent_count": absent_count,
-            "all_registered_count": len(participants_list),
+            "waiting_count": absent_count,
+            "all_registered_count": len(lineup_participants),
             "final_present_list": present_list,
+            "waiting_list": waiting_list,
             "completed_performances": lineup_completed,
             "completed_count": lineup_completed,
             "remaining_performances": max(0, len(lineup_participants) - lineup_completed),
             "remaining_count": max(0, len(lineup_participants) - lineup_completed),
             "categories": comp_categories,
             "participants": lineup_participants,
-            "all_participants": participants_list,
+            "all_participants": lineup_participants,
+            "lineup": lineup_participants,
+            "updated_at": live_stage.get("updated_at")
         }
 
 
@@ -1214,14 +1259,14 @@ class CompetitionStageService:
                 {"cash_status": "COLLECTED"},
                 {"is_present": True}
             ]
-        }).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=500)
+        }).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=5000)
 
         if not regs:
             legacy_or = [
                 {"activity_id": {"$in": c_matches}},
                 {"competition_id": {"$in": c_matches}}
             ]
-            regs = await registration_collection.find({"$or": legacy_or}).sort([("created_at", 1)]).to_list(length=500)
+            regs = await registration_collection.find({"$or": legacy_or}).sort([("created_at", 1)]).to_list(length=5000)
 
         lineup_emails = list({(r.get("user_email") or r.get("email") or "").strip().lower() for r in regs if (r.get("user_email") or r.get("email"))})
         users_map = {}
@@ -1274,6 +1319,7 @@ class CompetitionStageService:
                 "participant_name": name,
                 "user_name": name,
                 "user_email": em,
+                "user_phone": usr.get("phone_number") or usr.get("phone") or r.get("user_phone") or "",
                 "user_photo": photo,
                 "avatar": photo,
                 "category": p_cat,
@@ -1282,7 +1328,7 @@ class CompetitionStageService:
                 "stage_status": stage_stat,
                 "is_current_performer": is_on_stage,
                 "is_present": is_p,
-                "attendance_status": r.get("attendance_status", "PRESENT" if is_p else "ABSENT"),
+                "attendance_status": "PRESENT" if is_p else "WAITING_CHECKIN",
                 "attended_at": r.get("attended_at"),
                 "registered_at": r.get("registered_at") or r.get("created_at"),
                 "is_verified": is_v,
@@ -1290,20 +1336,69 @@ class CompetitionStageService:
                 "verified_tick": is_v
             })
 
-        present_lineup = [p for p in lineup if p.get("is_present")]
-        # Sort present lineup chronologically by attended_at (first attended is first)
+        # Strict chronological ordering rule requested by client:
+        # Group 1: Currently active on-stage performer
+        # Group 2: Completed performers
+        # Group 3: Confirmed present contestants, sorted strictly by attended_at ascending (first to give attendance is #1)
+        # Group 4: Waiting contestants (registered, not yet present), sorted by original registered_at ascending
+        active_on_stage = [p for p in lineup if p.get("is_current_performer") or p.get("stage_status") == "ON_STAGE"]
+        active_emails = {p.get("user_email") for p in active_on_stage if p.get("user_email")}
+        active_ids = {p.get("registration_id") for p in active_on_stage if p.get("registration_id")}
+
+        completed_performers = [
+            p for p in lineup
+            if p.get("stage_status") == "COMPLETED"
+            and p.get("user_email") not in active_emails
+            and p.get("registration_id") not in active_ids
+        ]
+        completed_performers.sort(key=lambda p: (
+            cls._parse_ts(p.get("attended_at")),
+            cls._parse_ts(p.get("registered_at"))
+        ))
+
+        handled_emails = active_emails | {p.get("user_email") for p in completed_performers if p.get("user_email")}
+        handled_ids = active_ids | {p.get("registration_id") for p in completed_performers if p.get("registration_id")}
+
+        # Confirmed present performers awaiting stage (1st present = 1st, 2nd present = 2nd)
+        present_lineup = [
+            p for p in lineup
+            if p.get("is_present")
+            and p.get("user_email") not in handled_emails
+            and p.get("registration_id") not in handled_ids
+        ]
         present_lineup.sort(key=lambda p: (
             cls._parse_ts(p.get("attended_at")),
             p.get("order") if (p.get("order") and p.get("order") > 0) else float('inf'),
             cls._parse_ts(p.get("registered_at"))
         ))
-        if present_lineup:
-            active_or_done = [p for p in lineup if p.get("stage_status") in ("ON_STAGE", "COMPLETED") and not p.get("is_present")]
-            effective_lineup = active_or_done + present_lineup
-        else:
-            effective_lineup = lineup
 
-        # Sequentialize order 1..N for the active present lineup
+        # Assign venue_entry_number to all present participants based on arrival time
+        all_present_group = active_on_stage + completed_performers + present_lineup
+        for v_idx, p in enumerate(all_present_group, start=1):
+            p["venue_entry_number"] = v_idx
+
+        # Waiting registered participants (not yet marked present at the venue)
+        waiting_lineup = [
+            p for p in lineup
+            if not p.get("is_present")
+            and p.get("user_email") not in handled_emails
+            and p.get("registration_id") not in handled_ids
+        ]
+        # Preserve original registration queue sequence
+        waiting_lineup.sort(key=lambda p: (
+            cls._parse_ts(p.get("registered_at")),
+            p.get("order") if (p.get("order") and p.get("order") > 0) else float('inf')
+        ))
+        for p in waiting_lineup:
+            p["venue_entry_number"] = None
+            p["attendance_status"] = "WAITING_CHECKIN"
+
+        # The effective running lineup includes ALL participants:
+        # Present participants at the top in chronological order of arrival,
+        # followed by waiting participants in registration order.
+        effective_lineup = all_present_group + waiting_lineup
+
+        # Sequentialize contiguous order 1..N across the entire competition queue
         for seq_idx, item in enumerate(effective_lineup, start=1):
             item["order"] = seq_idx
             if public_curr and public_curr.get("user_email") and (item.get("user_email") or "").lower() == (public_curr.get("user_email") or "").lower():

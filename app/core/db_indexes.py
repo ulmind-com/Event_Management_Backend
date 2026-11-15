@@ -51,6 +51,8 @@ async def init_core_database_indexes():
         )
         await competition_registration_collection.create_index([("user_email", 1)], background=True)
         await competition_registration_collection.create_index([("competition_id", 1), ("registered_at", -1)], background=True)
+        await competition_registration_collection.create_index([("competition_id", 1), ("is_present", 1), ("attended_at", 1)], background=True)
+        await competition_registration_collection.create_index([("competition_id", 1), ("stage_order", 1), ("registered_at", 1)], background=True)
 
         # 3. Standard Activity Registrations
         await registration_collection.create_index(

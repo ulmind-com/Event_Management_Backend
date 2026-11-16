@@ -56,3 +56,14 @@ class TicketScanReq(BaseModel):
     qr_token: str
     admit_count: Optional[int] = None
     event_id: Optional[str] = None
+    collect_cash: Optional[bool] = Field(None, description="Set True to record cash payment collection upon entry")
+    cash_collected: Optional[bool] = Field(None, description="Alias for collect_cash")
+    cash_amount: Optional[float] = Field(None, description="Optional custom cash amount collected")
+    notes: Optional[str] = Field(None, description="Optional volunteer check-in notes")
+
+
+class CashCollectReq(BaseModel):
+    ticket_ref: Optional[str] = None
+    qr_token: Optional[str] = None
+    amount: Optional[float] = None
+    notes: Optional[str] = None

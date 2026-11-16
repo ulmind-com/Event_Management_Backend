@@ -7,7 +7,7 @@ from pydantic import BaseModel, EmailStr
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.admin_auth import get_current_admin
-from app.core.database import user_collection, event_collection
+from app.core.database import user_collection, event_collection, issued_ticket_collection
 from app.core.security import get_password_hash
 from app.services.email import EmailService
 
@@ -47,12 +47,36 @@ class AssignEventVolunteersReq(BaseModel):
 
 @router.get("/")
 async def list_volunteers(admin: dict = Depends(get_current_admin)):
-    """List all registered volunteers in the system."""
+    """List all registered volunteers in the system with check-in and cash collection metrics."""
     volunteers = await user_collection.find({"role": "VOLUNTEER"}).to_list(length=1000)
     for v in volunteers:
         v["_id"] = str(v["_id"])
         # Do not leak hashed passwords to client
         v.pop("password_hash", None)
+        email = v.get("email")
+        if email:
+            checkins = await issued_ticket_collection.find({
+                "$or": [
+                    {"checked_in_by": email},
+                    {"scanned_by": email}
+                ]
+            }).to_list(length=2000)
+            
+            total_checkins = len(checkins)
+            cash_collected_tickets = [
+                t for t in checkins 
+                if t.get("cash_status") == "COLLECTED" and (t.get("cash_collected_by") == email or t.get("checked_in_by") == email)
+            ]
+            total_cash_amount = sum(float(t.get("cash_amount") or t.get("price") or 0.0) for t in cash_collected_tickets)
+            
+            v["total_checkins"] = total_checkins
+            v["cash_collected_count"] = len(cash_collected_tickets)
+            v["total_cash_collected"] = round(total_cash_amount, 2)
+            v["last_active"] = checkins[-1].get("checked_in_at") if checkins else None
+        else:
+            v["total_checkins"] = 0
+            v["cash_collected_count"] = 0
+            v["total_cash_collected"] = 0.0
     return volunteers
 
 

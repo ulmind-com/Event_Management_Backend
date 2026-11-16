@@ -1395,23 +1395,62 @@ async def _fetch_admin_bookings(
         users_map = {u.get("email"): u for u in usrs}
 
     issued_map = {}
+    booking_refs = [b.get("booking_reference") for b in raw_bookings if b.get("booking_reference")]
+    booking_match = []
     if booking_id_strs:
-        all_tix = await issued_ticket_collection.find({"booking_id": {"$in": booking_id_strs}}).to_list(length=1000)
+        booking_match.append({"booking_id": {"$in": booking_id_strs}})
+    if booking_refs:
+        booking_match.append({"booking_ref": {"$in": booking_refs}})
+
+    if booking_match:
+        all_tix = await issued_ticket_collection.find({"$or": booking_match} if len(booking_match) > 1 else booking_match[0]).to_list(length=2000)
         for t in all_tix:
             t["_id"] = str(t["_id"])
             b_id = t.get("booking_id")
-            if b_id not in issued_map:
-                issued_map[b_id] = []
-            issued_map[b_id].append({
+            b_ref = t.get("booking_ref")
+
+            t_cash_done = bool(
+                t.get("cash_collected")
+                or t.get("cash_collect_done")
+                or t.get("cash_status") in ("COLLECTED", "APPROVED")
+                or t.get("cash_approved")
+            )
+            is_cash_t = (str(t.get("payment_method", "")).upper() == "CASH" or bool(t.get("cash_payment")))
+            t_cash_status = "COLLECTED" if t_cash_done else (t.get("cash_status") or ("PENDING" if is_cash_t else None))
+            t_cash_display = "Cash Collect Done" if t_cash_done else ("Cash Pending" if is_cash_t else None)
+
+            ticket_entry = {
                 "ticket_ref": t.get("ticket_ref"),
                 "holder_name": t.get("holder_name"),
                 "holder_email": t.get("holder_email"),
                 "ticket_type": t.get("ticket_type"),
-                "payment_status": t.get("payment_status", "PAID"),
+                "payment_status": "PAID" if t_cash_done else t.get("payment_status", "PAID"),
                 "payment_method": t.get("payment_method", "ONLINE"),
                 "is_checked_in": bool(t.get("is_checked_in")),
-                "check_in_time": t.get("check_in_time"),
-            })
+                "check_in_time": t.get("check_in_time") or t.get("checked_in_at"),
+                "checked_in_at": t.get("checked_in_at") or t.get("check_in_time"),
+                "checked_in_by": t.get("checked_in_by") or t.get("scanned_by"),
+                "checked_in_by_name": t.get("checked_in_by_name"),
+                "checked_in_by_role": t.get("checked_in_by_role"),
+                "scanned_by": t.get("scanned_by") or t.get("checked_in_by"),
+                "cash_status": t_cash_status,
+                "cash_collected": t_cash_done,
+                "cash_collect_done": t_cash_done,
+                "cash_collected_display": t_cash_display,
+                "cash_collected_by": t.get("cash_collected_by"),
+                "cash_collected_by_name": t.get("cash_collected_by_name"),
+                "cash_collected_at": t.get("cash_collected_at"),
+            }
+
+            if b_id:
+                if b_id not in issued_map:
+                    issued_map[b_id] = []
+                issued_map[b_id].append(ticket_entry)
+            if b_ref:
+                if b_ref not in issued_map:
+                    issued_map[b_ref] = []
+                if not b_id or b_ref != b_id:
+                    issued_map[b_ref].append(ticket_entry)
 
     stats_query = {"event_id": str(event_id)} if event_id else {}
     all_for_stats = await booking_collection.find(stats_query).to_list(length=2000)
@@ -1419,7 +1458,7 @@ async def _fetch_admin_bookings(
     total_revenue = sum(
         float(b.get("total_amount", 0.0))
         for b in all_for_stats
-        if (b.get("booking_status") == "CONFIRMED" and b.get("payment_status") in ("PAID", "NOT_REQUIRED", "SUCCESS"))
+        if (b.get("booking_status") == "CONFIRMED" and (b.get("payment_status") in ("PAID", "NOT_REQUIRED", "SUCCESS") or b.get("cash_status") in ("COLLECTED", "APPROVED") or b.get("cash_approved")))
     )
     
     tix_query: Dict[str, Any] = {"event_id": str(event_id)} if event_id else {}
@@ -1432,13 +1471,37 @@ async def _fetch_admin_bookings(
         ev = events_map.get(str(b.get("event_id")), {})
         tk = tickets_map.get(str(b.get("ticket_id")), {})
         usr = users_map.get(b.get("user_email"), {})
+        b_ref = b.get("booking_reference")
+        b_tix = issued_map.get(b_id, []) or (issued_map.get(b_ref, []) if b_ref else [])
 
         raw_p_status = (b.get("payment_status") or "PENDING").upper()
         raw_p_method = (b.get("payment_method") or ("CASH" if b.get("is_cash") or b.get("cash_payment") else "ONLINE")).upper()
         
-        is_paid = (raw_p_status in ["PAID", "SUCCESS", "NOT_REQUIRED"] or bool(b.get("cash_approved")))
+        b_cash_done = bool(
+            b.get("cash_collected")
+            or b.get("cash_collect_done")
+            or b.get("cash_status") in ("COLLECTED", "APPROVED")
+            or b.get("cash_approved")
+            or any(t.get("cash_collect_done") for t in b_tix)
+        )
+        is_cash_b = (raw_p_method == "CASH" or bool(b.get("cash_payment")))
+        is_paid = (raw_p_status in ["PAID", "SUCCESS", "NOT_REQUIRED"] or b_cash_done)
         p_status = "PAID" if is_paid else "PENDING"
         p_display = "SUCCESS" if is_paid else "PENDING"
+
+        # Volunteer Check-in tracking
+        b_checked_in = bool(b.get("is_checked_in") or any(t.get("is_checked_in") for t in b_tix))
+        first_t = b_tix[0] if b_tix else {}
+        b_checked_by = b.get("checked_in_by") or b.get("scanned_by") or first_t.get("checked_in_by")
+        b_checked_by_name = b.get("checked_in_by_name") or first_t.get("checked_in_by_name")
+        b_checked_by_role = b.get("checked_in_by_role") or first_t.get("checked_in_by_role")
+        b_check_time = b.get("last_check_in_time") or b.get("checked_in_at") or first_t.get("check_in_time")
+
+        b_cash_by = b.get("cash_collected_by") or first_t.get("cash_collected_by")
+        b_cash_by_name = b.get("cash_collected_by_name") or first_t.get("cash_collected_by_name")
+        b_cash_at = b.get("cash_collected_at") or first_t.get("cash_collected_at")
+        b_cash_status = "COLLECTED" if b_cash_done else (b.get("cash_status") or ("PENDING" if is_cash_b else None))
+        b_cash_display = "Cash Collect Done" if b_cash_done else ("Cash Pending" if is_cash_b else None)
 
         bookings_res.append({
             "_id": b_id,
@@ -1459,16 +1522,30 @@ async def _fetch_admin_bookings(
             "payment_status": p_status,
             "payment_status_display": p_display,
             "payment_method": raw_p_method,
-            "is_cash": (raw_p_method == "CASH"),
-            "can_approve_cash": (raw_p_method == "CASH" and not is_paid),
-            "cash_approved": bool(b.get("cash_approved")),
-            "approved_by": b.get("approved_by"),
-            "approved_at": b.get("approved_at"),
-            "paid_at": b.get("paid_at"),
+            "is_cash": is_cash_b,
+            "can_approve_cash": (is_cash_b and not is_paid),
+            "cash_approved": bool(b.get("cash_approved") or b_cash_done),
+            "cash_status": b_cash_status,
+            "cash_collected": b_cash_done,
+            "cash_collect_done": b_cash_done,
+            "cash_collected_display": b_cash_display,
+            "cash_collected_by": b_cash_by,
+            "cash_collected_by_name": b_cash_by_name,
+            "cash_collected_at": b_cash_at,
+            "is_checked_in": b_checked_in,
+            "checked_in_by": b_checked_by,
+            "checked_in_by_name": b_checked_by_name,
+            "checked_in_by_role": b_checked_by_role,
+            "scanned_by": b_checked_by,
+            "checked_in_at": b_check_time,
+            "check_in_time": b_check_time,
+            "approved_by": b.get("approved_by") or b_cash_by,
+            "approved_at": b.get("approved_at") or b_cash_at,
+            "paid_at": b.get("paid_at") or b_cash_at,
             "payment_reference": b.get("payment_reference"),
             "booked_at": b.get("booked_at"),
             "holder_names": b.get("holder_names", []),
-            "tickets": issued_map.get(b_id, []),
+            "tickets": b_tix,
         })
 
     # Also include direct event registrations from registration_collection if querying a specific event or search
@@ -1502,7 +1579,13 @@ async def _fetch_admin_bookings(
             dr_user = users_map.get(dr.get("email"), {})
             dr_p_status = (dr.get("payment_status") or "PENDING").upper()
             dr_p_method = (dr.get("payment_method") or ("CASH" if dr.get("cash_payment") else "ONLINE")).upper()
-            dr_is_paid = (dr_p_status in ["PAID", "SUCCESS", "NOT_REQUIRED"] or bool(dr.get("cash_approved")))
+            dr_cash_done = bool(dr.get("cash_collected") or dr.get("cash_collect_done") or dr.get("cash_status") in ("COLLECTED", "APPROVED") or dr.get("cash_approved"))
+            dr_is_paid = (dr_p_status in ["PAID", "SUCCESS", "NOT_REQUIRED"] or dr_cash_done)
+            dr_checked_in = bool(dr.get("is_present") or dr.get("attendance_status") == "PRESENT" or dr.get("is_checked_in"))
+            dr_checked_by = dr.get("checked_in_by") or dr.get("scanned_by") or dr.get("attended_by")
+            dr_check_time = dr.get("checked_in_at") or dr.get("last_check_in_time") or dr.get("attended_at")
+            dr_cash_by = dr.get("cash_collected_by") or dr.get("approved_by") or dr_checked_by
+            dr_cash_at = dr.get("cash_collected_at") or dr.get("approved_at") or dr.get("paid_at") or dr_check_time
 
             bookings_res.append({
                 "_id": dr_id,
@@ -1525,10 +1608,24 @@ async def _fetch_admin_bookings(
                 "payment_method": dr_p_method,
                 "is_cash": (dr_p_method == "CASH"),
                 "can_approve_cash": (dr_p_method == "CASH" and not dr_is_paid),
-                "cash_approved": bool(dr.get("cash_approved")),
-                "approved_by": dr.get("approved_by"),
-                "approved_at": dr.get("approved_at"),
-                "paid_at": dr.get("paid_at"),
+                "cash_approved": bool(dr.get("cash_approved") or dr_cash_done),
+                "cash_status": "COLLECTED" if dr_cash_done else (dr.get("cash_status") or ("PENDING" if dr_p_method == "CASH" else None)),
+                "cash_collected": dr_cash_done,
+                "cash_collect_done": dr_cash_done,
+                "cash_collected_display": "Cash Collect Done" if dr_cash_done else ("Cash Pending" if dr_p_method == "CASH" else None),
+                "cash_collected_by": dr_cash_by,
+                "cash_collected_by_name": dr.get("cash_collected_by_name"),
+                "cash_collected_at": dr_cash_at,
+                "is_checked_in": dr_checked_in,
+                "checked_in_by": dr_checked_by,
+                "checked_in_by_name": dr.get("checked_in_by_name"),
+                "checked_in_by_role": dr.get("checked_in_by_role"),
+                "scanned_by": dr_checked_by,
+                "checked_in_at": dr_check_time,
+                "check_in_time": dr_check_time,
+                "approved_by": dr.get("approved_by") or dr_cash_by,
+                "approved_at": dr.get("approved_at") or dr_cash_at,
+                "paid_at": dr.get("paid_at") or dr_cash_at,
                 "payment_reference": dr.get("payment_reference"),
                 "booked_at": dr.get("created_at"),
                 "holder_names": [dr.get("participant_name") or "Participant"],
@@ -1636,16 +1733,55 @@ async def get_admin_booking_detail(booking_id: str, admin=Depends(get_current_ad
     tix = await issued_ticket_collection.find({"booking_id": b_id_str}).to_list(length=100)
     for t in tix:
         t["_id"] = str(t["_id"])
+        t_cash_done = bool(
+            t.get("cash_collected")
+            or t.get("cash_collect_done")
+            or t.get("cash_status") in ("COLLECTED", "APPROVED")
+            or t.get("cash_approved")
+        )
+        is_cash_t = (str(t.get("payment_method", "")).upper() == "CASH" or bool(t.get("cash_payment")))
+        t["cash_status"] = "COLLECTED" if t_cash_done else (t.get("cash_status") or ("PENDING" if is_cash_t else None))
+        t["cash_collected"] = t_cash_done
+        t["cash_collect_done"] = t_cash_done
+        t["cash_collected_display"] = "Cash Collect Done" if t_cash_done else ("Cash Pending" if is_cash_t else None)
+        t["checked_in_by"] = t.get("checked_in_by") or t.get("scanned_by")
+        t["scanned_by"] = t.get("scanned_by") or t.get("checked_in_by")
     b["tickets"] = tix
 
     raw_p_status = (b.get("payment_status") or "PENDING").upper()
     raw_p_method = (b.get("payment_method") or ("CASH" if b.get("is_cash") or b.get("cash_payment") else "ONLINE")).upper()
-    is_paid = (raw_p_status in ["PAID", "SUCCESS", "NOT_REQUIRED"] or bool(b.get("cash_approved")))
+    b_cash_done = bool(
+        b.get("cash_collected")
+        or b.get("cash_collect_done")
+        or b.get("cash_status") in ("COLLECTED", "APPROVED")
+        or b.get("cash_approved")
+        or any(t.get("cash_collect_done") for t in tix)
+    )
+    is_cash_b = (raw_p_method == "CASH" or bool(b.get("cash_payment")))
+    is_paid = (raw_p_status in ["PAID", "SUCCESS", "NOT_REQUIRED"] or b_cash_done)
     b["payment_status"] = "PAID" if is_paid else "PENDING"
     b["payment_status_display"] = "SUCCESS" if is_paid else "PENDING"
     b["payment_method"] = raw_p_method
-    b["is_cash"] = (raw_p_method == "CASH")
-    b["can_approve_cash"] = (raw_p_method == "CASH" and not is_paid)
+    b["is_cash"] = is_cash_b
+    b["can_approve_cash"] = (is_cash_b and not is_paid)
+    b["cash_approved"] = bool(b.get("cash_approved") or b_cash_done)
+    b["cash_status"] = "COLLECTED" if b_cash_done else (b.get("cash_status") or ("PENDING" if is_cash_b else None))
+    b["cash_collected"] = b_cash_done
+    b["cash_collect_done"] = b_cash_done
+    b["cash_collected_display"] = "Cash Collect Done" if b_cash_done else ("Cash Pending" if is_cash_b else None)
+
+    b_checked_in = bool(b.get("is_checked_in") or any(t.get("is_checked_in") for t in tix))
+    first_t = tix[0] if tix else {}
+    b["is_checked_in"] = b_checked_in
+    b["checked_in_by"] = b.get("checked_in_by") or b.get("scanned_by") or first_t.get("checked_in_by")
+    b["checked_in_by_name"] = b.get("checked_in_by_name") or first_t.get("checked_in_by_name")
+    b["checked_in_by_role"] = b.get("checked_in_by_role") or first_t.get("checked_in_by_role")
+    b["scanned_by"] = b["checked_in_by"]
+    b["checked_in_at"] = b.get("checked_in_at") or b.get("last_check_in_time") or first_t.get("check_in_time")
+    b["check_in_time"] = b["checked_in_at"]
+    b["cash_collected_by"] = b.get("cash_collected_by") or first_t.get("cash_collected_by")
+    b["cash_collected_by_name"] = b.get("cash_collected_by_name") or first_t.get("cash_collected_by_name")
+    b["cash_collected_at"] = b.get("cash_collected_at") or first_t.get("cash_collected_at")
 
     return b
 
@@ -1933,8 +2069,14 @@ async def get_event_attendance_dashboard(event_id: str, admin=Depends(get_curren
         name = usr.get("full_name") or usr.get("name") or b.get("user_name") or (em.split("@")[0].title() if em else "Attendee")
         phone = usr.get("phone_number") or usr.get("phone") or b.get("user_phone") or ""
 
-        is_p = bool(b.get("is_present", False) or b.get("attendance_status") == "PRESENT")
-        stat = b.get("attendance_status", "PRESENT" if is_p else "ABSENT")
+        is_p = bool(b.get("is_present", False) or b.get("attendance_status") == "PRESENT" or b.get("is_checked_in"))
+        stat = "PRESENT" if is_p else b.get("attendance_status", "ABSENT")
+        b_cash_done = bool(b.get("cash_collected") or b.get("cash_collect_done") or b.get("cash_status") in ("COLLECTED", "APPROVED") or b.get("cash_approved"))
+        is_cash_b = (str(b.get("payment_method", "")).upper() == "CASH" or bool(b.get("cash_payment")))
+        b_checked_by = b.get("checked_in_by") or b.get("scanned_by") or b.get("attended_by")
+        b_check_time = b.get("checked_in_at") or b.get("last_check_in_time") or b.get("attended_at")
+        b_cash_by = b.get("cash_collected_by") or b_checked_by
+        b_cash_at = b.get("cash_collected_at") or b.get("paid_at") or b_check_time
 
         item = {
             "booking_id": b_id,
@@ -1947,12 +2089,26 @@ async def get_event_attendance_dashboard(event_id: str, admin=Depends(get_curren
             "user_phone": phone,
             "ticket_type": b.get("ticket_type") or b.get("category") or "General",
             "quantity": int(b.get("quantity", 1)),
-            "payment_status": b.get("payment_status", "PAID"),
+            "payment_status": "PAID" if b_cash_done else b.get("payment_status", "PAID"),
             "payment_method": b.get("payment_method", "ONLINE"),
             "is_present": is_p,
             "attendance_status": stat,
-            "attended_at": b.get("attended_at"),
-            "attended_by": b.get("attended_by"),
+            "is_checked_in": bool(b.get("is_checked_in")),
+            "checked_in_by": b_checked_by,
+            "checked_in_by_name": b.get("checked_in_by_name"),
+            "checked_in_by_role": b.get("checked_in_by_role"),
+            "scanned_by": b_checked_by,
+            "checked_in_at": b_check_time,
+            "check_in_time": b_check_time,
+            "attended_at": b.get("attended_at") or b_check_time,
+            "attended_by": b.get("attended_by") or b_checked_by,
+            "cash_status": "COLLECTED" if b_cash_done else (b.get("cash_status") or ("PENDING" if is_cash_b else None)),
+            "cash_collected": b_cash_done,
+            "cash_collect_done": b_cash_done,
+            "cash_collected_display": "Cash Collect Done" if b_cash_done else ("Cash Pending" if is_cash_b else None),
+            "cash_collected_by": b_cash_by,
+            "cash_collected_by_name": b.get("cash_collected_by_name"),
+            "cash_collected_at": b_cash_at,
             "booked_at": b.get("booked_at") or b.get("created_at")
         }
         all_attendees.append(item)
@@ -1971,8 +2127,14 @@ async def get_event_attendance_dashboard(event_id: str, admin=Depends(get_curren
         name = dr.get("participant_name") or usr.get("full_name") or usr.get("name") or (em.split("@")[0].title() if em else "Participant")
         phone = usr.get("phone_number") or usr.get("phone") or ""
 
-        is_p = bool(dr.get("is_present", False) or dr.get("attendance_status") == "PRESENT")
-        stat = dr.get("attendance_status", "PRESENT" if is_p else "ABSENT")
+        is_p = bool(dr.get("is_present", False) or dr.get("attendance_status") == "PRESENT" or dr.get("is_checked_in"))
+        stat = "PRESENT" if is_p else dr.get("attendance_status", "ABSENT")
+        dr_cash_done = bool(dr.get("cash_collected") or dr.get("cash_collect_done") or dr.get("cash_status") in ("COLLECTED", "APPROVED") or dr.get("cash_approved"))
+        is_cash_dr = (str(dr.get("payment_method", "")).upper() == "CASH" or bool(dr.get("cash_payment")))
+        dr_checked_by = dr.get("checked_in_by") or dr.get("scanned_by") or dr.get("attended_by")
+        dr_check_time = dr.get("checked_in_at") or dr.get("last_check_in_time") or dr.get("attended_at")
+        dr_cash_by = dr.get("cash_collected_by") or dr_checked_by
+        dr_cash_at = dr.get("cash_collected_at") or dr.get("paid_at") or dr_check_time
 
         item = {
             "booking_id": dr_id,
@@ -1985,12 +2147,26 @@ async def get_event_attendance_dashboard(event_id: str, admin=Depends(get_curren
             "user_phone": phone,
             "ticket_type": dr.get("category") or "Event Registration",
             "quantity": 1,
-            "payment_status": dr.get("payment_status", "PAID"),
+            "payment_status": "PAID" if dr_cash_done else dr.get("payment_status", "PAID"),
             "payment_method": dr.get("payment_method", "ONLINE"),
             "is_present": is_p,
             "attendance_status": stat,
-            "attended_at": dr.get("attended_at"),
-            "attended_by": dr.get("attended_by"),
+            "is_checked_in": bool(dr.get("is_checked_in")),
+            "checked_in_by": dr_checked_by,
+            "checked_in_by_name": dr.get("checked_in_by_name"),
+            "checked_in_by_role": dr.get("checked_in_by_role"),
+            "scanned_by": dr_checked_by,
+            "checked_in_at": dr_check_time,
+            "check_in_time": dr_check_time,
+            "attended_at": dr.get("attended_at") or dr_check_time,
+            "attended_by": dr.get("attended_by") or dr_checked_by,
+            "cash_status": "COLLECTED" if dr_cash_done else (dr.get("cash_status") or ("PENDING" if is_cash_dr else None)),
+            "cash_collected": dr_cash_done,
+            "cash_collect_done": dr_cash_done,
+            "cash_collected_display": "Cash Collect Done" if dr_cash_done else ("Cash Pending" if is_cash_dr else None),
+            "cash_collected_by": dr_cash_by,
+            "cash_collected_by_name": dr.get("cash_collected_by_name"),
+            "cash_collected_at": dr_cash_at,
             "booked_at": dr.get("created_at")
         }
         all_attendees.append(item)

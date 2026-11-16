@@ -9004,7 +9004,7 @@
           "volunteer-checkin"
         ],
         "summary": "Verify Ticket",
-        "description": "Scans the QR token and returns comprehensive ticket status and multi-person capacity.",
+        "description": "Scans the QR token and returns comprehensive ticket status, multi-person capacity, and cash payment state.",
         "operationId": "verify_ticket_api_volunteer_tickets_verify_post",
         "requestBody": {
           "content": {
@@ -9049,7 +9049,7 @@
           "volunteer-checkin"
         ],
         "summary": "Check In Ticket",
-        "description": "Atomically checks in attendees on this ticket.\nSupports multi-person admissions (e.g. 3 people). Once all admitted, ticket is fully USED and invalid for reuse.",
+        "description": "Atomically checks in attendees on this ticket.\nSupports multi-person admissions (e.g. 3 people). Once all admitted, ticket is fully USED and invalid for reuse.\nRecords volunteer/admin identity and auto-collects cash if ticket is cash payment (or explicitly requested).",
         "operationId": "check_in_ticket_api_volunteer_tickets_check_in_post",
         "requestBody": {
           "content": {
@@ -9086,6 +9086,211 @@
             "HTTPBearer": []
           }
         ]
+      }
+    },
+    "/api/volunteer/tickets/checkin-history": {
+      "get": {
+        "tags": [
+          "volunteer-checkin"
+        ],
+        "summary": "Get Checkin History",
+        "description": "Returns recent ticket check-ins showing which volunteer scanned which ticket,\nattendee holder info, timestamps, and whether cash collection was completed.",
+        "operationId": "get_checkin_history_api_volunteer_tickets_checkin_history_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/volunteer/tickets/{ticket_ref}/collect-cash": {
+      "post": {
+        "tags": [
+          "volunteer-checkin"
+        ],
+        "summary": "Collect Ticket Cash",
+        "description": "Volunteer or Admin marks cash payment as collected at the venue for a cash ticket or booking.\nUpdates cash_status to 'COLLECTED', payment_status to 'PAID', and sets 'Cash Collect Done' across records.",
+        "operationId": "collect_ticket_cash_api_volunteer_tickets__ticket_ref__collect_cash_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ticket_ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ticket Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CashCollectReq"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/volunteer/tickets/collect-cash": {
+      "post": {
+        "tags": [
+          "volunteer-checkin"
+        ],
+        "summary": "Collect Ticket Cash",
+        "description": "Volunteer or Admin marks cash payment as collected at the venue for a cash ticket or booking.\nUpdates cash_status to 'COLLECTED', payment_status to 'PAID', and sets 'Cash Collect Done' across records.",
+        "operationId": "collect_ticket_cash_api_volunteer_tickets_collect_cash_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ticket_ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ticket Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CashCollectReq"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/admin/bootstrap": {
@@ -17741,7 +17946,7 @@
           "admin-checkin"
         ],
         "summary": "Verify Ticket",
-        "description": "Scans the QR token and returns comprehensive ticket status and multi-person capacity.",
+        "description": "Scans the QR token and returns comprehensive ticket status, multi-person capacity, and cash payment state.",
         "operationId": "verify_ticket_api_admin_tickets_verify_post",
         "requestBody": {
           "content": {
@@ -17786,7 +17991,7 @@
           "admin-checkin"
         ],
         "summary": "Check In Ticket",
-        "description": "Atomically checks in attendees on this ticket.\nSupports multi-person admissions (e.g. 3 people). Once all admitted, ticket is fully USED and invalid for reuse.",
+        "description": "Atomically checks in attendees on this ticket.\nSupports multi-person admissions (e.g. 3 people). Once all admitted, ticket is fully USED and invalid for reuse.\nRecords volunteer/admin identity and auto-collects cash if ticket is cash payment (or explicitly requested).",
         "operationId": "check_in_ticket_api_admin_tickets_check_in_post",
         "requestBody": {
           "content": {
@@ -17825,13 +18030,218 @@
         ]
       }
     },
+    "/api/admin/tickets/checkin-history": {
+      "get": {
+        "tags": [
+          "admin-checkin"
+        ],
+        "summary": "Get Checkin History",
+        "description": "Returns recent ticket check-ins showing which volunteer scanned which ticket,\nattendee holder info, timestamps, and whether cash collection was completed.",
+        "operationId": "get_checkin_history_api_admin_tickets_checkin_history_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tickets/{ticket_ref}/collect-cash": {
+      "post": {
+        "tags": [
+          "admin-checkin"
+        ],
+        "summary": "Collect Ticket Cash",
+        "description": "Volunteer or Admin marks cash payment as collected at the venue for a cash ticket or booking.\nUpdates cash_status to 'COLLECTED', payment_status to 'PAID', and sets 'Cash Collect Done' across records.",
+        "operationId": "collect_ticket_cash_api_admin_tickets__ticket_ref__collect_cash_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ticket_ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ticket Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CashCollectReq"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tickets/collect-cash": {
+      "post": {
+        "tags": [
+          "admin-checkin"
+        ],
+        "summary": "Collect Ticket Cash",
+        "description": "Volunteer or Admin marks cash payment as collected at the venue for a cash ticket or booking.\nUpdates cash_status to 'COLLECTED', payment_status to 'PAID', and sets 'Cash Collect Done' across records.",
+        "operationId": "collect_ticket_cash_api_admin_tickets_collect_cash_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ticket_ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ticket Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CashCollectReq"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/checkin/verify": {
       "post": {
         "tags": [
           "admin-checkin"
         ],
         "summary": "Verify Ticket",
-        "description": "Scans the QR token and returns comprehensive ticket status and multi-person capacity.",
+        "description": "Scans the QR token and returns comprehensive ticket status, multi-person capacity, and cash payment state.",
         "operationId": "verify_ticket_api_admin_checkin_verify_post",
         "requestBody": {
           "content": {
@@ -17876,7 +18286,7 @@
           "admin-checkin"
         ],
         "summary": "Check In Ticket",
-        "description": "Atomically checks in attendees on this ticket.\nSupports multi-person admissions (e.g. 3 people). Once all admitted, ticket is fully USED and invalid for reuse.",
+        "description": "Atomically checks in attendees on this ticket.\nSupports multi-person admissions (e.g. 3 people). Once all admitted, ticket is fully USED and invalid for reuse.\nRecords volunteer/admin identity and auto-collects cash if ticket is cash payment (or explicitly requested).",
         "operationId": "check_in_ticket_api_admin_checkin_check_in_post",
         "requestBody": {
           "content": {
@@ -17913,6 +18323,211 @@
             "HTTPBearer": []
           }
         ]
+      }
+    },
+    "/api/admin/checkin/checkin-history": {
+      "get": {
+        "tags": [
+          "admin-checkin"
+        ],
+        "summary": "Get Checkin History",
+        "description": "Returns recent ticket check-ins showing which volunteer scanned which ticket,\nattendee holder info, timestamps, and whether cash collection was completed.",
+        "operationId": "get_checkin_history_api_admin_checkin_checkin_history_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/checkin/{ticket_ref}/collect-cash": {
+      "post": {
+        "tags": [
+          "admin-checkin"
+        ],
+        "summary": "Collect Ticket Cash",
+        "description": "Volunteer or Admin marks cash payment as collected at the venue for a cash ticket or booking.\nUpdates cash_status to 'COLLECTED', payment_status to 'PAID', and sets 'Cash Collect Done' across records.",
+        "operationId": "collect_ticket_cash_api_admin_checkin__ticket_ref__collect_cash_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ticket_ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ticket Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CashCollectReq"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/checkin/collect-cash": {
+      "post": {
+        "tags": [
+          "admin-checkin"
+        ],
+        "summary": "Collect Ticket Cash",
+        "description": "Volunteer or Admin marks cash payment as collected at the venue for a cash ticket or booking.\nUpdates cash_status to 'COLLECTED', payment_status to 'PAID', and sets 'Cash Collect Done' across records.",
+        "operationId": "collect_ticket_cash_api_admin_checkin_collect_cash_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ticket_ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ticket Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CashCollectReq"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/admin/advanced-competitions/": {
@@ -21395,7 +22010,7 @@
           "admin-volunteers"
         ],
         "summary": "List Volunteers",
-        "description": "List all volunteers.",
+        "description": "List all volunteers with check-in and cash collection metrics.",
         "operationId": "list_volunteers_api_admin_volunteers__get",
         "responses": {
           "200": {
@@ -29890,6 +30505,56 @@
         "type": "object",
         "title": "CashApprovalPayload"
       },
+      "CashCollectReq": {
+        "properties": {
+          "ticket_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticket Ref"
+          },
+          "qr_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qr Token"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "title": "CashCollectReq"
+      },
       "CertificateGenerateReq": {
         "properties": {
           "notify_participants": {
@@ -30010,6 +30675,10 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
               },
               {
                 "type": "null"
@@ -32231,6 +32900,10 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
               },
               {
                 "type": "null"
@@ -35792,6 +36465,54 @@
               }
             ],
             "title": "Admit Count"
+          },
+          "collect_cash": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collect Cash",
+            "description": "Set True to record cash payment collection upon entry"
+          },
+          "cash_collected": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cash Collected",
+            "description": "Alias for collect_cash"
+          },
+          "cash_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cash Amount",
+            "description": "Optional custom cash amount collected"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes",
+            "description": "Optional volunteer check-in notes"
           }
         },
         "type": "object",

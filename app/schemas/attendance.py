@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from enum import Enum
 from datetime import datetime
 
@@ -46,7 +46,7 @@ class CompetitionAttendanceDashboardResponse(BaseModel):
     competition_id: str
     competition_title: str
     is_offline: bool = False
-    venue: Optional[str] = None
+    venue: Optional[Union[str, Dict[str, Any]]] = None
     total_registered: int
     present_count: int
     absent_count: int
@@ -57,7 +57,7 @@ class CompetitionAttendanceDashboardResponse(BaseModel):
 class EventAttendanceDashboardResponse(BaseModel):
     event_id: str
     event_title: str
-    venue: Optional[str] = None
+    venue: Optional[Union[str, Dict[str, Any]]] = None
     total_registered: int
     present_count: int
     absent_count: int

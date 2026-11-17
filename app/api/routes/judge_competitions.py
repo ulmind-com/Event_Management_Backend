@@ -956,14 +956,29 @@ async def submit_score(submission_id: str, req: ScoreReq, judge: dict = Depends(
         "competition_id": comp_id, "submission_id": str(submission_id), "judge_email": judge["email"]
     })
 
-    # ── WebSocket: Broadcast real-time update to Admin + Users ──
+    # ── WebSocket & SSE: Broadcast real-time update with live recalculated leaderboard ──
+    leaderboard_data = []
+    category_lbs = {}
+    try:
+        round_lb = await CompetitionRoundService.get_round_leaderboard(comp_id=comp_id, round_number=target_round)
+        leaderboard_data = round_lb.get("leaderboard", [])
+        category_lbs = round_lb.get("category_leaderboards", {})
+    except Exception as e:
+        import logging
+        logging.getLogger("eventora.judge").error(f"Live round leaderboard calculation error: {e}")
+
     await ws_manager.broadcast_to_competition(comp_id, {
         "event": "score_submitted",
+        "type": "LEADERBOARD_UPDATED",
         "competition_id": comp_id,
         "submission_id": str(submission_id),
         "participant_id": participant_email,
+        "user_email": participant_email,
         "judge_email": judge["email"],
         "total_score": total_score,
+        "round_number": target_round,
+        "leaderboard": leaderboard_data,
+        "category_leaderboards": category_lbs,
         "timestamp": datetime.now(timezone.utc).isoformat()
     })
 
@@ -1099,14 +1114,29 @@ async def submit_competition_score(
             {"$addToSet": {"scored_by_judges": judge["email"]}}
         )
 
+    # ── WebSocket & SSE: Broadcast real-time update with live recalculated leaderboard ──
+    leaderboard_data = []
+    category_lbs = {}
+    try:
+        round_lb = await CompetitionRoundService.get_round_leaderboard(comp_id=c_str, round_number=target_round)
+        leaderboard_data = round_lb.get("leaderboard", [])
+        category_lbs = round_lb.get("category_leaderboards", {})
+    except Exception as e:
+        import logging
+        logging.getLogger("eventora.judge").error(f"Live round leaderboard calculation error: {e}")
+
     await ws_manager.broadcast_to_competition(c_str, {
         "event": "score_submitted",
+        "type": "LEADERBOARD_UPDATED",
         "competition_id": c_str,
         "submission_id": sub_id_str,
         "participant_id": participant_email,
+        "user_email": participant_email,
         "judge_email": judge["email"],
         "total_score": total_score,
         "round_number": target_round,
+        "leaderboard": leaderboard_data,
+        "category_leaderboards": category_lbs,
         "timestamp": datetime.now(timezone.utc).isoformat()
     })
 

@@ -873,6 +873,21 @@ async def publish_results(comp_id: str, admin: dict = Depends(get_current_admin)
     except Exception:
         pass
 
+    # Broadcast real-time update
+    try:
+        from app.core.websocket import ws_manager
+        await ws_manager.broadcast_to_competition(str(comp_id), {
+            "event": "results_published",
+            "type": "RESULTS_PUBLISHED",
+            "competition_id": str(comp_id),
+            "results_published": True,
+            "result_status": "PUBLISHED",
+            "score_visible_for_public": True,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+    except Exception:
+        pass
+
     return {"message": "Results published successfully."}
 
 
@@ -912,6 +927,21 @@ async def toggle_public_scores(
             }
         }
     )
+    # Broadcast real-time update
+    try:
+        from app.core.websocket import ws_manager
+        await ws_manager.broadcast_to_competition(str(comp_id), {
+            "event": "scores_visibility_changed",
+            "type": "SCORES_VISIBILITY_CHANGED",
+            "competition_id": str(comp_id),
+            "score_visible_for_public": new_val,
+            "results_published": new_val,
+            "result_status": "PUBLISHED" if new_val else "PENDING",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+    except Exception:
+        pass
+
     return {
         "success": True,
         "score_visible_for_public": new_val,
@@ -2520,7 +2550,7 @@ async def advance_round_contestants(
     Admin API: Advances top N contestants (or explicitly specified contestant IDs) from round_number to next_round_number.
     Remaining participants are marked as ELIMINATED.
     """
-    return await CompetitionRoundService.advance_contestants(
+    res = await CompetitionRoundService.advance_contestants(
         comp_id=comp_id,
         round_number=round_number,
         advancing_count=req.advancing_count,
@@ -2529,6 +2559,21 @@ async def advance_round_contestants(
         admin_email=admin.get("email", "admin@upgradetalentsindia.in"),
         notes=req.notes
     )
+    # Broadcast real-time update
+    try:
+        from app.core.websocket import ws_manager
+        await ws_manager.broadcast_to_competition(str(comp_id), {
+            "event": "round_advanced",
+            "type": "ROUND_ADVANCED",
+            "competition_id": str(comp_id),
+            "from_round": round_number,
+            "to_round": req.next_round_number or (round_number + 1),
+            "advanced_count": res.get("advanced_count") if isinstance(res, dict) else None,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+    except Exception:
+        pass
+    return res
 
 
 @router.get("/{comp_id}/rounds/{round_number}/leaderboard")

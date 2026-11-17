@@ -1,4 +1,4 @@
-﻿from fastapi import WebSocket
+from fastapi import WebSocket
 from typing import Dict, List, Set
 import json
 import logging
@@ -34,6 +34,7 @@ class ConnectionManager:
             evt_name = data.get("event", "COMPETITION_UPDATE")
             await event_bus.publish(f"competition:{competition_id}", evt_name, data)
             await event_bus.publish("admin:competitions", evt_name, data)
+            await event_bus.publish("global", evt_name, data)
         except Exception:
             pass
 
@@ -59,6 +60,7 @@ class ConnectionManager:
             evt_name = data.get("event", "EVENT_UPDATE")
             await event_bus.publish(f"event:{event_id}", evt_name, data)
             await event_bus.publish("admin:events", evt_name, data)
+            await event_bus.publish("global", evt_name, data)
         except Exception:
             pass
 

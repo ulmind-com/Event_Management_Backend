@@ -66,9 +66,11 @@ class RealtimeEventBus:
             # Sockets listening directly to this channel
             if channel in self._subscribers:
                 targets.update(self._subscribers[channel])
-            # Sockets listening to global wildcard '*'
+            # Sockets listening to global wildcard '*' or 'global'
             if "*" in self._subscribers:
                 targets.update(self._subscribers["*"])
+            if "global" in self._subscribers:
+                targets.update(self._subscribers["global"])
             # Sockets listening to 'admin:all' if it's an admin event
             if channel.startswith("admin:") and "admin:all" in self._subscribers:
                 targets.update(self._subscribers["admin:all"])

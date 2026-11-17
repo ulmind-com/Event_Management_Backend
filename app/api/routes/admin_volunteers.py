@@ -424,6 +424,86 @@ async def get_event_volunteer_report(event_id: str, admin: dict = Depends(get_cu
             "checked_in_at": t.get("checked_in_at") or t.get("check_in_time"),
         })
 
+    # Also check bookings collection to catch admissions recorded at booking level
+    seen_brefs = {a["booking_reference"] for vg in volunteer_groups.values() for a in vg["attendees"] if a.get("booking_reference")}
+    checked_bookings = await booking_collection.find({
+        "event_id": {"$in": ev_match},
+        "$or": [
+            {"is_checked_in": True},
+            {"is_present": True},
+            {"attendance_status": "PRESENT"},
+            {"checked_in_by": {"$ne": None}}
+        ]
+    }).to_list(length=2000)
+
+    for b in checked_bookings:
+        b_ref = b.get("booking_reference") or str(b["_id"])
+        if b_ref in seen_brefs:
+            continue
+
+        scanner_email = str(b.get("checked_in_by") or b.get("scanned_by") or b.get("attended_by") or "").strip().lower()
+        if not scanner_email:
+            scanner_email = "unassigned_gate"
+
+        if scanner_email not in volunteer_groups:
+            u = await user_collection.find_one({"email": scanner_email})
+            if not u:
+                u = await admin_collection.find_one({"email": scanner_email})
+            vname = b.get("checked_in_by_name") or (u.get("full_name") or u.get("name") if u else scanner_email.split("@")[0].title())
+            volunteer_groups[scanner_email] = {
+                "volunteer_name": vname,
+                "volunteer_email": scanner_email,
+                "role": b.get("checked_in_by_role") or "Gate Scanner",
+                "phone": u.get("phone") or u.get("phone_number") or "" if u else "",
+                "is_assigned": False,
+                "total_entries": 0,
+                "online_payments": 0,
+                "cash_payments": 0,
+                "cash_collected": 0.0,
+                "attendees": []
+            }
+
+        vg = volunteer_groups[scanner_email]
+        admitted_qty = int(b.get("checked_in_count") or b.get("quantity") or 1)
+        is_cash = str(b.get("payment_method", "")).upper() in ["CASH", "OFFLINE"] or bool(b.get("cash_payment"))
+        is_cash_done = bool(
+            b.get("cash_collected")
+            or b.get("cash_collect_done")
+            or b.get("cash_status") in ("COLLECTED", "APPROVED")
+            or b.get("cash_approved")
+        )
+        amt = float(b.get("cash_amount_collected") or b.get("total_amount") or 0.0)
+
+        vg["total_entries"] += admitted_qty
+        if is_cash:
+            vg["cash_payments"] += admitted_qty
+            if is_cash_done:
+                vg["cash_collected"] += amt
+        else:
+            vg["online_payments"] += admitted_qty
+
+        seats = b.get("seats") or []
+        holder_names = b.get("holder_names") or ([b.get("user_name")] if b.get("user_name") else ["Attendee"])
+
+        vg["attendees"].append({
+            "ticket_ref": b_ref,
+            "booking_reference": b_ref,
+            "attendee_name": b.get("user_name") or (holder_names[0] if holder_names else "Attendee"),
+            "attendee_names": holder_names,
+            "attendee_email": b.get("user_email"),
+            "attendee_phone": b.get("user_phone"),
+            "category": b.get("category") or b.get("ticket_type") or "General",
+            "quantity": admitted_qty,
+            "seat": ", ".join(seats) if seats else "—",
+            "seats": seats,
+            "payment_method": "CASH" if is_cash else b.get("payment_method", "ONLINE"),
+            "cash_status": "COLLECTED" if is_cash_done else ("PENDING" if is_cash else "NOT_APPLICABLE"),
+            "cash_collect_done": is_cash_done,
+            "cash_collected_display": "Cash Collect Done" if is_cash_done else ("Cash Pending" if is_cash else "Online Paid"),
+            "amount": amt if is_cash else float(b.get("total_amount") or 0.0),
+            "checked_in_at": b.get("last_check_in_time") or b.get("checked_in_at") or b.get("attended_at"),
+        })
+
     # Sort volunteers by total entries and cash collected
     vol_list = list(volunteer_groups.values())
     for v in vol_list:

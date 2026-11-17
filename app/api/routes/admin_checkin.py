@@ -246,8 +246,20 @@ async def verify_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanner_
     cash_coll_by_name = ticket.get("cash_collected_by_name") or (booking.get("cash_collected_by_name") if booking else None)
     cash_coll_at = ticket.get("cash_collected_at") or (booking.get("cash_collected_at") if booking else None)
 
+    scan_msg = "Ticket is valid for admission."
+    if is_fully_used:
+        scanner_disp = checked_in_by_name or checked_in_by or "Gate Scanner"
+        time_val = ticket.get("check_in_time") or ticket.get("checked_in_at")
+        time_str = f" at {time_val}" if time_val else ""
+        scan_msg = f"Ticket Already Scanned / Already Checked In! All {quantity} person(s) were admitted by {scanner_disp}{time_str}. Duplicate entry rejected."
+
     return {
         "is_valid": not is_fully_used,
+        "valid": not is_fully_used,
+        "allowed": not is_fully_used,
+        "already_checked_in": is_fully_used,
+        "duplicate_scan": is_fully_used,
+        "message": scan_msg,
         "event_id": raw_event_id,
         "ticket": {
             "ticket_ref": ticket["ticket_ref"],
@@ -369,9 +381,17 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
 
     # If already fully used, reject immediately
     if ticket.get("is_checked_in") or current_admitted >= quantity:
+        scanner_disp = (
+            ticket.get("checked_in_by_name")
+            or ticket.get("checked_in_by")
+            or (booking.get("checked_in_by_name") if booking else None)
+            or (booking.get("checked_in_by") if booking else "Gate Scanner")
+        )
+        time_val = ticket.get("check_in_time") or ticket.get("checked_in_at")
+        time_str = f" at {time_val}" if time_val else ""
         raise HTTPException(
             status_code=400,
-            detail=f"Ticket has already been fully used! All {quantity} person(s) have already entered and validity has expired."
+            detail=f"Ticket Already Scanned / Already Checked In! All {quantity} person(s) have already entered (admitted by {scanner_disp}{time_str}). Duplicate entry rejected."
         )
 
     # Determine how many persons to admit this scan

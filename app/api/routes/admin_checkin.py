@@ -662,6 +662,60 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
     }
 
 
+@router.get("/stats")
+async def get_volunteer_shift_stats(
+    event_id: Optional[str] = Query(None),
+    scanner: dict = Depends(get_scanner_user)
+):
+    """
+    Returns live shift statistics for the logged in volunteer or admin:
+    - total_checkins (admitted attendees)
+    - online_checkins_count
+    - cash_collected_count
+    - total_cash_collected (₹ amount)
+    """
+    scanner_email = (scanner.get("email") or "").strip().lower()
+    query: Dict[str, Any] = {
+        "$or": [
+            {"checked_in_by": scanner_email},
+            {"scanned_by": scanner_email},
+            {"cash_collected_by": scanner_email}
+        ]
+    }
+    if event_id:
+        query["event_id"] = str(event_id)
+
+    tickets = await issued_ticket_collection.find(query).to_list(length=3000)
+    total_checkins = sum(int(t.get("admitted_count") or (t.get("quantity") if t.get("is_checked_in") else 1) or 1) for t in tickets) if tickets else 0
+    
+    cash_tickets = [
+        t for t in tickets
+        if bool(
+            t.get("cash_collected")
+            or t.get("cash_collect_done")
+            or t.get("cash_status") in ("COLLECTED", "APPROVED")
+            or t.get("cash_approved")
+        )
+        and (t.get("cash_collected_by") == scanner_email or t.get("checked_in_by") == scanner_email or t.get("scanned_by") == scanner_email)
+    ]
+    cash_collected_count = sum(int(t.get("admitted_count") or (t.get("quantity") if t.get("is_checked_in") else 1) or 1) for t in cash_tickets) if cash_tickets else 0
+    online_checkins_count = max(0, total_checkins - cash_collected_count)
+    total_cash_collected = sum(
+        float(t.get("cash_amount_collected") or t.get("cash_amount") or t.get("price") or t.get("total_amount") or 0.0)
+        for t in cash_tickets
+    )
+
+    return {
+        "volunteer_email": scanner_email,
+        "event_id": event_id,
+        "total_tickets_scanned": len(tickets),
+        "total_checkins": total_checkins,
+        "online_checkins_count": online_checkins_count,
+        "cash_collected_count": cash_collected_count,
+        "total_cash_collected": round(total_cash_collected, 2),
+    }
+
+
 @router.get("/checkin-history")
 async def get_checkin_history(
     limit: int = Query(50, ge=1, le=500),

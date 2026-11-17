@@ -1,3 +1,4 @@
+import re
 import secrets
 import string
 from datetime import datetime, timezone
@@ -67,17 +68,94 @@ async def list_volunteers(admin: dict = Depends(get_current_admin)):
                 t for t in checkins 
                 if t.get("cash_status") == "COLLECTED" and (t.get("cash_collected_by") == email or t.get("checked_in_by") == email)
             ]
-            total_cash_amount = sum(float(t.get("cash_amount") or t.get("price") or 0.0) for t in cash_collected_tickets)
+            total_cash_amount = sum(float(t.get("cash_amount_collected") or t.get("cash_amount") or t.get("price") or t.get("total_amount") or 0.0) for t in cash_collected_tickets)
             
             v["total_checkins"] = total_checkins
             v["cash_collected_count"] = len(cash_collected_tickets)
+            v["online_checkins_count"] = max(0, total_checkins - len(cash_collected_tickets))
             v["total_cash_collected"] = round(total_cash_amount, 2)
             v["last_active"] = checkins[-1].get("checked_in_at") if checkins else None
         else:
             v["total_checkins"] = 0
             v["cash_collected_count"] = 0
+            v["online_checkins_count"] = 0
             v["total_cash_collected"] = 0.0
     return volunteers
+
+
+@router.get("/{email}/checkins")
+async def get_volunteer_checkins(email: str, admin: dict = Depends(get_current_admin)):
+    """Return all attendees and tickets scanned by this specific volunteer with cash details."""
+    clean_email = email.strip().lower()
+    
+    vol_user = await user_collection.find_one({"email": clean_email})
+    if not vol_user:
+        vol_user = await user_collection.find_one({"email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"}})
+    
+    checkins = await issued_ticket_collection.find({
+        "$or": [
+            {"checked_in_by": clean_email},
+            {"scanned_by": clean_email},
+            {"cash_collected_by": clean_email}
+        ]
+    }).sort("check_in_time", -1).to_list(length=1000)
+    
+    results = []
+    total_cash = 0.0
+    cash_count = 0
+    online_count = 0
+    
+    for t in checkins:
+        is_cash = str(t.get("payment_method", "")).upper() in ["CASH", "OFFLINE"] or bool(t.get("cash_payment"))
+        is_cash_done = bool(
+            t.get("cash_collected")
+            or t.get("cash_collect_done")
+            or t.get("cash_status") in ("COLLECTED", "APPROVED")
+            or t.get("cash_approved")
+        )
+        amt = float(t.get("cash_amount_collected") or t.get("cash_amount") or t.get("price") or t.get("total_amount") or 0.0)
+        
+        if is_cash_done:
+            total_cash += amt
+            cash_count += 1
+        else:
+            online_count += 1
+            
+        seats = t.get("seats") or ([t.get("seat")] if t.get("seat") else [])
+        holder_names = t.get("holder_names") or ([t.get("holder_name")] if t.get("holder_name") else ["Guest"])
+        
+        results.append({
+            "ticket_ref": t.get("ticket_ref"),
+            "booking_reference": t.get("booking_ref"),
+            "holder_name": t.get("holder_name") or (holder_names[0] if holder_names else "Guest"),
+            "holder_names": holder_names,
+            "holder_email": t.get("holder_email"),
+            "event_id": t.get("event_id"),
+            "event_title": t.get("event_title") or "Event",
+            "category": t.get("category") or "General",
+            "quantity": t.get("quantity", 1),
+            "seats": seats,
+            "payment_method": "CASH" if is_cash else t.get("payment_method", "ONLINE"),
+            "payment_status": "PAID" if is_cash_done else t.get("payment_status", "PAID"),
+            "cash_status": "COLLECTED" if is_cash_done else ("PENDING" if is_cash else "NOT_APPLICABLE"),
+            "cash_collect_done": is_cash_done,
+            "cash_collected_display": "Cash Collect Done" if is_cash_done else ("Cash Pending" if is_cash else "Online Paid"),
+            "cash_amount": amt if is_cash_done else 0.0,
+            "check_in_time": t.get("check_in_time") or t.get("checked_in_at"),
+            "checked_in_at": t.get("checked_in_at") or t.get("check_in_time"),
+            "checked_in_by": t.get("checked_in_by") or clean_email,
+            "checked_in_by_name": t.get("checked_in_by_name") or ((vol_user.get("full_name") or vol_user.get("name")) if vol_user else None),
+        })
+        
+    return {
+        "volunteer_email": clean_email,
+        "volunteer_name": ((vol_user.get("full_name") or vol_user.get("name")) if vol_user else clean_email),
+        "total_checkins": len(results),
+        "cash_collected_count": cash_count,
+        "online_checkins_count": online_count,
+        "total_cash_collected": round(total_cash, 2),
+        "checkins": results
+    }
 
 
 @router.post("/")
@@ -184,15 +262,42 @@ async def get_event_volunteers(event_id: str, admin: dict = Depends(get_current_
             "is_assigned": v_email in assigned_emails,
         })
 
+    enriched_assigned = []
+    for v in assigned:
+        v_copy = dict(v)
+        vemail = str(v.get("email", "")).strip().lower()
+        if vemail:
+            v_checkins = await issued_ticket_collection.find({
+                "event_id": str(event["_id"]),
+                "$or": [
+                    {"checked_in_by": vemail},
+                    {"scanned_by": vemail}
+                ]
+            }).to_list(length=1000)
+            v_cash_tix = [
+                t for t in v_checkins
+                if t.get("cash_status") == "COLLECTED" and (t.get("cash_collected_by") == vemail or t.get("checked_in_by") == vemail)
+            ]
+            v_copy["total_checkins"] = len(v_checkins)
+            v_copy["cash_collected_count"] = len(v_cash_tix)
+            v_copy["online_checkins_count"] = max(0, len(v_checkins) - len(v_cash_tix))
+            v_copy["total_cash_collected"] = round(sum(float(t.get("cash_amount_collected") or t.get("cash_amount") or t.get("price") or t.get("total_amount") or 0.0) for t in v_cash_tix), 2)
+        else:
+            v_copy["total_checkins"] = 0
+            v_copy["cash_collected_count"] = 0
+            v_copy["online_checkins_count"] = 0
+            v_copy["total_cash_collected"] = 0.0
+        enriched_assigned.append(v_copy)
+
     return {
         "event_id": str(event["_id"]),
         "event_title": event.get("title", ""),
         "event_date": event.get("date", ""),
         "event_time": event.get("time", ""),
         "event_venue": event.get("venue", ""),
-        "assigned_volunteers": assigned,
+        "assigned_volunteers": enriched_assigned,
         "available_volunteers": available,
-        "total_assigned": len(assigned),
+        "total_assigned": len(enriched_assigned),
         "total_available": len(available),
     }
 

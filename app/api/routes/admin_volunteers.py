@@ -727,6 +727,25 @@ async def assign_event_volunteers(
         {"$set": {"volunteers": new_volunteers_list, "updated_at": datetime.now(timezone.utc)}}
     )
 
+    try:
+        from app.core.realtime_bus import event_bus
+        event_bus.publish_sync("admin:events", "VOLUNTEER_ASSIGNED", {
+            "event_id": event_id,
+            "total_assigned": len(new_volunteers_list),
+            "assigned": assigned_results
+        })
+        event_bus.publish_sync(f"event:{event_id}", "VOLUNTEER_ASSIGNED", {
+            "event_id": event_id,
+            "total_assigned": len(new_volunteers_list),
+            "assigned": assigned_results
+        })
+        event_bus.publish_sync("admin:volunteers", "VOLUNTEER_ASSIGNED", {
+            "event_id": event_id,
+            "total_assigned": len(new_volunteers_list)
+        })
+    except Exception:
+        pass
+
     return {
         "message": f"Successfully assigned {len(assigned_results)} volunteer(s) to {event_title}.",
         "event_id": event_id,
@@ -755,6 +774,23 @@ async def remove_event_volunteer(
         {"email": email_clean},
         {"$pull": {"assigned_events": {"event_id": event_id}}}
     )
+
+    try:
+        from app.core.realtime_bus import event_bus
+        event_bus.publish_sync("admin:events", "VOLUNTEER_REMOVED", {
+            "event_id": event_id,
+            "email": email_clean
+        })
+        event_bus.publish_sync(f"event:{event_id}", "VOLUNTEER_REMOVED", {
+            "event_id": event_id,
+            "email": email_clean
+        })
+        event_bus.publish_sync("admin:volunteers", "VOLUNTEER_REMOVED", {
+            "event_id": event_id,
+            "email": email_clean
+        })
+    except Exception:
+        pass
 
     return {"message": f"Volunteer {email_clean} unassigned from event."}
 

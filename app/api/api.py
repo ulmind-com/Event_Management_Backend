@@ -10,7 +10,8 @@ from app.api.routes import (
     admin_merchandise, user_merchandise, merchandise_webhooks,
     notifications, admin_notifications, notification_ws,
     admin_kyc, user_kyc,
-    admin_analytics, admin_webauthn, user_webauthn
+    admin_analytics, admin_webauthn, user_webauthn,
+    realtime
 )
 
 api_router = APIRouter()
@@ -69,8 +70,9 @@ api_router.include_router(public_live.router, prefix="/v1", tags=["public-live"]
 api_router.include_router(public_live.router, prefix="/public", tags=["public-live"])
 api_router.include_router(public_certificates.router, prefix="/public/certificates", tags=["public-certificates"])
 
-# ── WebSocket (Real-time) ──
+# ── WebSocket & SSE (Real-time Live Sync) ──
 api_router.include_router(ws_live.router, tags=["websocket-live"])
+api_router.include_router(realtime.router, prefix="/realtime", tags=["realtime"])
 
 # ── VIP Pass APIs ──
 api_router.include_router(user_vip.router, tags=["vip-passes"])

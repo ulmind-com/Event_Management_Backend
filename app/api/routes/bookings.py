@@ -558,6 +558,29 @@ async def create_booking(
             "expires_at": expires_at.isoformat() if total_amount > 0.0 and expires_at else None,
             "sold_out": norm.get("is_sold_out", False)
         })
+
+        # Broadcast live real-time booking event to Admin & Event Monitors
+        try:
+            from app.core.realtime_bus import event_bus
+            bkg_broadcast = {
+                "event": "booking_created",
+                "booking_reference": booking_ref,
+                "event_id": str(e_id),
+                "category": primary_category,
+                "quantity": total_quantity,
+                "seats": getattr(req, "seats", None) or [],
+                "user_name": current_user.get("name") or current_user.get("full_name") or "Attendee",
+                "user_email": current_user["email"],
+                "total_amount": total_amount,
+                "payment_method": payment_method,
+                "booking_status": response_data.get("booking_status", "PENDING"),
+                "payment_status": response_data.get("payment_status", "PENDING"),
+            }
+            await event_bus.publish("admin:events", "BOOKING_CREATED", bkg_broadcast)
+            await event_bus.publish(f"event:{str(e_id)}", "BOOKING_CREATED", bkg_broadcast)
+        except Exception as be:
+            logger.warning(f"Error publishing real-time booking event: {be}")
+
         return response_data
 
     except HTTPException as he:

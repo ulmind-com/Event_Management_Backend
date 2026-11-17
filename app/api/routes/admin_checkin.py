@@ -626,14 +626,17 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
     final_cash_status = "COLLECTED" if final_cash_done else (ticket.get("cash_status") or (booking.get("cash_status") if booking else ("PENDING" if is_cash_payment else None)))
     final_cash_display = "Cash Collect Done" if final_cash_done else ("Cash Pending" if is_cash_payment else None)
 
-    # Real-time WebSocket broadcast
+    # Real-time broadcast across Admin Panels, Event Monitors & Volunteers
     ev_id = str(ticket.get("event_id") or (booking.get("event_id") if booking else ""))
     if ev_id:
         try:
-            from app.api.routes.ws_live import ws_manager
-            await ws_manager.broadcast_to_event(ev_id, {
+            from app.core.realtime_bus import event_bus
+            from app.core.websocket import ws_manager
+            rt_payload = {
                 "event": "ticket_checked_in",
+                "event_id": ev_id,
                 "ticket_ref": ticket["ticket_ref"],
+                "booking_reference": b_ref,
                 "holder_name": holder_name,
                 "holder_email": holder_email,
                 "checked_in_by": scanner_email,
@@ -645,9 +648,16 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
                 "cash_collected_display": final_cash_display,
                 "admitted_count": to_admit,
                 "is_fully_used": is_now_fully_used,
-            })
-        except Exception:
-            pass
+                "quantity": quantity,
+                "seats": seats,
+                "payment_method": ticket.get("payment_method") or (booking.get("payment_method") if booking else "ONLINE")
+            }
+            await ws_manager.broadcast_to_event(ev_id, rt_payload)
+            await event_bus.publish("admin:events", "TICKET_CHECKED_IN", rt_payload)
+            await event_bus.publish(f"event:{ev_id}", "TICKET_CHECKED_IN", rt_payload)
+            await event_bus.publish("admin:volunteers", "VOLUNTEER_ENTRY", rt_payload)
+        except Exception as e:
+            logger.warning(f"Error publishing check-in real-time event: {e}")
 
     return {
         "success": True,

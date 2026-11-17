@@ -226,8 +226,30 @@ class PaymentReconciliationService:
 
         logger.info(f"Transaction committed: Confirmed booking {booking_ref} via {source}")
 
-        # Post-transaction asynchronous side effects (Notifications & Emails)
+        # Post-transaction asynchronous side effects (Notifications & Real-time Live Broadcast)
         asyncio.create_task(cls._dispatch_booking_notifications(booking, b_id, payment_id, quantity))
+        try:
+            from app.core.realtime_bus import event_bus
+            event_bus.publish_sync("admin:events", "PAYMENT_CONFIRMED", {
+                "booking_reference": booking_ref,
+                "event_id": str(event_id),
+                "payment_id": payment_id,
+                "quantity": quantity,
+                "payment_status": "PAID",
+                "booking_status": "CONFIRMED",
+                "seats": booking.get("seats") or [],
+                "user_name": booking.get("user_name"),
+                "user_email": booking.get("user_email"),
+                "total_amount": booking.get("total_amount")
+            })
+            if str(event_id):
+                event_bus.publish_sync(f"event:{str(event_id)}", "PAYMENT_CONFIRMED", {
+                    "booking_reference": booking_ref,
+                    "event_id": str(event_id),
+                    "seats": booking.get("seats") or []
+                })
+        except Exception:
+            pass
 
         return {
             "status": "SUCCESS",
@@ -286,8 +308,25 @@ class PaymentReconciliationService:
 
         logger.info(f"Transaction committed: Confirmed competition registration {reg_ref} via {source}")
 
-        # Post-commit notification
+        # Post-commit notification & Real-time Live Broadcast
         asyncio.create_task(cls._dispatch_competition_notification(reg, payment_id))
+        try:
+            from app.core.realtime_bus import event_bus
+            event_bus.publish_sync("admin:competitions", "COMPETITION_REGISTRATION_CONFIRMED", {
+                "registration_reference": reg_ref,
+                "competition_id": str(comp_id),
+                "user_email": reg.get("user_email"),
+                "user_name": reg.get("user_name"),
+                "status": "CONFIRMED",
+                "payment_status": "PAID"
+            })
+            if str(comp_id):
+                event_bus.publish_sync(f"competition:{str(comp_id)}", "COMPETITION_REGISTRATION_CONFIRMED", {
+                    "registration_reference": reg_ref,
+                    "competition_id": str(comp_id)
+                })
+        except Exception:
+            pass
 
         return {
             "status": "SUCCESS",

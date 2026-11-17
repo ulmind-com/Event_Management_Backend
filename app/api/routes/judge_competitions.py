@@ -198,7 +198,7 @@ async def list_contestants(
     if ObjectId.is_valid(comp_id):
         sub_query["$or"].append({"competition_id": ObjectId(comp_id)})
 
-    subs = await competition_submission_collection.find(sub_query).to_list(length=1000)
+    subs = await competition_submission_collection.find(sub_query).to_list(length=5000)
 
     # Fetch all scores submitted by this judge for this competition and round
     score_filter: Dict[str, Any] = {
@@ -210,7 +210,7 @@ async def list_contestants(
     else:
         score_filter["round_number"] = target_round
 
-    existing_scores = await judge_score_collection.find(score_filter).to_list(length=1000)
+    existing_scores = await judge_score_collection.find(score_filter).to_list(length=5000)
 
     score_by_sub = {}
     score_by_user = {}
@@ -225,7 +225,7 @@ async def list_contestants(
     coi_skips = await coi_skip_collection.find({
         "competition_id": str(comp_id),
         "judge_email": judge["email"]
-    }).to_list(length=1000)
+    }).to_list(length=5000)
     coi_set = {str(c["submission_id"]) for c in coi_skips if c.get("submission_id")}
 
     # Fetch drafts for this round
@@ -238,7 +238,7 @@ async def list_contestants(
     else:
         draft_filter["round_number"] = target_round
 
-    drafts = await draft_score_collection.find(draft_filter).to_list(length=1000)
+    drafts = await draft_score_collection.find(draft_filter).to_list(length=5000)
     draft_set = {str(d["submission_id"]) for d in drafts if d.get("submission_id")}
 
     # Collect all emails for batch joins
@@ -425,7 +425,7 @@ async def list_contestants(
 
     all_registered = await competition_registration_collection.find(
         reg_find_query
-    ).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=1000)
+    ).sort([("stage_order", 1), ("registered_at", 1)]).to_list(length=5000)
 
     if not all_registered and target_round == 1:
         all_registered = await registration_collection.find({
@@ -433,7 +433,7 @@ async def list_contestants(
                 {"activity_id": {"$in": comp_matches}},
                 {"competition_id": {"$in": comp_matches}}
             ]
-        }).sort([("created_at", 1)]).to_list(length=1000)
+        }).sort([("created_at", 1)]).to_list(length=5000)
 
     if target_round > 1:
         qualified_emails_in_round = set(
@@ -930,6 +930,7 @@ async def submit_score(submission_id: str, req: ScoreReq, judge: dict = Depends(
         "participant_id": participant_email,
         "user_email": participant_email,
         "judge_email": judge["email"],
+        "judge_id": str(judge.get("_id") or judge.get("email")),
         "scores": req.scores,
         "total_score": total_score,
         "comments": req.comments,
@@ -1096,6 +1097,7 @@ async def submit_competition_score(
         "participant_id": participant_email,
         "user_email": participant_email,
         "judge_email": judge["email"],
+        "judge_id": str(judge.get("_id") or judge.get("email")),
         "scores": req.scores,
         "total_score": total_score,
         "comments": req.comments or req.feedback,
@@ -1106,7 +1108,17 @@ async def submit_competition_score(
         "status": "SUBMITTED"
     }
 
-    await judge_score_collection.insert_one(doc)
+    # Atomic idempotent score upsert - prevents duplicate score entries under rapid double clicks
+    await judge_score_collection.update_one(
+        {
+            "competition_id": c_str,
+            "judge_email": judge["email"],
+            "round_number": target_round,
+            "$or": sub_matches
+        },
+        {"$set": doc},
+        upsert=True
+    )
 
     if submission:
         await competition_submission_collection.update_one(

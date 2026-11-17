@@ -489,8 +489,23 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
         "notes": req.notes,
     }
 
+    # ── Concurrency & Race-Condition Safe Atomic Update ──
+    # Condition ensures that across 10-15 simultaneous gates, only one atomic write succeeds
+    atomic_condition: Dict[str, Any] = {
+        "ticket_ref": ticket["ticket_ref"],
+        "is_checked_in": {"$ne": True},
+    }
+    if current_admitted > 0:
+        atomic_condition["admitted_count"] = current_admitted
+    else:
+        atomic_condition["$or"] = [
+            {"admitted_count": 0},
+            {"admitted_count": {"$exists": False}},
+            {"admitted_count": None}
+        ]
+
     update_res = await issued_ticket_collection.update_one(
-        {"ticket_ref": ticket["ticket_ref"]},
+        atomic_condition,
         {
             "$set": ticket_update_fields,
             "$push": {"admissions_history": admit_history_entry}
@@ -498,7 +513,16 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
     )
 
     if update_res.modified_count == 0:
-        raise HTTPException(status_code=400, detail="Failed to record check-in. Please try again.")
+        # Atomic lock failed: Another gate scanned and checked in this ticket concurrently!
+        fresh_t = await issued_ticket_collection.find_one({"ticket_ref": ticket["ticket_ref"]})
+        fresh_scanner = (
+            (fresh_t.get("checked_in_by_name") or fresh_t.get("checked_in_by")) if fresh_t else "another gate scanner"
+        )
+        fresh_time = fresh_t.get("checked_in_at") if fresh_t else now_utc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Duplicate Scan Prevented! Ticket was already checked in at another gate by {fresh_scanner} ({fresh_time}). Admission rejected."
+        )
 
     # Update booking record if present
     if booking:
@@ -715,7 +739,7 @@ async def get_volunteer_shift_stats(
     if event_id:
         query["event_id"] = str(event_id)
 
-    tickets = await issued_ticket_collection.find(query).to_list(length=3000)
+    tickets = await issued_ticket_collection.find(query).to_list(length=10000)
     total_checkins = sum(int(t.get("admitted_count") or (t.get("quantity") if t.get("is_checked_in") else 1) or 1) for t in tickets) if tickets else 0
     
     cash_tickets = [

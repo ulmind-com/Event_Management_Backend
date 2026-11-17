@@ -61,7 +61,7 @@ async def list_volunteers(admin: dict = Depends(get_current_admin)):
                     {"checked_in_by": email},
                     {"scanned_by": email}
                 ]
-            }).to_list(length=2000)
+            }).to_list(length=10000)
             
             total_checkins = len(checkins)
             cash_collected_tickets = [
@@ -193,8 +193,13 @@ async def add_volunteer(req: VolunteerCreateReq, admin: dict = Depends(get_curre
             "created_at": datetime.now(timezone.utc),
         })
 
-    # Dispatch invite email with credentials
-    EmailService.send_volunteer_invitation(email_clean, name=req.name)
+    # Dispatch invite email with credentials in background thread so API responds instantly
+    import threading
+    threading.Thread(
+        target=EmailService.send_volunteer_invitation,
+        kwargs={"email": email_clean, "name": req.name},
+        daemon=True
+    ).start()
     return {
         "message": "Volunteer registered successfully with login credentials.",
         "email": email_clean,
@@ -273,7 +278,7 @@ async def get_event_volunteers(event_id: str, admin: dict = Depends(get_current_
                     {"checked_in_by": vemail},
                     {"scanned_by": vemail}
                 ]
-            }).to_list(length=1000)
+            }).to_list(length=10000)
             v_cash_tix = [
                 t for t in v_checkins
                 if t.get("cash_status") == "COLLECTED" and (t.get("cash_collected_by") == vemail or t.get("checked_in_by") == vemail)
@@ -356,7 +361,7 @@ async def get_event_volunteer_report(event_id: str, admin: dict = Depends(get_cu
             {"admitted_count": {"$gt": 0}},
             {"status": {"$in": ["USED", "PARTIALLY_USED"]}}
         ]
-    }).sort("check_in_time", -1).to_list(length=5000)
+    }).sort("check_in_time", -1).to_list(length=10000)
 
     # Process each scanned ticket
     for t in tickets:
@@ -434,7 +439,7 @@ async def get_event_volunteer_report(event_id: str, admin: dict = Depends(get_cu
             {"attendance_status": "PRESENT"},
             {"checked_in_by": {"$ne": None}}
         ]
-    }).to_list(length=2000)
+    }).to_list(length=10000)
 
     for b in checked_bookings:
         b_ref = b.get("booking_reference") or str(b["_id"])
@@ -697,21 +702,22 @@ async def assign_event_volunteers(
             }
         )
 
-        # Dispatch email with password credentials & event details
-        try:
-            EmailService.send_volunteer_event_assignment(
-                email=email_clean,
-                password=raw_password,
-                event_title=event_title,
-                event_date=event_date,
-                event_time=event_time,
-                event_venue=event_venue,
-                name=user_name,
-                role=assigned_role,
-            )
-        except Exception as e:
-            # Log and continue
-            pass
+        # Dispatch email with password credentials & event details in background thread
+        import threading
+        threading.Thread(
+            target=EmailService.send_volunteer_event_assignment,
+            kwargs={
+                "email": email_clean,
+                "password": raw_password,
+                "event_title": event_title,
+                "event_date": event_date,
+                "event_time": event_time,
+                "event_venue": event_venue,
+                "name": user_name,
+                "role": assigned_role,
+            },
+            daemon=True
+        ).start()
 
         assigned_results.append({
             "email": email_clean,

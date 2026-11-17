@@ -15,6 +15,10 @@ from app.core.database import (
     idempotency_collection,
     webhook_event_collection,
     payment_recovery_collection,
+    competition_submission_collection,
+    audience_vote_collection,
+    judge_assignment_collection,
+    ticket_collection,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,21 +78,76 @@ async def init_core_database_indexes():
             background=True
         )
         await event_collection.create_index([("date", 1)], background=True)
+        await event_collection.create_index([("volunteers.email", 1)], background=True)
 
-        # 5. Tickets & Bookings
+        # 5. Tickets & Bookings (Gate High-Volume Scanning & Concurrency)
         await issued_ticket_collection.create_index([("ticket_ref", 1)], unique=True, background=True)
         await issued_ticket_collection.create_index([("user_email", 1)], background=True)
         await issued_ticket_collection.create_index([("event_id", 1)], background=True)
         await issued_ticket_collection.create_index([("booking_id", 1)], background=True)
+        await issued_ticket_collection.create_index([("checked_in_by", 1), ("event_id", 1)], background=True)
+        await issued_ticket_collection.create_index([("scanned_by", 1), ("event_id", 1)], background=True)
+        await issued_ticket_collection.create_index([("cash_collected_by", 1), ("event_id", 1)], background=True)
+        await issued_ticket_collection.create_index([("event_id", 1), ("is_checked_in", 1)], background=True)
+        await issued_ticket_collection.create_index([("event_id", 1), ("cash_status", 1)], background=True)
 
         await booking_collection.create_index([("booking_reference", 1)], unique=True, background=True)
         await booking_collection.create_index([("user_email", 1)], background=True)
         await booking_collection.create_index([("event_id", 1)], background=True)
+        await ticket_collection.create_index([("event_id", 1), ("category", 1)], background=True)
 
-        # 6. Judging & Live Scoring
+        # 6. Competition Submissions & Audience Votes
+        await competition_submission_collection.create_index(
+            [("competition_id", 1), ("user_email", 1)],
+            background=True
+        )
+        await competition_submission_collection.create_index(
+            [("competition_id", 1), ("status", 1)],
+            background=True
+        )
+        await competition_submission_collection.create_index(
+            [("competition_id", 1), ("created_at", -1)],
+            background=True
+        )
+        await audience_vote_collection.create_index(
+            [("competition_id", 1), ("round_number", 1)],
+            background=True
+        )
+        await audience_vote_collection.create_index(
+            [("competition_id", 1), ("participant_id", 1)],
+            background=True
+        )
+        await audience_vote_collection.create_index(
+            [("competition_id", 1), ("voter_email", 1)],
+            background=True
+        )
+
+        # 7. Judging & Live Scoring (Fast Parallel Judge Submissions)
+        # Drop legacy restrictive unique index that could conflict when multiple judges score same stage participant
+        try:
+            cur_indexes = await judge_score_collection.index_information()
+            if "competition_id_1_round_number_1_submission_id_1_judge_id_1" in cur_indexes:
+                await judge_score_collection.drop_index("competition_id_1_round_number_1_submission_id_1_judge_id_1")
+                logger.info("Successfully dropped legacy restrictive unique index on judge_scores.")
+        except Exception:
+            pass
+
+        await judge_assignment_collection.create_index(
+            [("competition_id", 1), ("judge_email", 1)],
+            background=True
+        )
+        await judge_assignment_collection.create_index([("judge_email", 1)], background=True)
+
         await judge_score_collection.create_index(
             [("competition_id", 1), ("round_number", 1), ("submission_id", 1), ("judge_id", 1)],
-            unique=True,
+            background=True
+        )
+        await judge_score_collection.create_index(
+            [("competition_id", 1), ("round_number", 1), ("judge_email", 1), ("participant_id", 1)],
+            background=True
+        )
+        await judge_score_collection.create_index(
+            [("competition_id", 1), ("round_number", 1), ("judge_email", 1), ("submission_id", 1)],
             background=True
         )
         await judge_score_collection.create_index([("competition_id", 1), ("round_number", 1)], background=True)

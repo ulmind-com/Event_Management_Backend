@@ -8,7 +8,7 @@ from pydantic import BaseModel, EmailStr
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.admin_auth import get_current_admin
-from app.core.database import user_collection, event_collection, issued_ticket_collection
+from app.core.database import user_collection, event_collection, issued_ticket_collection, booking_collection, admin_collection
 from app.core.security import get_password_hash
 from app.services.email import EmailService
 
@@ -299,6 +299,167 @@ async def get_event_volunteers(event_id: str, admin: dict = Depends(get_current_
         "available_volunteers": available,
         "total_assigned": len(enriched_assigned),
         "total_available": len(available),
+    }
+
+
+@router.get("/events/{event_id}/report")
+@router.get("/events/{event_id}/volunteer-report")
+async def get_event_volunteer_report(event_id: str, admin: dict = Depends(get_current_admin)):
+    """
+    Returns the comprehensive volunteer-wise entry and cash collection audit report for an event.
+    For each volunteer assigned or who scanned tickets for this event:
+    - total entries / admitted attendees
+    - online payments count
+    - cash payments count
+    - total physical cash collected in INR
+    - individual attendee tickets with seat numbers, payment status, cash amount, and timestamps.
+    """
+    clean_eid = str(event_id).strip()
+    ev = None
+    if ObjectId.is_valid(clean_eid):
+        ev = await event_collection.find_one({"_id": ObjectId(clean_eid), "is_deleted": {"$ne": True}})
+    if not ev:
+        ev = await event_collection.find_one({"$or": [{"_id": clean_eid}, {"id": clean_eid}], "is_deleted": {"$ne": True}})
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    ev_match = [clean_eid]
+    if ObjectId.is_valid(clean_eid):
+        ev_match.append(ObjectId(clean_eid))
+
+    # Assigned volunteers from event doc
+    assigned = ev.get("volunteers") or []
+    volunteer_groups: Dict[str, Dict[str, Any]] = {}
+
+    for v in assigned:
+        vemail = str(v.get("email", "")).strip().lower()
+        if vemail:
+            vname = v.get("name") or v.get("full_name") or vemail.split("@")[0].title()
+            volunteer_groups[vemail] = {
+                "volunteer_name": vname,
+                "volunteer_email": vemail,
+                "role": v.get("role") or "Entrance Gate Scanner",
+                "phone": v.get("phone") or v.get("phone_number") or "",
+                "is_assigned": True,
+                "total_entries": 0,
+                "online_payments": 0,
+                "cash_payments": 0,
+                "cash_collected": 0.0,
+                "attendees": []
+            }
+
+    # Fetch all issued tickets for this event that have been scanned or checked in
+    tickets = await issued_ticket_collection.find({
+        "event_id": {"$in": ev_match},
+        "$or": [
+            {"is_checked_in": True},
+            {"admitted_count": {"$gt": 0}},
+            {"status": {"$in": ["USED", "PARTIALLY_USED"]}}
+        ]
+    }).sort("check_in_time", -1).to_list(length=5000)
+
+    # Process each scanned ticket
+    for t in tickets:
+        scanner_email = str(t.get("checked_in_by") or t.get("scanned_by") or "").strip().lower()
+        if not scanner_email:
+            scanner_email = "unassigned_gate"
+
+        if scanner_email not in volunteer_groups:
+            u = await user_collection.find_one({"email": scanner_email})
+            if not u:
+                u = await admin_collection.find_one({"email": scanner_email})
+            vname = t.get("checked_in_by_name") or (u.get("full_name") or u.get("name") if u else scanner_email.split("@")[0].title())
+            volunteer_groups[scanner_email] = {
+                "volunteer_name": vname,
+                "volunteer_email": scanner_email,
+                "role": t.get("checked_in_by_role") or "Gate Scanner",
+                "phone": u.get("phone") or u.get("phone_number") or "" if u else "",
+                "is_assigned": False,
+                "total_entries": 0,
+                "online_payments": 0,
+                "cash_payments": 0,
+                "cash_collected": 0.0,
+                "attendees": []
+            }
+
+        vg = volunteer_groups[scanner_email]
+        admitted_qty = int(t.get("admitted_count") or (t.get("quantity") if t.get("is_checked_in") else 1) or 1)
+
+        is_cash = str(t.get("payment_method", "")).upper() in ["CASH", "OFFLINE"] or bool(t.get("cash_payment"))
+        is_cash_done = bool(
+            t.get("cash_collected")
+            or t.get("cash_collect_done")
+            or t.get("cash_status") in ("COLLECTED", "APPROVED")
+            or t.get("cash_approved")
+        )
+        amt = float(t.get("cash_amount_collected") or t.get("cash_amount") or t.get("price") or t.get("total_amount") or 0.0)
+
+        vg["total_entries"] += admitted_qty
+        if is_cash:
+            vg["cash_payments"] += admitted_qty
+            if is_cash_done:
+                vg["cash_collected"] += amt
+        else:
+            vg["online_payments"] += admitted_qty
+
+        seats = t.get("seats") or ([t.get("seat")] if t.get("seat") else [])
+        holder_names = t.get("holder_names") or ([t.get("holder_name")] if t.get("holder_name") else ["Guest"])
+
+        vg["attendees"].append({
+            "ticket_ref": t.get("ticket_ref"),
+            "booking_reference": t.get("booking_ref"),
+            "attendee_name": t.get("holder_name") or (holder_names[0] if holder_names else "Guest"),
+            "attendee_names": holder_names,
+            "attendee_email": t.get("holder_email"),
+            "attendee_phone": t.get("user_phone") or t.get("holder_phone"),
+            "category": t.get("category") or t.get("ticket_type") or "General",
+            "quantity": admitted_qty,
+            "seat": ", ".join(seats) if seats else "—",
+            "seats": seats,
+            "payment_method": "CASH" if is_cash else t.get("payment_method", "ONLINE"),
+            "cash_status": "COLLECTED" if is_cash_done else ("PENDING" if is_cash else "NOT_APPLICABLE"),
+            "cash_collect_done": is_cash_done,
+            "cash_collected_display": "Cash Collect Done" if is_cash_done else ("Cash Pending" if is_cash else "Online Paid"),
+            "amount": amt if is_cash else float(t.get("price") or t.get("total_amount") or 0.0),
+            "checked_in_at": t.get("checked_in_at") or t.get("check_in_time"),
+        })
+
+    # Sort volunteers by total entries and cash collected
+    vol_list = list(volunteer_groups.values())
+    for v in vol_list:
+        v["cash_collected"] = round(v["cash_collected"], 2)
+    vol_list.sort(key=lambda x: (x["total_entries"], x["cash_collected"]), reverse=True)
+
+    total_entries = sum(v["total_entries"] for v in vol_list)
+    total_online = sum(v["online_payments"] for v in vol_list)
+    total_cash_count = sum(v["cash_payments"] for v in vol_list)
+    total_cash_amount = sum(v["cash_collected"] for v in vol_list)
+
+    reconciliation = [
+        {
+            "volunteer_name": v["volunteer_name"],
+            "volunteer_email": v["volunteer_email"],
+            "total_entries": v["total_entries"],
+            "online_payments": v["online_payments"],
+            "cash_passes": v["cash_payments"],
+            "cash_amount_due": v["cash_collected"]
+        }
+        for v in vol_list
+        if v["cash_collected"] > 0 or v["cash_payments"] > 0 or v["total_entries"] > 0
+    ]
+
+    return {
+        "event_id": clean_eid,
+        "event_title": ev.get("title", ""),
+        "event_date": ev.get("date", ""),
+        "event_time": ev.get("time", ""),
+        "event_venue": ev.get("venue", ""),
+        "total_admitted": total_entries,
+        "total_online_admitted": total_online,
+        "total_cash_admitted": total_cash_count,
+        "total_cash_collected": round(total_cash_amount, 2),
+        "volunteers": vol_list,
+        "reconciliation": reconciliation
     }
 
 

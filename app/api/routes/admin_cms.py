@@ -2416,3 +2416,11 @@ async def cms_resend_event_volunteer_credentials(
     """Resend credentials and gate pass to an assigned volunteer."""
     from app.api.routes.admin_volunteers import resend_event_volunteer_credentials
     return await resend_event_volunteer_credentials(event_id, email, admin)
+
+
+@router.get("/events/{event_id}/volunteer-report", tags=["admin-volunteers"])
+@router.get("/events/{event_id}/volunteers/report", tags=["admin-volunteers"])
+async def cms_get_event_volunteer_report(event_id: str, admin=Depends(get_current_admin)):
+    """Retrieve complete volunteer-wise entry and cash collection audit report for an event."""
+    from app.api.routes.admin_volunteers import get_event_volunteer_report
+    return await get_event_volunteer_report(event_id, admin)

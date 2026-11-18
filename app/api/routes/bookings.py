@@ -110,6 +110,12 @@ async def generate_tickets(booking_id: str, booking_ref: str, event_id: str, tic
         "price": total_amount if (total_amount is not None and quantity > 1) else (unit_price or total_amount),
         "payment_method": payment_method,
         "payment_status": payment_status,
+        "is_cash": (payment_method == "CASH"),
+        "cash_payment": (payment_method == "CASH"),
+        "cash_status": "PENDING" if payment_method == "CASH" else None,
+        "cash_collected": False,
+        "cash_collect_done": False,
+        "is_cash_pending": (payment_method == "CASH"),
         "issued_at": datetime.now(timezone.utc)
     })
     if docs:
@@ -689,7 +695,7 @@ async def get_my_tickets(current_user: dict = Depends(get_current_user)):
         admitted = int(t.get("admitted_count", 0))
         if t.get("is_checked_in") and admitted == 0:
             admitted = qty
-        is_used = bool(t.get("is_checked_in")) or (admitted >= qty)
+        is_used = bool(t.get("is_checked_in")) or (qty > 0 and admitted >= qty and admitted > 0)
         
         t["quantity"] = qty
         t["admitted_count"] = admitted

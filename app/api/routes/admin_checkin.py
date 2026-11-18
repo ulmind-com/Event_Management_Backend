@@ -425,48 +425,8 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
     final_cash_status = "COLLECTED" if final_cash_done else (ticket.get("cash_status") or (booking.get("cash_status") if booking else ("PENDING" if is_cash_payment else None)))
     final_cash_display = "Cash Collect Done" if final_cash_done else ("Cash Pending" if is_cash_payment else None)
 
-    # If already fully used, check if this same scanner admitted it (idempotent retry/double-click)
+    # If already fully used, reject duplicate scan with 400
     if ticket.get("is_checked_in") or current_admitted >= quantity:
-        prev_scanner = (
-            ticket.get("checked_in_by")
-            or ticket.get("scanned_by")
-            or (booking.get("checked_in_by") if booking else None)
-            or (booking.get("scanned_by") if booking else "")
-        ).strip().lower()
-
-        # If this same volunteer or scanner admitted it, return idempotent success!
-        if prev_scanner and prev_scanner == scanner_email:
-            check_in_time_val = ticket.get("check_in_time") or ticket.get("checked_in_at") or now_utc
-            time_iso = check_in_time_val.isoformat() if hasattr(check_in_time_val, "isoformat") else str(check_in_time_val)
-            return {
-                "success": True,
-                "already_admitted": True,
-                "message": f"ENTRY ALREADY RECORDED — All {quantity} attendee(s) were admitted by you ({scanner_name}).",
-                "ticket_ref": ticket["ticket_ref"],
-                "booking_reference": b_ref,
-                "holder_name": holder_name,
-                "holder_email": holder_email,
-                "admitted_now": 0,
-                "total_admitted": quantity,
-                "total_quantity": quantity,
-                "remaining": 0,
-                "is_fully_used": True,
-                "checked_in_by": scanner_email,
-                "checked_in_by_name": scanner_name,
-                "checked_in_by_role": scanner_role,
-                "check_in_time": time_iso,
-                "checked_in_at": time_iso,
-                "payment_method": "CASH" if is_cash_payment else ticket.get("payment_method", "ONLINE"),
-                "payment_status": "PAID" if final_cash_done else (ticket.get("payment_status") or (booking.get("payment_status") if booking else "PENDING")),
-                "cash_status": final_cash_status,
-                "cash_collected": final_cash_done,
-                "cash_collect_done": final_cash_done,
-                "cash_collected_display": final_cash_display,
-                "cash_collected_by": scanner_email if final_cash_done else None,
-                "cash_collected_by_name": scanner_name if final_cash_done else None,
-                "cash_collected_at": time_iso if final_cash_done else None,
-            }
-
         scanner_disp = (
             ticket.get("checked_in_by_name")
             or ticket.get("checked_in_by")

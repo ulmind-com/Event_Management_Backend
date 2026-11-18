@@ -2254,14 +2254,47 @@ async def update_event_attendance(
     matched_type = "booking"
 
     if b:
+        is_cash_booking = (
+            str(b.get("payment_method", "")).upper() in ["CASH", "OFFLINE"]
+            or bool(b.get("cash_payment"))
+        )
+        if not is_present:
+            update_fields["admitted_count"] = 0
+            update_fields["checked_in_by"] = None
+            update_fields["scanned_by"] = None
+            if is_cash_booking:
+                update_fields["cash_status"] = "PENDING"
+                update_fields["cash_collected"] = False
+                update_fields["cash_collect_done"] = False
+                update_fields["payment_status"] = "PENDING"
+
         await booking_collection.update_one({"_id": b["_id"]}, {"$set": update_fields})
+
         # Sync with issued tickets
+        t_update: Dict[str, Any] = {
+            "is_checked_in": is_present,
+            "check_in_time": now if is_present else None,
+            "checked_in_at": now if is_present else None,
+            "status": "USED" if is_present else "ACTIVE",
+        }
+        if not is_present:
+            t_update["admitted_count"] = 0
+            t_update["checked_in_by"] = None
+            t_update["checked_in_by_name"] = None
+            t_update["scanned_by"] = None
+            if is_cash_booking:
+                t_update["cash_status"] = "PENDING"
+                t_update["cash_collected"] = False
+                t_update["cash_collect_done"] = False
+                t_update["payment_status"] = "PENDING"
+        else:
+            t_update["admitted_count"] = int(b.get("quantity") or 1)
+            t_update["checked_in_by"] = admin_email
+            t_update["checked_in_by_name"] = "Admin"
+
         await issued_ticket_collection.update_many(
             {"booking_id": str(b["_id"])},
-            {"$set": {
-                "is_checked_in": is_present,
-                "check_in_time": now if is_present else None
-            }}
+            {"$set": t_update}
         )
         target_doc = b
     else:

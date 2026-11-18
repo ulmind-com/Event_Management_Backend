@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from bson import ObjectId
@@ -12,6 +13,7 @@ from app.schemas.booking import TicketScanReq, CashCollectReq
 from app.services.ticket import TicketService
 from datetime import datetime, timezone
 
+logger = logging.getLogger("eventora.routes.admin_checkin")
 router = APIRouter()
 security = HTTPBearer()
 
@@ -379,33 +381,15 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
     if ticket.get("is_checked_in") and current_admitted == 0:
         current_admitted = quantity
 
-    # If already fully used, reject immediately
-    if ticket.get("is_checked_in") or current_admitted >= quantity:
-        scanner_disp = (
-            ticket.get("checked_in_by_name")
-            or ticket.get("checked_in_by")
-            or (booking.get("checked_in_by_name") if booking else None)
-            or (booking.get("checked_in_by") if booking else "Gate Scanner")
-        )
-        time_val = ticket.get("check_in_time") or ticket.get("checked_in_at")
-        time_str = f" at {time_val}" if time_val else ""
-        raise HTTPException(
-            status_code=400,
-            detail=f"Ticket Already Scanned / Already Checked In! All {quantity} person(s) have already entered (admitted by {scanner_disp}{time_str}). Duplicate entry rejected."
-        )
-
-    # Determine how many persons to admit this scan
-    remaining = quantity - current_admitted
-    to_admit = int(req.admit_count) if (req.admit_count and req.admit_count > 0) else remaining
-    to_admit = min(to_admit, remaining)
-    
-    new_admitted = current_admitted + to_admit
-    is_now_fully_used = (new_admitted >= quantity)
     now_utc = datetime.now(timezone.utc)
-    
     scanner_email = (scanner.get("email") or "volunteer").strip().lower()
     scanner_name = scanner.get("full_name") or scanner.get("name") or (scanner_email.split("@")[0].title() if scanner_email else "Volunteer")
     scanner_role = str(scanner.get("role", "VOLUNTEER")).upper()
+
+    holder_name = ticket.get("holder_name") or (booking.get("user_name") if booking else "Guest")
+    holder_email = ticket.get("holder_email") or (booking.get("user_email") if booking else "")
+    b_ref = booking.get("booking_reference") if booking else ticket.get("booking_ref")
+    seats = ticket.get("seats") or (booking.get("seats") if booking else [])
 
     # Cash payment evaluation
     is_cash_payment = (
@@ -436,6 +420,73 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
         or ticket.get("total_booking_amount")
         or 0.0
     )
+
+    final_cash_done = bool(should_collect_cash or already_cash_done)
+    final_cash_status = "COLLECTED" if final_cash_done else (ticket.get("cash_status") or (booking.get("cash_status") if booking else ("PENDING" if is_cash_payment else None)))
+    final_cash_display = "Cash Collect Done" if final_cash_done else ("Cash Pending" if is_cash_payment else None)
+
+    # If already fully used, check if this same scanner admitted it (idempotent retry/double-click)
+    if ticket.get("is_checked_in") or current_admitted >= quantity:
+        prev_scanner = (
+            ticket.get("checked_in_by")
+            or ticket.get("scanned_by")
+            or (booking.get("checked_in_by") if booking else None)
+            or (booking.get("scanned_by") if booking else "")
+        ).strip().lower()
+
+        # If this same volunteer or scanner admitted it, return idempotent success!
+        if prev_scanner and prev_scanner == scanner_email:
+            check_in_time_val = ticket.get("check_in_time") or ticket.get("checked_in_at") or now_utc
+            time_iso = check_in_time_val.isoformat() if hasattr(check_in_time_val, "isoformat") else str(check_in_time_val)
+            return {
+                "success": True,
+                "already_admitted": True,
+                "message": f"ENTRY ALREADY RECORDED — All {quantity} attendee(s) were admitted by you ({scanner_name}).",
+                "ticket_ref": ticket["ticket_ref"],
+                "booking_reference": b_ref,
+                "holder_name": holder_name,
+                "holder_email": holder_email,
+                "admitted_now": 0,
+                "total_admitted": quantity,
+                "total_quantity": quantity,
+                "remaining": 0,
+                "is_fully_used": True,
+                "checked_in_by": scanner_email,
+                "checked_in_by_name": scanner_name,
+                "checked_in_by_role": scanner_role,
+                "check_in_time": time_iso,
+                "checked_in_at": time_iso,
+                "payment_method": "CASH" if is_cash_payment else ticket.get("payment_method", "ONLINE"),
+                "payment_status": "PAID" if final_cash_done else (ticket.get("payment_status") or (booking.get("payment_status") if booking else "PENDING")),
+                "cash_status": final_cash_status,
+                "cash_collected": final_cash_done,
+                "cash_collect_done": final_cash_done,
+                "cash_collected_display": final_cash_display,
+                "cash_collected_by": scanner_email if final_cash_done else None,
+                "cash_collected_by_name": scanner_name if final_cash_done else None,
+                "cash_collected_at": time_iso if final_cash_done else None,
+            }
+
+        scanner_disp = (
+            ticket.get("checked_in_by_name")
+            or ticket.get("checked_in_by")
+            or (booking.get("checked_in_by_name") if booking else None)
+            or (booking.get("checked_in_by") if booking else "Gate Scanner")
+        )
+        time_val = ticket.get("check_in_time") or ticket.get("checked_in_at")
+        time_str = f" at {time_val}" if time_val else ""
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ticket Already Scanned / Already Checked In! All {quantity} person(s) have already entered (admitted by {scanner_disp}{time_str}). Duplicate entry rejected."
+        )
+
+    # Determine how many persons to admit this scan
+    remaining = quantity - current_admitted
+    to_admit = int(req.admit_count) if (req.admit_count and req.admit_count > 0) else remaining
+    to_admit = min(to_admit, remaining)
+    
+    new_admitted = current_admitted + to_admit
+    is_now_fully_used = (new_admitted >= quantity)
 
     # Atomic update on ticket
     ticket_update_fields: Dict[str, Any] = {
@@ -646,10 +697,6 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
     except Exception:
         pass
 
-    final_cash_done = bool(should_collect_cash or already_cash_done)
-    final_cash_status = "COLLECTED" if final_cash_done else (ticket.get("cash_status") or (booking.get("cash_status") if booking else ("PENDING" if is_cash_payment else None)))
-    final_cash_display = "Cash Collect Done" if final_cash_done else ("Cash Pending" if is_cash_payment else None)
-
     # Real-time broadcast across Admin Panels, Event Monitors & Volunteers
     ev_id = str(ticket.get("event_id") or (booking.get("event_id") if booking else ""))
     if ev_id:
@@ -676,10 +723,16 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
                 "seats": seats,
                 "payment_method": ticket.get("payment_method") or (booking.get("payment_method") if booking else "ONLINE")
             }
-            await ws_manager.broadcast_to_event(ev_id, rt_payload)
-            await event_bus.publish("admin:events", "TICKET_CHECKED_IN", rt_payload)
-            await event_bus.publish(f"event:{ev_id}", "TICKET_CHECKED_IN", rt_payload)
-            await event_bus.publish("admin:volunteers", "VOLUNTEER_ENTRY", rt_payload)
+            try:
+                await ws_manager.broadcast_to_event(ev_id, rt_payload)
+            except Exception as ex:
+                logger.warning(f"Error in websocket broadcast: {ex}")
+            try:
+                await event_bus.publish("admin:events", "TICKET_CHECKED_IN", rt_payload)
+                await event_bus.publish(f"event:{ev_id}", "TICKET_CHECKED_IN", rt_payload)
+                await event_bus.publish("admin:volunteers", "VOLUNTEER_ENTRY", rt_payload)
+            except Exception as ex:
+                logger.warning(f"Error in event_bus publish: {ex}")
         except Exception as e:
             logger.warning(f"Error publishing check-in real-time event: {e}")
 

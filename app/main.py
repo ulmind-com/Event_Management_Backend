@@ -1,12 +1,16 @@
 from app.services.expiry_worker import ExpiryWorker
 from app.services.notification_scheduler import NotificationSchedulerWorker
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.core.config import settings
 from app.api.api import api_router
+import logging
+
+main_logger = logging.getLogger("eventora.main")
 
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -20,6 +24,21 @@ app = FastAPI(
 # Rate limit error handler
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+@app.exception_handler(Exception)
+async def global_all_exception_handler(request: Request, exc: Exception):
+    import traceback
+    main_logger.error(f"Global unhandled error on {request.url}: {exc}\n{traceback.format_exc()}")
+    origin = request.headers.get("origin") or "*"
+    response = JSONResponse(
+        status_code=500,
+        content={"detail": f"Server processing error: {str(exc)}"}
+    )
+    response.headers["Access-Control-Allow-Origin"] = origin
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 # CORS Policy (Allowed for ALL Origins)
 app.add_middleware(

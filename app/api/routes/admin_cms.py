@@ -664,6 +664,12 @@ async def upload_sponsor_popup_image(
 # ════════════════════════════════════════
 def normalize_event_categories(doc: dict) -> dict:
     raw_cats = doc.get("categories") or []
+    if isinstance(raw_cats, str):
+        try:
+            import json
+            raw_cats = json.loads(raw_cats)
+        except Exception:
+            raw_cats = []
     norm_cats = []
     seen = set()
     for cat in raw_cats:
@@ -677,7 +683,7 @@ def normalize_event_categories(doc: dict) -> dict:
             norm_cats.append({
                 "name": name,
                 "price": max(0.0, p),
-                "capacity": int(c) if c is not None else None,
+                "capacity": int(c) if c is not None and str(c).strip() != "" else None,
                 "description": cat.get("description")
             })
         elif isinstance(cat, str) and cat.strip():
@@ -702,6 +708,9 @@ def normalize_event_categories(doc: dict) -> dict:
     doc["category"] = norm_cats[0]["name"]
     if not doc.get("price") and norm_cats[0]["price"] > 0.0:
         doc["price"] = norm_cats[0]["price"]
+    total_cat_cap = sum(c["capacity"] for c in norm_cats if c.get("capacity"))
+    if total_cat_cap > 0 and (not doc.get("capacity") or doc.get("capacity") == 0):
+        doc["capacity"] = total_cat_cap
     return doc
 
 @router.get("/events", tags=["admin-events"])

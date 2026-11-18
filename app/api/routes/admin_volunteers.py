@@ -38,8 +38,14 @@ class SingleVolunteerInput(BaseModel):
     password: Optional[str] = None
 
 
+class VolunteerAssignmentItem(BaseModel):
+    email: EmailStr
+    role: Optional[str] = "Entrance Gate Scanner"
+
+
 class AssignEventVolunteersReq(BaseModel):
     volunteer_emails: Optional[List[EmailStr]] = []
+    assignments: Optional[List[VolunteerAssignmentItem]] = []
     new_volunteers: Optional[List[SingleVolunteerInput]] = []
     default_role: Optional[str] = "Entrance Gate Scanner"
 
@@ -250,21 +256,24 @@ async def get_event_volunteers(event_id: str, admin: dict = Depends(get_current_
         raise HTTPException(status_code=404, detail="Event not found")
 
     assigned = event.get("volunteers") or []
-    assigned_emails = {str(v.get("email", "")).lower() for v in assigned if v.get("email")}
+    assigned_map = {str(v.get("email", "")).lower().strip(): v for v in assigned if v.get("email")}
+    assigned_emails = set(assigned_map.keys())
 
     # Fetch all volunteers registered in system
     all_vols = await user_collection.find({"role": "VOLUNTEER"}).to_list(length=1000)
     available = []
     for v in all_vols:
-        v_email = str(v.get("email", "")).lower()
+        v_email = str(v.get("email", "")).lower().strip()
         if not v_email:
             continue
+        curr_assigned = assigned_map.get(v_email)
         available.append({
             "user_id": str(v["_id"]),
             "email": v_email,
-            "name": v.get("name") or v.get("full_name") or "",
-            "phone": v.get("phone") or v.get("phone_number") or "",
+            "name": v.get("name") or v.get("full_name") or (curr_assigned.get("name") if curr_assigned else "") or "",
+            "phone": v.get("phone") or v.get("phone_number") or (curr_assigned.get("phone") if curr_assigned else "") or "",
             "is_assigned": v_email in assigned_emails,
+            "assigned_role": curr_assigned.get("role") if curr_assigned else None,
         })
 
     enriched_assigned = []
@@ -527,7 +536,11 @@ async def get_event_volunteer_report(event_id: str, admin: dict = Depends(get_cu
             "total_entries": v["total_entries"],
             "online_payments": v["online_payments"],
             "cash_passes": v["cash_payments"],
-            "cash_amount_due": v["cash_collected"]
+            "cash_pass_count": v["cash_payments"],
+            "cash_collected": v["cash_collected"],
+            "cash_amount_due": v["cash_collected"],
+            "cash_status": "PENDING" if v["cash_collected"] > 0 else "SETTLED",
+            "status": "PENDING" if v["cash_collected"] > 0 else "SETTLED",
         }
         for v in vol_list
         if v["cash_collected"] > 0 or v["cash_payments"] > 0 or v["total_entries"] > 0
@@ -577,6 +590,14 @@ async def assign_event_volunteers(
     # 1. Process volunteer_emails (existing or created on the fly)
     target_emails = [str(e).lower().strip() for e in (req.volunteer_emails or []) if e]
 
+    role_by_email: Dict[str, str] = {}
+    for item in (req.assignments or []):
+        em = str(item.email).lower().strip()
+        if em:
+            target_emails.append(em)
+            if item.role:
+                role_by_email[em] = item.role.strip()
+
     # 2. Also merge new_volunteers
     for nv in (req.new_volunteers or []):
         nv_email = str(nv.email).lower().strip()
@@ -584,6 +605,8 @@ async def assign_event_volunteers(
             continue
 
         target_emails.append(nv_email)
+        if nv.role:
+            role_by_email[nv_email] = nv.role.strip()
         # Ensure user exists in user_collection
         user = await user_collection.find_one({"email": nv_email})
         pwd = nv.password or generate_volunteer_password()
@@ -667,7 +690,7 @@ async def assign_event_volunteers(
 
         user_name = user.get("name") or user.get("full_name") or ""
         user_phone = user.get("phone") or user.get("phone_number") or ""
-        assigned_role = req.default_role or "Entrance Gate Scanner"
+        assigned_role = role_by_email.get(email_clean) or req.default_role or "Entrance Gate Scanner"
 
         # Update event record
         vol_entry = {

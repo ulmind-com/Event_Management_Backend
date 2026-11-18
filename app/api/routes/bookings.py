@@ -377,7 +377,22 @@ async def create_booking(
                     raise HTTPException(status_code=404, detail=f"Ticket tier not found for category '{it_category}'")
 
             final_cat = it_category or item_ticket.get("category") or item_ticket.get("type") or "General"
-            unit_p = float(item_ticket.get("price", 0.0))
+            
+            # Authoritative dynamic price from event.categories takes absolute precedence
+            cat_match = next((c for c in event.get("categories", []) if isinstance(c, dict) and (c.get("name") or "").strip().lower() == final_cat.strip().lower()), None)
+            if cat_match and cat_match.get("price") is not None:
+                unit_p = float(cat_match["price"])
+                # Auto-sync stale ticket_collection tier price
+                if item_ticket and float(item_ticket.get("price", 0.0)) != unit_p and item_ticket.get("_id"):
+                    await ticket_collection.update_one(
+                        {"_id": item_ticket["_id"]},
+                        {"$set": {"price": unit_p, "updated_at": datetime.now(timezone.utc)}}
+                    )
+            elif item_ticket and item_ticket.get("price") is not None:
+                unit_p = float(item_ticket.get("price", 0.0))
+            else:
+                unit_p = float(event.get("price") or 0.0)
+
             subtotal = unit_p * it_qty
             total_amount += subtotal
             total_quantity += it_qty

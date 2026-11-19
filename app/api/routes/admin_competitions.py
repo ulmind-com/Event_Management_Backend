@@ -50,6 +50,8 @@ def normalize_competition_categories(comp_dict: dict) -> dict:
     """
     Ensures categories list is populated, normalized with age_limit strings,
     and backwards compatible with category string.
+    Supports open-age categories (when min and max age are blank/omitted)
+    without forcing hardcoded age constraints.
     """
     raw_categories = comp_dict.get("categories") or []
     normalized_cats = []
@@ -73,14 +75,48 @@ def normalize_competition_categories(comp_dict: dict) -> dict:
         if not c_name:
             continue
 
-        if (min_a is None or max_a is None) and age_lim:
-            p_min, p_max = parse_age_limit(age_lim)
-            if min_a is None and p_min is not None:
-                min_a = p_min
-            if max_a is None and p_max is not None:
-                max_a = p_max
+        if min_a == "" or min_a is False:
+            min_a = None
+        if max_a == "" or max_a is False:
+            max_a = None
+        if min_a is not None:
+            try:
+                min_a = int(min_a)
+            except (ValueError, TypeError):
+                min_a = None
+        if max_a is not None:
+            try:
+                max_a = int(max_a)
+            except (ValueError, TypeError):
+                max_a = None
 
-        if not age_lim:
+        is_open = False
+        if isinstance(age_lim, str):
+            al_lower = age_lim.strip().lower()
+            if any(w in al_lower for w in ["open", "all ages", "any", "no limit"]):
+                is_open = True
+
+        # Detect legacy artifact where Group was defaulted to 8-14
+        if c_name.lower() == "group" and min_a == 8 and max_a == 14:
+            if not desc or not any(w in str(desc).lower() for w in ["year", "yr", "age"]):
+                is_open = True
+
+        if is_open:
+            min_a = None
+            max_a = None
+            age_lim = "Open for all ages"
+        elif min_a is None and max_a is None and not age_lim:
+            min_a = None
+            max_a = None
+            age_lim = "Open for all ages"
+        else:
+            if (min_a is None or max_a is None) and age_lim:
+                p_min, p_max = parse_age_limit(age_lim)
+                if min_a is None and p_min is not None:
+                    min_a = p_min
+                if max_a is None and p_max is not None:
+                    max_a = p_max
+
             if min_a is not None and max_a is not None:
                 age_lim = f"{min_a}-{max_a} years"
             elif min_a is not None:
@@ -400,46 +436,7 @@ async def update_competition(comp_id: str, req: CompetitionUpdateReq, admin: dic
 
     # Handle categories normalization
     if "categories" in update_data:
-        normalized_cats = []
-        for cat in update_data["categories"] or []:
-            if isinstance(cat, dict):
-                c_name = str(cat.get("name") or "").strip()
-                min_a = cat.get("min_age")
-                max_a = cat.get("max_age")
-                age_lim = cat.get("age_limit")
-                desc = cat.get("description")
-            elif hasattr(cat, "name"):
-                c_name = str(getattr(cat, "name") or "").strip()
-                min_a = getattr(cat, "min_age", None)
-                max_a = getattr(cat, "max_age", None)
-                age_lim = getattr(cat, "age_limit", None)
-                desc = getattr(cat, "description", None)
-            else:
-                continue
-
-            if not c_name:
-                continue
-
-            if not age_lim:
-                if min_a is not None and max_a is not None:
-                    age_lim = f"{min_a}-{max_a} years"
-                elif min_a is not None:
-                    age_lim = f"{min_a}+ years"
-                elif max_a is not None:
-                    age_lim = f"Up to {max_a} years"
-                else:
-                    age_lim = "Open for all ages"
-
-            normalized_cats.append({
-                "name": c_name,
-                "min_age": min_a,
-                "max_age": max_a,
-                "age_limit": age_lim,
-                "description": desc,
-            })
-        update_data["categories"] = normalized_cats
-        if normalized_cats and "category" not in update_data:
-            update_data["category"] = normalized_cats[0]["name"]
+        normalize_competition_categories(update_data)
 
     # Handle submission field toggles / formats update
     submission_keys = [
@@ -470,6 +467,26 @@ async def update_competition(comp_id: str, req: CompetitionUpdateReq, admin: dic
     if update_data.get("min_age") is not None and update_data.get("max_age") is not None:
         if update_data["min_age"] > update_data["max_age"]:
             raise HTTPException(status_code=400, detail="Minimum age cannot be greater than maximum age.")
+
+    # If min_age or max_age updated at top level, sync into categories if categories was not explicitly updated
+    if ("min_age" in update_data or "max_age" in update_data) and "categories" not in update_data:
+        existing_c = await competition_collection.find_one({"_id": c_id})
+        if existing_c and existing_c.get("categories"):
+            cats = [dict(c) for c in existing_c["categories"] if isinstance(c, dict)]
+            if len(cats) == 1:
+                new_min = update_data.get("min_age", existing_c.get("min_age"))
+                new_max = update_data.get("max_age", existing_c.get("max_age"))
+                cats[0]["min_age"] = new_min
+                cats[0]["max_age"] = new_max
+                if new_min is not None and new_max is not None:
+                    cats[0]["age_limit"] = f"{new_min}-{new_max} years"
+                elif new_min is not None:
+                    cats[0]["age_limit"] = f"{new_min}+ years"
+                elif new_max is not None:
+                    cats[0]["age_limit"] = f"Up to {new_max} years"
+                else:
+                    cats[0]["age_limit"] = "Open for all ages"
+                update_data["categories"] = cats
         
     if "audience_voting_enabled" in update_data:
         update_data["voting_status"] = "OPEN" if update_data["audience_voting_enabled"] else "CLOSED"

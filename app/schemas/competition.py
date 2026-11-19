@@ -113,15 +113,44 @@ class CompetitionCategory(BaseModel):
             min_a = data.get("min_age")
             max_a = data.get("max_age")
             age_lim = data.get("age_limit")
-            if (min_a is None or max_a is None) and age_lim:
-                p_min, p_max = parse_age_limit(age_lim)
-                if min_a is None and p_min is not None:
-                    data["min_age"] = p_min
-                    min_a = p_min
-                if max_a is None and p_max is not None:
-                    data["max_age"] = p_max
-                    max_a = p_max
-            if not age_lim:
+            c_name = str(data.get("name") or "").strip()
+            desc = data.get("description")
+
+            if min_a == "" or min_a is False:
+                min_a = None
+                data["min_age"] = None
+            if max_a == "" or max_a is False:
+                max_a = None
+                data["max_age"] = None
+
+            is_open = False
+            if isinstance(age_lim, str):
+                al_lower = age_lim.strip().lower()
+                if any(w in al_lower for w in ["open", "all ages", "any", "no limit"]):
+                    is_open = True
+
+            # Detect legacy bug where Group was mistakenly defaulted to 8-14
+            if c_name.lower() == "group" and min_a == 8 and max_a == 14:
+                if not desc or not any(w in str(desc).lower() for w in ["year", "yr", "age"]):
+                    is_open = True
+
+            if is_open:
+                data["min_age"] = None
+                data["max_age"] = None
+                data["age_limit"] = "Open for all ages"
+            elif min_a is None and max_a is None and not age_lim:
+                data["min_age"] = None
+                data["max_age"] = None
+                data["age_limit"] = "Open for all ages"
+            else:
+                if (min_a is None or max_a is None) and age_lim:
+                    p_min, p_max = parse_age_limit(age_lim)
+                    if min_a is None and p_min is not None:
+                        data["min_age"] = p_min
+                        min_a = p_min
+                    if max_a is None and p_max is not None:
+                        data["max_age"] = p_max
+                        max_a = p_max
                 if min_a is not None and max_a is not None:
                     data["age_limit"] = f"{min_a}-{max_a} years"
                 elif min_a is not None:

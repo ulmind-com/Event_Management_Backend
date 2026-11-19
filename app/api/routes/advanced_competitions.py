@@ -244,51 +244,74 @@ async def check_eligibility(
     age_limit_str = None
 
     if target_category:
+        c_name = str(target_category.get("name") or "").strip()
         min_age = target_category.get("min_age")
         max_age = target_category.get("max_age")
         age_limit_str = target_category.get("age_limit")
-        if (min_age is None or max_age is None) and age_limit_str:
-            p_min, p_max = parse_age_limit(age_limit_str)
-            if min_age is None:
-                min_age = p_min
-            if max_age is None:
-                max_age = p_max
-        if not age_limit_str:
-            if min_age is not None and max_age is not None:
-                age_limit_str = f"{min_age}-{max_age} years"
-            elif min_age is not None:
-                age_limit_str = f"{min_age}+ years"
-            elif max_age is not None:
-                age_limit_str = f"Up to {max_age} years"
-            else:
-                age_limit_str = "Open for all ages"
+        desc = target_category.get("description")
+
+        is_open = False
+        if isinstance(age_limit_str, str) and any(w in age_limit_str.lower() for w in ["open", "all ages", "any", "no limit"]):
+            is_open = True
+        if c_name.lower() == "group" and min_age == 8 and max_age == 14:
+            if not desc or not any(w in str(desc).lower() for w in ["year", "yr", "age"]):
+                is_open = True
+
+        if is_open or (min_age is None and max_age is None):
+            min_age = None
+            max_age = None
+            age_limit_str = "Open for all ages"
+        else:
+            if (min_age is None or max_age is None) and age_limit_str:
+                p_min, p_max = parse_age_limit(age_limit_str)
+                if min_age is None:
+                    min_age = p_min
+                if max_age is None:
+                    max_age = p_max
+            if not age_limit_str:
+                if min_age is not None and max_age is not None:
+                    age_limit_str = f"{min_age}-{max_age} years"
+                elif min_age is not None:
+                    age_limit_str = f"{min_age}+ years"
+                elif max_age is not None:
+                    age_limit_str = f"Up to {max_age} years"
+                else:
+                    age_limit_str = "Open for all ages"
     else:
         min_age = comp.get("min_age")
         max_age = comp.get("max_age")
         age_limit_str = comp.get("age_limit")
-        if (min_age is None or max_age is None) and age_limit_str:
-            p_min, p_max = parse_age_limit(age_limit_str)
-            if min_age is None:
-                min_age = p_min
-            if max_age is None:
-                max_age = p_max
-        if not age_limit_str:
-            if min_age is not None and max_age is not None:
-                age_limit_str = f"{min_age}-{max_age} years"
-            elif min_age is not None:
-                age_limit_str = f"{min_age}+ years"
-            elif max_age is not None:
-                age_limit_str = f"Up to {max_age} years"
-            else:
-                age_limit_str = "Open for all ages"
+        is_open = False
+        if isinstance(age_limit_str, str) and any(w in age_limit_str.lower() for w in ["open", "all ages", "any", "no limit"]):
+            is_open = True
+        if is_open or (min_age is None and max_age is None):
+            min_age = None
+            max_age = None
+            age_limit_str = "Open for all ages"
+        else:
+            if (min_age is None or max_age is None) and age_limit_str:
+                p_min, p_max = parse_age_limit(age_limit_str)
+                if min_age is None:
+                    min_age = p_min
+                if max_age is None:
+                    max_age = p_max
+            if not age_limit_str:
+                if min_age is not None and max_age is not None:
+                    age_limit_str = f"{min_age}-{max_age} years"
+                elif min_age is not None:
+                    age_limit_str = f"{min_age}+ years"
+                elif max_age is not None:
+                    age_limit_str = f"Up to {max_age} years"
+                else:
+                    age_limit_str = "Open for all ages"
 
     cat_display_name = target_category.get("name") if target_category else comp.get("category", "General")
 
-    if min_age is None and max_age is None and not comp_categories:
+    if min_age is None and max_age is None:
         return {
             "eligible": True,
             "status": "ELIGIBLE",
-            "reason": "User is eligible.",
+            "reason": f"Category '{cat_display_name}' is open for all ages.",
             "category": cat_display_name,
             "age_limit": "Open for all ages",
             "registration_status": reg_lifecycle["registration_status"],
@@ -350,9 +373,20 @@ async def check_eligibility(
     for cat in comp_categories:
         if not isinstance(cat, dict):
             continue
+        c_name = str(cat.get("name") or "").strip()
         c_min = cat.get("min_age")
         c_max = cat.get("max_age")
         c_lim = cat.get("age_limit")
+        c_desc = cat.get("description")
+        is_open = False
+        if isinstance(c_lim, str) and any(w in c_lim.lower() for w in ["open", "all ages", "any", "no limit"]):
+            is_open = True
+        if c_name.lower() == "group" and c_min == 8 and c_max == 14:
+            if not c_desc or not any(w in str(c_desc).lower() for w in ["year", "yr", "age"]):
+                is_open = True
+        if is_open or (c_min is None and c_max is None):
+            eligible_categories.append(cat.get("name"))
+            continue
         if (c_min is None or c_max is None) and c_lim:
             p_min, p_max = parse_age_limit(c_lim)
             if c_min is None:
@@ -551,6 +585,7 @@ async def register_competition(
     if user_role not in ["JUDGE", "ADMIN", "SUPER_ADMIN", "VOLUNTEER"]:
         is_completed, missing = check_profile_completion(user)
         if not is_completed:
+            await IdempotencyManager.fail(clean_idem_key, "Profile incomplete")
             raise HTTPException(
                 status_code=403,
                 detail=f"Registration incomplete. Please complete your profile details first (Missing: {', '.join(missing)})."
@@ -564,6 +599,7 @@ async def register_competition(
         user=user
     )
     if not eligibility.get("eligible"):
+        await IdempotencyManager.fail(clean_idem_key, str(eligibility.get("reason")))
         raise HTTPException(status_code=403, detail=eligibility.get("reason"))
 
     calc_age = eligibility.get("calculated_age") if eligibility.get("calculated_age") is not None else user.get("age")

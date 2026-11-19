@@ -205,14 +205,95 @@ def normalize_submission_settings(data: Dict[str, Any], is_update: bool = False)
     return data
 
 
+def sanitize_competition_categories(comp: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Sanitizes competition categories:
+    - Normalizes open-age categories (when min and max age are blank/omitted) to 'Open for all ages'.
+    - Eliminates legacy artifacts where categories (e.g. 'Group') were defaulted to '8-14'
+      by old admin defaults.
+    - Accurately builds age_limit labels from min_age and max_age.
+    """
+    if not comp or not isinstance(comp, dict):
+        return comp
+
+    cats = comp.get("categories")
+    if not isinstance(cats, list) or not cats:
+        return comp
+
+    sanitized = []
+    for cat in cats:
+        if not isinstance(cat, dict):
+            sanitized.append(cat)
+            continue
+        c = dict(cat)
+        c_name = str(c.get("name") or "").strip()
+        min_a = c.get("min_age")
+        max_a = c.get("max_age")
+        age_lim = c.get("age_limit")
+        desc = c.get("description")
+
+        if min_a == "" or min_a is False:
+            min_a = None
+        if max_a == "" or max_a is False:
+            max_a = None
+        if min_a is not None:
+            try:
+                min_a = int(min_a)
+            except (ValueError, TypeError):
+                min_a = None
+        if max_a is not None:
+            try:
+                max_a = int(max_a)
+            except (ValueError, TypeError):
+                max_a = None
+
+        is_open = False
+        if isinstance(age_lim, str):
+            al_lower = age_lim.strip().lower()
+            if any(w in al_lower for w in ["open", "all ages", "any", "no limit"]):
+                is_open = True
+
+        # Detect legacy artifact where Group was defaulted to 8-14
+        if c_name.lower() == "group" and min_a == 8 and max_a == 14:
+            if not desc or not any(w in str(desc).lower() for w in ["year", "yr", "age"]):
+                is_open = True
+
+        if is_open:
+            c["min_age"] = None
+            c["max_age"] = None
+            c["age_limit"] = "Open for all ages"
+        elif min_a is None and max_a is None and not age_lim:
+            c["min_age"] = None
+            c["max_age"] = None
+            c["age_limit"] = "Open for all ages"
+        else:
+            c["min_age"] = min_a
+            c["max_age"] = max_a
+            if min_a is not None and max_a is not None:
+                c["age_limit"] = f"{min_a}-{max_a} years"
+            elif min_a is not None:
+                c["age_limit"] = f"{min_a}+ years"
+            elif max_a is not None:
+                c["age_limit"] = f"Up to {max_a} years"
+            else:
+                c["age_limit"] = "Open for all ages"
+
+        sanitized.append(c)
+
+    comp["categories"] = sanitized
+    return comp
+
+
 def enrich_competition_submission_config(comp: Dict[str, Any]) -> Dict[str, Any]:
     """
     Ensures that any competition document read from MongoDB has the complete,
     consistent submission format configuration, even if it was created before
-    explicit submission toggles were added.
+    explicit submission toggles were added. Also sanitizes category age limits.
     """
     if not comp or not isinstance(comp, dict):
         return comp
+
+    sanitize_competition_categories(comp)
 
     if "submission_format_config" in comp and comp["submission_format_config"] is not None:
         cfg = comp["submission_format_config"]

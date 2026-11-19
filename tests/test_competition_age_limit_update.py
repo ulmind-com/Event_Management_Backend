@@ -1,6 +1,6 @@
 import pytest
 from httpx import AsyncClient, ASGITransport
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from motor.motor_asyncio import AsyncIOMotorClient
 from app.core.config import settings
 from app.core.security import create_access_token
@@ -19,17 +19,18 @@ async def test_competition_age_limit_create_and_update():
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        now = datetime.now(timezone.utc)
         # 1. Create Competition with initial age limit: min 12, max 18
         create_payload = {
             "title": "Age Limit Test Competition",
             "description": "Testing updating of age limits",
             "category": "Singing",
             "type": "General",
-            "start_date": "2026-11-01T00:00:00Z",
-            "end_date": "2026-11-10T00:00:00Z",
-            "registration_start_date": "2026-10-01T00:00:00Z",
-            "registration_deadline": "2026-10-30T00:00:00Z",
-            "submission_deadline": "2026-11-05T00:00:00Z",
+            "start_date": (now - timedelta(days=1)).isoformat(),
+            "end_date": (now + timedelta(days=30)).isoformat(),
+            "registration_start_date": (now - timedelta(days=1)).isoformat(),
+            "registration_deadline": (now + timedelta(days=20)).isoformat(),
+            "submission_deadline": (now + timedelta(days=25)).isoformat(),
             "min_age": 12,
             "max_age": 18,
             "audience_voting_enabled": True,
@@ -143,7 +144,8 @@ async def test_competition_age_limit_create_and_update():
         res_elig2 = await ac.get(f"/api/v1/competitions/{comp_id}/eligibility", headers=user_headers)
         assert res_elig2.status_code == 200
         assert res_elig2.json()["eligible"] is False
-        assert "Minimum age requirement is 25" in res_elig2.json()["reason"]
+        assert "Minimum age requirement" in res_elig2.json()["reason"]
+        assert "25" in res_elig2.json()["reason"]
 
         # Clean up
         await db["users"].delete_many({"email": test_user_email})

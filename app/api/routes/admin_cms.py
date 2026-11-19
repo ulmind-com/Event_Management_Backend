@@ -1040,20 +1040,64 @@ async def upload_partner_logo(
     return {"url": url, "logo_url": url, "filename": file.filename}
 
 # ════════════════════════════════════════
-# GRAND SPONSOR POP-UP (WEBSITE OPENING MODAL)
+# GRAND SPONSOR POP-UP (WEBSITE OPENING MODAL & CAROUSEL)
 # ════════════════════════════════════════
 DEFAULT_SPONSOR_POPUP = {
     "is_enabled": False,
-    "sponsor_name": "Platinum Sponsor",
+    "title": "Official Sponsors & Grand Partners",
+    "subtitle": "Presented by our Mega Platinum Partners — Win Cash Prizes & National Recognition",
+    "show_mode": "once_per_session",  # "once_per_session", "once_per_day", "always"
+    "auto_close_seconds": 0,
+    "auto_scroll_enabled": True,
+    "auto_scroll_interval": 4,  # seconds per slide
+    "banners": [
+        {
+            "id": "sponsor_1",
+            "sponsor_name": "Red Bull",
+            "badge_text": "Grand Title Partner",
+            "title": "Red Bull Dance Your Style India",
+            "subtitle": "Fueling national breakers and street dancers across 28 cities.",
+            "banner_image_url": "https://images.unsplash.com/photo-1547153760-18fc86324498?q=80&w=1920&auto=format&fit=crop",
+            "mobile_image_url": "",
+            "cta_text": "Explore Exclusive Offer",
+            "cta_link": "/competitions",
+            "is_active": True,
+            "display_order": 1,
+        },
+        {
+            "id": "sponsor_2",
+            "sponsor_name": "Nike Dance",
+            "badge_text": "Official Apparel Partner",
+            "title": "Streetwear & Performance Collection 2026",
+            "subtitle": "Exclusive dancer footwear and gear for Upgrade Talents contenders.",
+            "banner_image_url": "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=1920&auto=format&fit=crop",
+            "mobile_image_url": "",
+            "cta_text": "Shop Partner Gear",
+            "cta_link": "/shop",
+            "is_active": True,
+            "display_order": 2,
+        },
+        {
+            "id": "sponsor_3",
+            "sponsor_name": "Pioneer DJ",
+            "badge_text": "Arena Audio Partner",
+            "title": "Pro Arena Soundstages & Battle Acoustics",
+            "subtitle": "Powering high-octane battle rhythms and national finals.",
+            "banner_image_url": "https://images.unsplash.com/photo-1509631179647-0177331693ae?q=80&w=1920&auto=format&fit=crop",
+            "mobile_image_url": "",
+            "cta_text": "View Arena Setup",
+            "cta_link": "/events",
+            "is_active": True,
+            "display_order": 3,
+        }
+    ],
+    # Legacy single banner fallback fields
+    "sponsor_name": "Red Bull",
     "badge_text": "OFFICIAL TITLE SPONSOR",
-    "title": "Grand National Championship 2026",
-    "subtitle": "Presented by our Mega Platinum Partner — Win Cash Prizes & National Recognition",
     "banner_image_url": "https://images.unsplash.com/photo-1547153760-18fc86324498?q=80&w=1920&auto=format&fit=crop",
     "mobile_image_url": "",
     "cta_text": "Explore Exclusive Offer",
     "cta_link": "/competitions",
-    "show_mode": "once_per_session",  # "once_per_session", "once_per_day", "always"
-    "auto_close_seconds": 0,
 }
 
 @router.get("/sponsor-popup", tags=["admin-cms"])
@@ -1069,6 +1113,7 @@ async def update_admin_sponsor_popup(payload: Dict[str, Any], admin=Depends(get_
         {"$set": {"sponsor_popup": payload, "updated_at": datetime.now(timezone.utc)}},
         upsert=True
     )
+    FastCache.delete("homepage")
     await log_admin_action(admin["email"], "update", "sponsor_popup")
     return {"message": "Grand sponsor popup settings updated successfully", "sponsor_popup": payload}
 

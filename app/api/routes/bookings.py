@@ -614,7 +614,13 @@ async def create_booking(
 
 @router.get("/my")
 async def get_my_bookings(current_user: dict = Depends(get_current_user)):
-    bookings = await booking_collection.find({"user_email": current_user["email"]}).sort("booked_at", -1).to_list(length=100)
+    user_email = (current_user.get("email") or "").strip()
+    bookings = await booking_collection.find({
+        "$or": [
+            {"user_email": user_email},
+            {"user_email": user_email.lower()}
+        ]
+    }).sort("booked_at", -1).to_list(length=100)
     for b in bookings:
         b["_id"] = str(b["_id"])
         if b.get("event_id") and ObjectId.is_valid(b["event_id"]):
@@ -640,13 +646,28 @@ async def get_my_bookings(current_user: dict = Depends(get_current_user)):
                     {"booking_ref": b.get("booking_reference")}
                 ]
             }).to_list(length=20)
+            all_used = False
+            if tix:
+                all_used = all(bool(t.get("is_checked_in")) or (int(t.get("admitted_count", 0)) >= int(t.get("quantity", 1)) and int(t.get("admitted_count", 0)) > 0) or t.get("status") == "USED" for t in tix)
+            if b.get("is_checked_in") or b.get("is_fully_used") or b.get("ticket_status") == "USED":
+                all_used = True
+
+            b["is_checked_in"] = all_used
+            b["is_fully_used"] = all_used
+            b["ticket_status"] = "USED" if all_used else b.get("ticket_status", "ACTIVE")
+            b["status_display"] = "ALREADY_USED" if all_used else "ACTIVE"
+            b["can_download"] = not all_used
+
             b["tickets"] = [{
                 "ticket_ref": t.get("ticket_ref"),
                 "quantity": int(t.get("quantity", b.get("quantity", 1))),
-                "admitted_count": int(t.get("admitted_count", b.get("quantity", 1) if t.get("is_checked_in") else 0)),
-                "is_checked_in": bool(t.get("is_checked_in")),
-                "status": t.get("status", "USED" if t.get("is_checked_in") else "ACTIVE"),
-                "check_in_time": t.get("check_in_time")
+                "admitted_count": int(t.get("admitted_count", b.get("quantity", 1) if (t.get("is_checked_in") or all_used) else 0)),
+                "is_checked_in": bool(t.get("is_checked_in")) or all_used,
+                "is_fully_used": bool(t.get("is_checked_in")) or all_used,
+                "status": "USED" if (bool(t.get("is_checked_in")) or all_used) else t.get("status", "ACTIVE"),
+                "status_display": "ALREADY_USED" if (bool(t.get("is_checked_in")) or all_used) else "ACTIVE",
+                "can_download": not (bool(t.get("is_checked_in")) or all_used),
+                "check_in_time": t.get("check_in_time") or b.get("checked_in_at")
             } for t in tix]
         except Exception:
             b["tickets"] = []
@@ -701,16 +722,34 @@ async def cancel_my_booking(booking_id: str, current_user: dict = Depends(get_cu
 
 @router.get("/my-tickets")
 async def get_my_tickets(current_user: dict = Depends(get_current_user)):
-    tickets = await issued_ticket_collection.find({"holder_email": current_user["email"]}).sort("issued_at", -1).to_list(length=100)
+    user_email = (current_user.get("email") or "").strip()
+    tickets = await issued_ticket_collection.find({
+        "$or": [
+            {"holder_email": user_email},
+            {"holder_email": user_email.lower()},
+            {"user_email": user_email},
+            {"user_email": user_email.lower()}
+        ]
+    }).sort("issued_at", -1).to_list(length=100)
     for t in tickets:
         t["_id"] = str(t["_id"])
         
+        # Check associated booking if ticket is not yet marked checked in
+        if not t.get("is_checked_in") and t.get("booking_id"):
+            try:
+                b_check = await booking_collection.find_one({"_id": ObjectId(t["booking_id"])})
+                if b_check and (b_check.get("is_checked_in") or b_check.get("is_fully_used") or b_check.get("ticket_status") == "USED"):
+                    t["is_checked_in"] = True
+                    t["status"] = "USED"
+            except Exception:
+                pass
+
         # Normalize quantity and admissions
         qty = int(t.get("quantity") or 1)
         admitted = int(t.get("admitted_count", 0))
         if t.get("is_checked_in") and admitted == 0:
             admitted = qty
-        is_used = bool(t.get("is_checked_in")) or (qty > 0 and admitted >= qty and admitted > 0)
+        is_used = bool(t.get("is_checked_in")) or (qty > 0 and admitted >= qty and admitted > 0) or (t.get("status") == "USED")
         
         t["quantity"] = qty
         t["admitted_count"] = admitted
@@ -718,6 +757,8 @@ async def get_my_tickets(current_user: dict = Depends(get_current_user)):
         t["is_checked_in"] = is_used
         t["is_fully_used"] = is_used
         t["status"] = "USED" if is_used else ("PARTIALLY_USED" if admitted > 0 else "ACTIVE")
+        t["status_display"] = "ALREADY_USED" if is_used else ("PARTIALLY_USED" if admitted > 0 else "ACTIVE")
+        t["can_download"] = not is_used
 
         if t.get("event_id"):
             try:
@@ -798,6 +839,12 @@ async def send_ticket_email_manual(ticket_ref: str, current_user: dict = Depends
         ticket = await issued_ticket_collection.find_one({"ticket_ref": clean_ref})
         if not ticket or (ticket.get("holder_email") != current_user["email"] and current_user.get("role") not in ["ADMIN", "SUPERADMIN"]):
             raise HTTPException(status_code=404, detail="Ticket not found")
+
+    if ticket.get("is_checked_in") or ticket.get("status") == "USED" or ticket.get("is_fully_used"):
+        raise HTTPException(
+            status_code=400,
+            detail="Ticket has already been used for gate entry. Download and re-issuance are disabled."
+        )
 
     event = None
     if ticket.get("event_id") and ObjectId.is_valid(ticket["event_id"]):

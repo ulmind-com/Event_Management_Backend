@@ -1428,6 +1428,7 @@ async def _fetch_admin_bookings(
             t_cash_status = "COLLECTED" if t_cash_done else (t.get("cash_status") or ("PENDING" if is_cash_t else None))
             t_cash_display = "Cash Collect Done" if t_cash_done else ("Cash Pending" if is_cash_t else None)
 
+            t_is_used = bool(t.get("is_checked_in")) or (t.get("status") == "USED")
             ticket_entry = {
                 "ticket_ref": t.get("ticket_ref"),
                 "holder_name": t.get("holder_name"),
@@ -1435,7 +1436,11 @@ async def _fetch_admin_bookings(
                 "ticket_type": t.get("ticket_type"),
                 "payment_status": "PAID" if t_cash_done else t.get("payment_status", "PAID"),
                 "payment_method": t.get("payment_method", "ONLINE"),
-                "is_checked_in": bool(t.get("is_checked_in")),
+                "is_checked_in": t_is_used,
+                "is_fully_used": t_is_used,
+                "status": "USED" if t_is_used else t.get("status", "ACTIVE"),
+                "status_display": "ALREADY_USED" if t_is_used else "ACTIVE",
+                "can_download": not t_is_used,
                 "check_in_time": t.get("check_in_time") or t.get("checked_in_at"),
                 "checked_in_at": t.get("checked_in_at") or t.get("check_in_time"),
                 "checked_in_by": t.get("checked_in_by") or t.get("scanned_by"),

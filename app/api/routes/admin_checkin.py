@@ -453,7 +453,10 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
         "quantity": quantity,
         "admitted_count": new_admitted,
         "is_checked_in": is_now_fully_used,
+        "is_fully_used": is_now_fully_used,
         "status": "USED" if is_now_fully_used else "PARTIALLY_USED",
+        "status_display": "ALREADY_USED" if is_now_fully_used else ("PARTIALLY_USED" if new_admitted > 0 else "ACTIVE"),
+        "can_download": not is_now_fully_used,
         "check_in_time": now_utc,
         "checked_in_at": now_utc,
         "scanned_by": scanner_email,
@@ -540,6 +543,10 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
         booking_update_fields: Dict[str, Any] = {
             "checked_in_count": new_admitted,
             "is_checked_in": is_now_fully_used,
+            "is_fully_used": is_now_fully_used,
+            "ticket_status": "USED" if is_now_fully_used else "PARTIALLY_USED",
+            "status_display": "ALREADY_USED" if is_now_fully_used else ("PARTIALLY_USED" if new_admitted > 0 else "ACTIVE"),
+            "can_download": not is_now_fully_used,
             "last_check_in_time": now_utc,
             "checked_in_at": now_utc,
             "checked_in_by": scanner_email,
@@ -688,9 +695,17 @@ async def check_in_ticket(req: TicketScanReq, scanner: dict = Depends(get_scanne
             except Exception as ex:
                 logger.warning(f"Error in websocket broadcast: {ex}")
             try:
+                await event_bus.publish("global", "TICKET_CHECKED_IN", rt_payload)
                 await event_bus.publish("admin:events", "TICKET_CHECKED_IN", rt_payload)
-                await event_bus.publish(f"event:{ev_id}", "TICKET_CHECKED_IN", rt_payload)
+                if ev_id:
+                    await event_bus.publish(f"event:{ev_id}", "TICKET_CHECKED_IN", rt_payload)
                 await event_bus.publish("admin:volunteers", "VOLUNTEER_ENTRY", rt_payload)
+                if holder_email:
+                    await event_bus.publish(f"user:{holder_email.strip().lower()}", "TICKET_CHECKED_IN", rt_payload)
+                if booking and booking.get("user_email"):
+                    b_email = booking["user_email"].strip().lower()
+                    if b_email != (holder_email or "").strip().lower():
+                        await event_bus.publish(f"user:{b_email}", "TICKET_CHECKED_IN", rt_payload)
             except Exception as ex:
                 logger.warning(f"Error in event_bus publish: {ex}")
         except Exception as e:
@@ -938,6 +953,26 @@ async def collect_ticket_cash(
             }}
         )
         
+    try:
+        from app.core.realtime_bus import event_bus
+        cash_rt_payload = {
+            "event": "cash_collected",
+            "ticket_ref": ticket["ticket_ref"],
+            "booking_reference": booking.get("booking_reference") if booking else ticket.get("booking_ref"),
+            "cash_amount": cash_amt,
+            "cash_status": "COLLECTED",
+            "collector_email": scanner_email,
+            "collector_name": scanner_name,
+            "timestamp": now_utc.isoformat()
+        }
+        await event_bus.publish("global", "CASH_COLLECTED", cash_rt_payload)
+        await event_bus.publish("admin:events", "CASH_COLLECTED", cash_rt_payload)
+        h_email = ticket.get("holder_email") or (booking.get("user_email") if booking else "")
+        if h_email:
+            await event_bus.publish(f"user:{h_email.strip().lower()}", "CASH_COLLECTED", cash_rt_payload)
+    except Exception as ex:
+        logger.warning(f"Error publishing cash collection real-time event: {ex}")
+
     return {
         "success": True,
         "message": f"Cash of ₹{cash_amt:.2f} collected successfully by {scanner_name}.",

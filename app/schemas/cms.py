@@ -45,11 +45,46 @@ class WebsiteSettingsUpdate(BaseModel):
     live_stage_title: Optional[str] = None
     live_stage_label: Optional[str] = None
     gallery_section: Optional[Dict[str, Any]] = None
+    homepage_sections: Optional[List[Dict[str, Any]]] = None
 
     @field_validator("logo_url", "favicon_url", mode="before")
     @classmethod
     def validate_cms_urls(cls, v):
         return check_no_fake_cloudinary(v)
+
+# ── Homepage Section Manager ──
+class HomepageSectionItem(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    category: str = "General"
+    section_type: str = "builtin"  # builtin, custom_banner, custom_cards, custom_split_media, custom_cta, custom_rich_text, custom_video_embed
+    is_enabled: bool = True
+    display_order: int = 1
+    badge: Optional[str] = None
+    config: Optional[Dict[str, Any]] = None
+
+class HomepageSectionsUpdateRequest(BaseModel):
+    sections: List[HomepageSectionItem]
+
+class CreateCustomSectionRequest(BaseModel):
+    name: str
+    section_type: str = "custom_banner"
+    description: Optional[str] = None
+    category: Optional[str] = "Custom Sections"
+    badge: Optional[str] = "Custom"
+    is_enabled: bool = True
+    display_order: Optional[int] = None
+    config: Dict[str, Any] = {}
+
+class UpdateSectionItemRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    is_enabled: Optional[bool] = None
+    display_order: Optional[int] = None
+    badge: Optional[str] = None
+    config: Optional[Dict[str, Any]] = None
 
 # ── Events ──
 class EventCategory(BaseModel):

@@ -18,6 +18,8 @@ from app.api.routes.admin_cms import (
     DEFAULT_SPOTLIGHT_SECTION,
     DEFAULT_PARTNERS_SECTION,
     DEFAULT_SPONSOR_POPUP,
+    DEFAULT_HOMEPAGE_SECTIONS,
+    get_or_initialize_homepage_sections,
 )
 
 router = APIRouter()
@@ -186,8 +188,15 @@ async def get_homepage():
         spotlight_section = (settings or {}).get("spotlight_section")
         partners_section = (settings or {}).get("partners_section")
         sponsor_popup = (settings or {}).get("sponsor_popup")
+        raw_sections = (settings or {}).get("homepage_sections")
+        if not raw_sections or not isinstance(raw_sections, list) or len(raw_sections) == 0:
+            homepage_sections = await get_or_initialize_homepage_sections()
+        else:
+            homepage_sections = sorted(raw_sections, key=lambda x: x.get("display_order", 999))
 
         return {
+            "homepage_sections": homepage_sections,
+            "marquee_words": (settings or {}).get("marquee_words") or ["JOIN THE MOVEMENT", "BOOK YOUR STAGE", "DANCE LOUDER"],
             "brand": {
                 "name": settings.get("brand_name") if settings else None,
                 "logo": settings.get("logo_url") if settings else None,
@@ -241,6 +250,12 @@ async def get_homepage():
     return await FastCache.cached_or_fetch("homepage", 25, _fetch)
 
 # ── Individual Section Endpoints ──
+@router.get("/homepage-sections", tags=["public"])
+async def get_public_homepage_sections():
+    """Returns homepage sections with order, category and enabled state."""
+    sections = await get_or_initialize_homepage_sections()
+    return sections
+
 @router.get("/sponsor-popup", tags=["public"])
 async def get_public_sponsor_popup():
     settings = await website_settings_collection.find_one({"_type": "settings"})

@@ -22,7 +22,9 @@ from app.schemas.cms import (
     TicketCreate, TicketUpdate, ContestPromotionCreate, ContestPromotionUpdate,
     AppPromotionUpdate, ImportantLinkCreate, ImportantLinkUpdate,
     PublishToggle, VisibilityToggle, ReorderReq, ApprovalToggle,
+    HomepageSectionItem, HomepageSectionsUpdateRequest, CreateCustomSectionRequest, UpdateSectionItemRequest,
 )
+from app.core.cache import FastCache
 from app.schemas.attendance import (
     AttendanceStatus,
     AttendanceUpdateReq,
@@ -70,8 +72,434 @@ async def update_website_settings(data: WebsiteSettingsUpdate, admin=Depends(get
         {"_type": "settings"}, {"$set": update}, upsert=True
     )
     await log_admin_action(admin["email"], "update", "website_settings")
+    FastCache.delete("homepage")
     doc = await website_settings_collection.find_one({"_type": "settings"})
     return clean(doc)
+
+DEFAULT_HOMEPAGE_SECTIONS = [
+    {
+        "id": "sponsor_popup",
+        "name": "Grand Platinum Sponsor Pop-up",
+        "description": "Website opening grand sponsor modal popup overlay",
+        "category": "Monetization & Ads",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 1,
+        "badge": "Pop-up",
+        "config": {},
+    },
+    {
+        "id": "hero_banner",
+        "name": "Hero Sponsor Banner Slider",
+        "description": "Grand full-screen hero sponsor banners carousel",
+        "category": "Promotions & Banners",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 2,
+        "badge": "Top Slider",
+        "config": {},
+    },
+    {
+        "id": "hero",
+        "name": "Interactive Hero Showcase",
+        "description": "Headline, brand tagline, dynamic events & competitions tabs",
+        "category": "Hero & Branding",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 3,
+        "badge": "Main Hero",
+        "config": {},
+    },
+    {
+        "id": "scroll_cue",
+        "name": "Scroll Indicator Cue",
+        "description": "Visual animated scroll cue leading user down the page",
+        "category": "Visual Elements",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 4,
+        "badge": "Animation",
+        "config": {},
+    },
+    {
+        "id": "quad_tiles",
+        "name": "Featured 4 Action Tiles",
+        "description": "Highlight tiles for Competition, Events, Shop, and Community",
+        "category": "Navigation & Highlights",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 5,
+        "badge": "4 Tiles",
+        "config": {},
+    },
+    {
+        "id": "featured_show",
+        "name": "Featured Show Stage",
+        "description": "High-energy interactive carousel for top live events & championships",
+        "category": "Showcase",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 6,
+        "badge": "Interactive",
+        "config": {},
+    },
+    {
+        "id": "marquee",
+        "name": "Marquee Running Ticker",
+        "description": "Continuous animated glowing text ribbon across screen",
+        "category": "Visual Elements",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 7,
+        "badge": "Ticker",
+        "config": {
+            "words": ["JOIN THE MOVEMENT", "BOOK YOUR STAGE", "DANCE LOUDER"]
+        },
+    },
+    {
+        "id": "gallery",
+        "name": "Gallery Reveal Section",
+        "description": "Visual performance & showdowns photo gallery with interactive reveal",
+        "category": "Media & Visuals",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 8,
+        "badge": "Gallery",
+        "config": {},
+    },
+    {
+        "id": "upcoming_competitions",
+        "name": "Upcoming Competitions",
+        "description": "National dance championship cards with prize pools and registration",
+        "category": "Competitions",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 9,
+        "badge": "Championships",
+        "config": {
+            "title": "Upcoming Competitions",
+            "label": "What's next",
+            "view_all_url": "/competitions"
+        },
+    },
+    {
+        "id": "studio_showcase",
+        "name": "3D Studio Cylinder Showcase",
+        "description": "Scroll-driven 3D cylinder rotating upcoming event cards",
+        "category": "3D Experience",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 10,
+        "badge": "3D Motion",
+        "config": {},
+    },
+    {
+        "id": "stats",
+        "name": "Live Statistics Counter",
+        "description": "Real-time count of events, registered dancers, masterclasses & cities",
+        "category": "Proof & Metrics",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 11,
+        "badge": "Metrics",
+        "config": {},
+    },
+    {
+        "id": "live_now",
+        "name": "Live Stage Streaming",
+        "description": "Active live stage streaming broadcast cards",
+        "category": "Live Streams",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 12,
+        "badge": "Live Stream",
+        "config": {
+            "title": "Live Stage",
+            "label": "Streaming right now"
+        },
+    },
+    {
+        "id": "contest_band",
+        "name": "Contest Promotion Banner",
+        "description": "High-visibility promotional banner for ongoing contests",
+        "category": "Promotions & Banners",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 13,
+        "badge": "Contest",
+        "config": {},
+    },
+    {
+        "id": "courses",
+        "name": "Masterclasses & Courses",
+        "description": "Curated dance academy courses with syllabus and instructors",
+        "category": "Learning",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 14,
+        "badge": "Academy",
+        "config": {
+            "title": "Masterclasses",
+            "label": "Courses",
+            "view_all_url": "/courses"
+        },
+    },
+    {
+        "id": "workshops",
+        "name": "Intensive Dance Workshops",
+        "description": "Upcoming live weekend workshops with master choreographers",
+        "category": "Learning",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 15,
+        "badge": "Workshops",
+        "config": {
+            "title": "Workshops",
+            "label": "Workshops",
+            "view_all_url": "/workshops"
+        },
+    },
+    {
+        "id": "testimonials",
+        "name": "Dancer & Artist Testimonials",
+        "description": "Verified reviews and community quotes from participants and judges",
+        "category": "Proof & Metrics",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 16,
+        "badge": "Reviews",
+        "config": {},
+    },
+    {
+        "id": "stage_moments",
+        "name": "Stage Moments (3D Ring)",
+        "description": "Scroll-driven 3D circular photo morph showcasing stage highlights",
+        "category": "3D Experience",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 17,
+        "badge": "3D Ring",
+        "config": {},
+    },
+    {
+        "id": "spotlight",
+        "name": "Spotlight Posts & Social Strip",
+        "description": "Curated Instagram and social media highlights strip",
+        "category": "Social & Community",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 18,
+        "badge": "Social",
+        "config": {},
+    },
+    {
+        "id": "sponsors",
+        "name": "Partners & Sponsors Wall",
+        "description": "Official brand partners and sponsor tier logos",
+        "category": "Monetization & Ads",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 19,
+        "badge": "Partners",
+        "config": {},
+    },
+    {
+        "id": "app_promo",
+        "name": "Mobile App Promotion",
+        "description": "Download Upgrade Talents app banner with QR code and store links",
+        "category": "App & Mobile",
+        "section_type": "builtin",
+        "is_enabled": True,
+        "display_order": 20,
+        "badge": "Mobile App",
+        "config": {},
+    },
+]
+
+async def get_or_initialize_homepage_sections() -> List[Dict[str, Any]]:
+    doc = await website_settings_collection.find_one({"_type": "settings"}, {"_id": 0, "homepage_sections": 1})
+    stored = (doc or {}).get("homepage_sections")
+    
+    if not stored or not isinstance(stored, list) or len(stored) == 0:
+        await website_settings_collection.update_one(
+            {"_type": "settings"},
+            {"$set": {"homepage_sections": DEFAULT_HOMEPAGE_SECTIONS, "updated_at": datetime.now(timezone.utc)}},
+            upsert=True
+        )
+        return [dict(s) for s in DEFAULT_HOMEPAGE_SECTIONS]
+    
+    # Ensure all built-in sections exist in stored list
+    stored_ids = {s.get("id") for s in stored if isinstance(s, dict) and s.get("id")}
+    missing = [d for d in DEFAULT_HOMEPAGE_SECTIONS if d["id"] not in stored_ids]
+    if missing:
+        max_order = max([s.get("display_order", 0) for s in stored if isinstance(s, dict)] or [0])
+        for idx, m in enumerate(missing):
+            m_copy = dict(m)
+            m_copy["display_order"] = max_order + idx + 1
+            stored.append(m_copy)
+        await website_settings_collection.update_one(
+            {"_type": "settings"},
+            {"$set": {"homepage_sections": stored, "updated_at": datetime.now(timezone.utc)}}
+        )
+    
+    stored.sort(key=lambda x: x.get("display_order", 999))
+    return stored
+
+# ── Homepage Sections Endpoints ──
+@router.get("/homepage-sections", tags=["admin-cms"])
+async def get_admin_homepage_sections(admin=Depends(get_current_admin)):
+    """Returns the full list of homepage sections (both built-in and custom) with order and enabled state."""
+    sections = await get_or_initialize_homepage_sections()
+    return sections
+
+@router.put("/homepage-sections", tags=["admin-cms"])
+async def update_admin_homepage_sections(data: HomepageSectionsUpdateRequest, admin=Depends(get_current_admin)):
+    """Bulk update homepage sections order, visibility and config."""
+    sections_data = [s.model_dump() for s in data.sections]
+    sections_data.sort(key=lambda x: x.get("display_order", 999))
+    
+    await website_settings_collection.update_one(
+        {"_type": "settings"},
+        {"$set": {"homepage_sections": sections_data, "updated_at": datetime.now(timezone.utc)}},
+        upsert=True
+    )
+    FastCache.delete("homepage")
+    await log_admin_action(admin["email"], "update", "homepage_sections")
+    return sections_data
+
+@router.post("/homepage-sections/custom", tags=["admin-cms"])
+async def create_admin_custom_section(data: CreateCustomSectionRequest, admin=Depends(get_current_admin)):
+    """Create a new custom homepage section (banner, cards grid, rich text, split media, CTA, etc.)."""
+    sections = await get_or_initialize_homepage_sections()
+    
+    timestamp = int(datetime.now(timezone.utc).timestamp())
+    clean_slug = re.sub(r'[^a-zA-Z0-9_]', '_', data.name.lower().strip())[:20]
+    sec_id = f"custom_{clean_slug}_{timestamp}"
+    
+    max_order = max([s.get("display_order", 0) for s in sections if isinstance(s, dict)] or [0])
+    target_order = data.display_order if data.display_order is not None else (max_order + 1)
+    
+    new_section = {
+        "id": sec_id,
+        "name": data.name,
+        "description": data.description or f"Custom {data.section_type.replace('_', ' ').title()} block",
+        "category": data.category or "Custom Sections",
+        "section_type": data.section_type,
+        "is_enabled": data.is_enabled,
+        "display_order": target_order,
+        "badge": data.badge or "Custom",
+        "config": data.config or {},
+    }
+    
+    sections.append(new_section)
+    sections.sort(key=lambda x: x.get("display_order", 999))
+    
+    await website_settings_collection.update_one(
+        {"_type": "settings"},
+        {"$set": {"homepage_sections": sections, "updated_at": datetime.now(timezone.utc)}},
+        upsert=True
+    )
+    FastCache.delete("homepage")
+    await log_admin_action(admin["email"], "create_custom_section", sec_id)
+    return new_section
+
+@router.put("/homepage-sections/{section_id}", tags=["admin-cms"])
+async def update_admin_homepage_section(section_id: str, data: UpdateSectionItemRequest, admin=Depends(get_current_admin)):
+    """Update visibility toggle, order, name or configuration of an individual section."""
+    sections = await get_or_initialize_homepage_sections()
+    
+    target_idx = None
+    for idx, s in enumerate(sections):
+        if s.get("id") == section_id:
+            target_idx = idx
+            break
+            
+    if target_idx is None:
+        raise HTTPException(status_code=404, detail="Section not found")
+        
+    sec = sections[target_idx]
+    if data.name is not None:
+        sec["name"] = data.name
+    if data.description is not None:
+        sec["description"] = data.description
+    if data.category is not None:
+        sec["category"] = data.category
+    if data.is_enabled is not None:
+        sec["is_enabled"] = data.is_enabled
+    if data.display_order is not None:
+        sec["display_order"] = data.display_order
+    if data.badge is not None:
+        sec["badge"] = data.badge
+    if data.config is not None:
+        current_config = sec.get("config") or {}
+        current_config.update(data.config)
+        sec["config"] = current_config
+        
+    sections.sort(key=lambda x: x.get("display_order", 999))
+    
+    await website_settings_collection.update_one(
+        {"_type": "settings"},
+        {"$set": {"homepage_sections": sections, "updated_at": datetime.now(timezone.utc)}},
+        upsert=True
+    )
+    FastCache.delete("homepage")
+    await log_admin_action(admin["email"], "update_section", f"{section_id}_enabled_{sec['is_enabled']}")
+    return sec
+
+@router.delete("/homepage-sections/{section_id}", tags=["admin-cms"])
+async def delete_admin_homepage_section(section_id: str, admin=Depends(get_current_admin)):
+    """Delete a custom section. Built-in sections cannot be deleted, but can be switched OFF."""
+    sections = await get_or_initialize_homepage_sections()
+    
+    target_idx = None
+    for idx, s in enumerate(sections):
+        if s.get("id") == section_id:
+            target_idx = idx
+            break
+            
+    if target_idx is None:
+        raise HTTPException(status_code=404, detail="Section not found")
+        
+    sec = sections[target_idx]
+    if sec.get("section_type") == "builtin":
+        raise HTTPException(
+            status_code=400,
+            detail="Built-in sections cannot be deleted. You can toggle them OFF instead."
+        )
+        
+    sections.pop(target_idx)
+    for i, s in enumerate(sections):
+        s["display_order"] = i + 1
+        
+    await website_settings_collection.update_one(
+        {"_type": "settings"},
+        {"$set": {"homepage_sections": sections, "updated_at": datetime.now(timezone.utc)}},
+        upsert=True
+    )
+    FastCache.delete("homepage")
+    await log_admin_action(admin["email"], "delete_custom_section", section_id)
+    return {"message": "Custom section removed successfully", "id": section_id}
+
+@router.post("/homepage-sections/reset-defaults", tags=["admin-cms"])
+async def reset_admin_homepage_sections(admin=Depends(get_current_admin)):
+    """Reset all sections back to default built-in order and enable them."""
+    current = await get_or_initialize_homepage_sections()
+    custom_sections = [s for s in current if s.get("section_type") != "builtin"]
+    
+    fresh_sections = [dict(s) for s in DEFAULT_HOMEPAGE_SECTIONS]
+    max_order = len(fresh_sections)
+    for idx, cs in enumerate(custom_sections):
+        cs["display_order"] = max_order + idx + 1
+        fresh_sections.append(cs)
+        
+    await website_settings_collection.update_one(
+        {"_type": "settings"},
+        {"$set": {"homepage_sections": fresh_sections, "updated_at": datetime.now(timezone.utc)}},
+        upsert=True
+    )
+    FastCache.delete("homepage")
+    await log_admin_action(admin["email"], "reset_sections_to_defaults", "homepage_sections")
+    return fresh_sections
 
 DEFAULT_FEATURED_TILES = [
     {

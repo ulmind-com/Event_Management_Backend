@@ -8,7 +8,7 @@ from pydantic import BaseModel, EmailStr
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.admin_auth import get_current_admin
-from app.core.database import user_collection, event_collection, issued_ticket_collection, booking_collection, admin_collection
+from app.core.database import user_collection, event_collection, competition_collection, issued_ticket_collection, booking_collection, admin_collection
 from app.core.security import get_password_hash
 from app.services.email import EmailService
 
@@ -27,27 +27,27 @@ class VolunteerCreateReq(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
     password: Optional[str] = None
-    role_title: Optional[str] = "Entrance Gate Scanner"
+    role_title: Optional[str] = "Gate 1"
 
 
 class SingleVolunteerInput(BaseModel):
     email: EmailStr
     name: Optional[str] = None
     phone: Optional[str] = None
-    role: Optional[str] = "Entrance Gate Scanner"
+    role: Optional[str] = "Gate 1"
     password: Optional[str] = None
 
 
 class VolunteerAssignmentItem(BaseModel):
     email: EmailStr
-    role: Optional[str] = "Entrance Gate Scanner"
+    role: Optional[str] = "Gate 1"
 
 
 class AssignEventVolunteersReq(BaseModel):
     volunteer_emails: Optional[List[EmailStr]] = []
     assignments: Optional[List[VolunteerAssignmentItem]] = []
     new_volunteers: Optional[List[SingleVolunteerInput]] = []
-    default_role: Optional[str] = "Entrance Gate Scanner"
+    default_role: Optional[str] = "Gate 1"
 
 
 # ── GLOBAL VOLUNTEER DIRECTORY ──────────────────────────────────────
@@ -247,33 +247,162 @@ async def remove_volunteer(email: str, admin: dict = Depends(get_current_admin))
 async def get_event_volunteers(event_id: str, admin: dict = Depends(get_current_admin)):
     """
     Get all assigned volunteers for an event plus available registered volunteers for selection.
+    Cross-checks assignments across other events and competitions to flag already-assigned volunteers.
     """
     if not ObjectId.is_valid(event_id):
         raise HTTPException(status_code=400, detail="Invalid event ID")
 
-    event = await event_collection.find_one({"_id": ObjectId(event_id)})
+    target_oid = ObjectId(event_id)
+    event = await event_collection.find_one({"_id": target_oid})
+    target_type = "event"
     if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+        # Check competition collection as fallback
+        event = await competition_collection.find_one({"_id": target_oid})
+        target_type = "competition"
+
+    if not event:
+        raise HTTPException(status_code=404, detail="Event or competition not found")
+
+    event_title = event.get("title") or event.get("name") or "Upgrade Talents Event"
+    event_date = event.get("date") or event.get("start_date") or ""
+    event_time = event.get("time") or event.get("start_time") or ""
+    event_venue = event.get("venue") or event.get("location") or ""
 
     assigned = event.get("volunteers") or []
     assigned_map = {str(v.get("email", "")).lower().strip(): v for v in assigned if v.get("email")}
     assigned_emails = set(assigned_map.keys())
 
-    # Fetch all volunteers registered in system
-    all_vols = await user_collection.find({"role": "VOLUNTEER"}).to_list(length=1000)
+    # Map to track assignments across other events and competitions
+    other_assignments_by_email: Dict[str, List[dict]] = {}
+
+    # 1. Check all other events in event_collection
+    other_event_query: Dict[str, Any] = {
+        "volunteers.0": {"$exists": True},
+        "is_deleted": {"$ne": True}
+    }
+    if target_type == "event":
+        other_event_query["_id"] = {"$ne": target_oid}
+
+    other_events = await event_collection.find(
+        other_event_query,
+        {"title": 1, "date": 1, "venue": 1, "volunteers": 1}
+    ).to_list(length=1000)
+
+    for ev in other_events:
+        ev_title = ev.get("title") or "Event"
+        ev_date = ev.get("date") or ""
+        ev_venue = ev.get("venue") or ""
+        ev_id = str(ev["_id"])
+        for v in (ev.get("volunteers") or []):
+            ve = str(v.get("email", "")).lower().strip()
+            if ve:
+                if ve not in other_assignments_by_email:
+                    other_assignments_by_email[ve] = []
+                other_assignments_by_email[ve].append({
+                    "id": ev_id,
+                    "title": ev_title,
+                    "date": ev_date,
+                    "venue": ev_venue,
+                    "role": v.get("role") or "Gate Scanner",
+                    "type": "event",
+                })
+
+    # 2. Check all competitions in competition_collection
+    comp_query: Dict[str, Any] = {
+        "volunteers.0": {"$exists": True},
+        "is_deleted": {"$ne": True}
+    }
+    if target_type == "competition":
+        comp_query["_id"] = {"$ne": target_oid}
+
+    competitions = await competition_collection.find(
+        comp_query,
+        {"title": 1, "start_date": 1, "venue": 1, "volunteers": 1}
+    ).to_list(length=1000)
+
+    for comp in competitions:
+        comp_title = comp.get("title") or "Competition"
+        comp_date = comp.get("start_date") or ""
+        comp_venue = comp.get("venue") or ""
+        comp_id = str(comp["_id"])
+        for v in (comp.get("volunteers") or []):
+            ve = str(v.get("email", "")).lower().strip()
+            if ve:
+                if ve not in other_assignments_by_email:
+                    other_assignments_by_email[ve] = []
+                other_assignments_by_email[ve].append({
+                    "id": comp_id,
+                    "title": comp_title,
+                    "date": comp_date,
+                    "venue": comp_venue,
+                    "role": v.get("role") or "Gate Scanner",
+                    "type": "competition",
+                })
+
+    # Fetch all volunteers registered in system and users with assigned_events
+    all_vols = await user_collection.find({
+        "$or": [
+            {"role": "VOLUNTEER"},
+            {"assigned_events.0": {"$exists": True}}
+        ]
+    }).to_list(length=1000)
+
+    # In case there are volunteers in assigned_map not yet in all_vols
+    known_emails = {str(v.get("email", "")).lower().strip() for v in all_vols if v.get("email")}
+    for ve, v_data in assigned_map.items():
+        if ve not in known_emails:
+            all_vols.append({
+                "_id": v_data.get("user_id") or ObjectId(),
+                "email": ve,
+                "name": v_data.get("name", ""),
+                "phone": v_data.get("phone", ""),
+                "role": "VOLUNTEER",
+                "assigned_events": []
+            })
+            known_emails.add(ve)
+
     available = []
     for v in all_vols:
         v_email = str(v.get("email", "")).lower().strip()
         if not v_email:
             continue
         curr_assigned = assigned_map.get(v_email)
+
+        # Cross-reference user document's assigned_events
+        for v_ev in (v.get("assigned_events") or []):
+            v_eid = str(v_ev.get("event_id", ""))
+            if v_eid and v_eid != str(event["_id"]):
+                already_has = any(x.get("id") == v_eid for x in other_assignments_by_email.get(v_email, []))
+                if not already_has:
+                    if v_email not in other_assignments_by_email:
+                        other_assignments_by_email[v_email] = []
+                    other_assignments_by_email[v_email].append({
+                        "id": v_eid,
+                        "title": v_ev.get("title") or "Another Event",
+                        "date": v_ev.get("date") or "",
+                        "venue": v_ev.get("venue") or "",
+                        "role": v_ev.get("role") or "Gate Scanner",
+                        "type": "event",
+                    })
+
+        other_assigns = other_assignments_by_email.get(v_email, [])
+        is_here = v_email in assigned_emails
+        has_other = len(other_assigns) > 0
+        first_other = other_assigns[0] if has_other else None
+
         available.append({
             "user_id": str(v["_id"]),
             "email": v_email,
             "name": v.get("name") or v.get("full_name") or (curr_assigned.get("name") if curr_assigned else "") or "",
             "phone": v.get("phone") or v.get("phone_number") or (curr_assigned.get("phone") if curr_assigned else "") or "",
-            "is_assigned": v_email in assigned_emails,
+            "is_assigned": is_here,
             "assigned_role": curr_assigned.get("role") if curr_assigned else None,
+            "already_assigned_elsewhere": has_other,
+            "other_assignments": other_assigns,
+            "assigned_other_title": first_other.get("title") if first_other else None,
+            "assigned_other_role": first_other.get("role") if first_other else None,
+            "assigned_other_type": first_other.get("type") if first_other else None,
+            "assigned_other_id": first_other.get("id") if first_other else None,
         })
 
     enriched_assigned = []
@@ -305,10 +434,10 @@ async def get_event_volunteers(event_id: str, admin: dict = Depends(get_current_
 
     return {
         "event_id": str(event["_id"]),
-        "event_title": event.get("title", ""),
-        "event_date": event.get("date", ""),
-        "event_time": event.get("time", ""),
-        "event_venue": event.get("venue", ""),
+        "event_title": event_title,
+        "event_date": event_date,
+        "event_time": event_time,
+        "event_venue": event_venue,
         "assigned_volunteers": enriched_assigned,
         "available_volunteers": available,
         "total_assigned": len(enriched_assigned),
@@ -335,7 +464,12 @@ async def get_event_volunteer_report(event_id: str, admin: dict = Depends(get_cu
     if not ev:
         ev = await event_collection.find_one({"$or": [{"_id": clean_eid}, {"id": clean_eid}], "is_deleted": {"$ne": True}})
     if not ev:
-        raise HTTPException(status_code=404, detail="Event not found")
+        if ObjectId.is_valid(clean_eid):
+            ev = await competition_collection.find_one({"_id": ObjectId(clean_eid), "is_deleted": {"$ne": True}})
+        if not ev:
+            ev = await competition_collection.find_one({"$or": [{"_id": clean_eid}, {"id": clean_eid}], "is_deleted": {"$ne": True}})
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event or competition not found")
 
     ev_match = [clean_eid]
     if ObjectId.is_valid(clean_eid):
@@ -573,14 +707,22 @@ async def assign_event_volunteers(
     if not ObjectId.is_valid(event_id):
         raise HTTPException(status_code=400, detail="Invalid event ID")
 
-    event = await event_collection.find_one({"_id": ObjectId(event_id)})
+    target_oid = ObjectId(event_id)
+    event = await event_collection.find_one({"_id": target_oid})
+    target_col = event_collection
+    target_type = "event"
     if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+        event = await competition_collection.find_one({"_id": target_oid})
+        target_col = competition_collection
+        target_type = "competition"
 
-    event_title = event.get("title", "Upgrade Talents Event")
-    event_date = event.get("date", "")
-    event_time = event.get("time", "")
-    event_venue = event.get("venue", "")
+    if not event:
+        raise HTTPException(status_code=404, detail="Event or competition not found")
+
+    event_title = event.get("title") or event.get("name") or "Upgrade Talents Event"
+    event_date = event.get("date") or event.get("start_date") or ""
+    event_time = event.get("time") or event.get("start_time") or ""
+    event_venue = event.get("venue") or event.get("location") or ""
 
     existing_volunteers = event.get("volunteers") or []
     assigned_map = {str(v.get("email", "")).lower(): v for v in existing_volunteers if v.get("email")}
@@ -690,7 +832,7 @@ async def assign_event_volunteers(
 
         user_name = user.get("name") or user.get("full_name") or ""
         user_phone = user.get("phone") or user.get("phone_number") or ""
-        assigned_role = role_by_email.get(email_clean) or req.default_role or "Entrance Gate Scanner"
+        assigned_role = role_by_email.get(email_clean) or req.default_role or "Gate 1"
 
         # Update event record
         vol_entry = {
@@ -749,10 +891,10 @@ async def assign_event_volunteers(
             "status": "ASSIGNED_AND_NOTIFIED",
         })
 
-    # Save updated list to event document
+    # Save updated list to document
     new_volunteers_list = list(assigned_map.values())
-    await event_collection.update_one(
-        {"_id": ObjectId(event_id)},
+    await target_col.update_one(
+        {"_id": target_oid},
         {"$set": {"volunteers": new_volunteers_list, "updated_at": datetime.now(timezone.utc)}}
     )
 
@@ -789,13 +931,19 @@ async def remove_event_volunteer(
     email: str,
     admin: dict = Depends(get_current_admin)
 ):
-    """Unassign a volunteer from a specific event."""
+    """Unassign a volunteer from a specific event or competition."""
     if not ObjectId.is_valid(event_id):
         raise HTTPException(status_code=400, detail="Invalid event ID")
 
+    target_oid = ObjectId(event_id)
     email_clean = email.lower().strip()
+
     await event_collection.update_one(
-        {"_id": ObjectId(event_id)},
+        {"_id": target_oid},
+        {"$pull": {"volunteers": {"email": email_clean}}}
+    )
+    await competition_collection.update_one(
+        {"_id": target_oid},
         {"$pull": {"volunteers": {"email": email_clean}}}
     )
 
@@ -836,9 +984,13 @@ async def resend_event_volunteer_credentials(
     if not ObjectId.is_valid(event_id):
         raise HTTPException(status_code=400, detail="Invalid event ID")
 
-    event = await event_collection.find_one({"_id": ObjectId(event_id)})
+    target_oid = ObjectId(event_id)
+    event = await event_collection.find_one({"_id": target_oid})
     if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+        event = await competition_collection.find_one({"_id": target_oid})
+
+    if not event:
+        raise HTTPException(status_code=404, detail="Event or competition not found")
 
     email_clean = email.lower().strip()
     user = await user_collection.find_one({"email": email_clean})

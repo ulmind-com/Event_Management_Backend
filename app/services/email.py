@@ -759,7 +759,7 @@ class EmailService:
         safe_date = _escape(event_date or "To be announced")
         safe_time = _escape(event_time or "IST")
         safe_venue = _escape(event_venue or "Main Venue")
-        safe_role = _escape(role or "Entrance Gate Scanner")
+        safe_role = _escape(role or "Gate 1")
         greeting = f"Hello {_escape(name)}," if name else "Hello Volunteer,"
 
         content = f"""
@@ -770,7 +770,7 @@ class EmailService:
             {greeting}
           </p>
           <p style="margin: 0 0 20px 0; font-size: 14px; color: #94A3B8; line-height: 1.6;">
-            You have been officially assigned as a gate scanner for <strong>{safe_title}</strong>. Please use your credentials below to access the volunteer scanner.
+            You have been officially assigned as a scanner for <strong>{safe_role}</strong> at <strong>{safe_title}</strong>. Please report to <strong>{safe_venue}</strong> on <strong>{safe_date}</strong>. Use your credentials below to log in to the volunteer pass scanner terminal.
           </p>
 
           <!-- Event Details Summary -->
@@ -778,24 +778,28 @@ class EmailService:
             <tr>
               <td>
                 <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; color: #10B981; margin-bottom: 10px;">
-                  &#128197; Event &amp; Gate Assignment
+                  &#128197; Official Event &amp; Gate Assignment
                 </div>
                 <table role="presentation" border="0" cellpadding="4" cellspacing="0" width="100%" style="font-size: 13px; color: #CBD5E1;">
                   <tr>
-                    <td style="color: #94A3B8; width: 100px; font-weight: 600;">Event:</td>
+                    <td style="color: #94A3B8; width: 130px; font-weight: 600;">Event / Program:</td>
                     <td style="color: #F8FAFC; font-weight: 700;">{safe_title}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #94A3B8; font-weight: 600;">Assigned Gate / Duty:</td>
+                    <td>
+                      <span style="display: inline-block; background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.5); color: #34D399; font-size: 13px; font-weight: 800; padding: 3px 10px; border-radius: 6px;">
+                        {safe_role}
+                      </span>
+                    </td>
                   </tr>
                   <tr>
                     <td style="color: #94A3B8; font-weight: 600;">Date &amp; Time:</td>
                     <td style="color: #F8FAFC;">{safe_date} &bull; {safe_time}</td>
                   </tr>
                   <tr>
-                    <td style="color: #94A3B8; font-weight: 600;">Venue:</td>
+                    <td style="color: #94A3B8; font-weight: 600;">Venue / Location:</td>
                     <td style="color: #F8FAFC;">{safe_venue}</td>
-                  </tr>
-                  <tr>
-                    <td style="color: #94A3B8; font-weight: 600;">Duty:</td>
-                    <td style="color: #10B981; font-weight: 700;">{safe_role}</td>
                   </tr>
                 </table>
               </td>
@@ -875,7 +879,7 @@ class EmailService:
         )
         return _send_email_payload(
             to_email=email,
-            subject=f"🎟️ Volunteer Assignment & Gate Credentials: {event_title}",
+            subject=f"🎟️ Volunteer Assignment ({safe_role}): {event_title}",
             html=html,
             sender_name="Upgrade Talents India"
         )

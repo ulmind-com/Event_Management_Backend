@@ -1,4 +1,7 @@
 import logging
+import os
+import hmac
+import hashlib
 import asyncio
 from typing import Dict, Any, Optional
 import razorpay
@@ -122,36 +125,54 @@ class PaymentService:
     @classmethod
     def verify_webhook_signature(cls, payload_body: bytes, signature_header: str) -> bool:
         """
-        Verifies Razorpay Webhook signature using webhook secret or key secret.
+        Verifies Razorpay Webhook signature using configured webhook secrets or key secret.
         """
-        webhook_secret = (
-            getattr(settings, "PAYMENT_WEBHOOK_SECRET", None)
-            or getattr(settings, "RAZORPAY_KEY_SECRET", None)
-        )
-        if not webhook_secret or not signature_header:
+        if not signature_header:
             return False
 
-        client = cls.get_client()
-        if client:
-            try:
-                client.utility.verify_webhook_signature(
-                    payload_body.decode("utf-8") if isinstance(payload_body, bytes) else str(payload_body),
-                    signature_header,
-                    webhook_secret
-                )
-                return True
-            except Exception as e:
-                logger.error(f"Razorpay client webhook signature verification failed: {e}")
+        candidates = []
+        for sec in [
+            getattr(settings, "RAZORPAY_WEBHOOK_SECRET", None),
+            getattr(settings, "PAYMENT_WEBHOOK_SECRET", None),
+            getattr(settings, "RAZORPAY_KEY_SECRET", None),
+            os.getenv("RAZORPAY_WEBHOOK_SECRET"),
+            os.getenv("PAYMENT_WEBHOOK_SECRET"),
+            os.getenv("RAZORPAY_KEY_SECRET"),
+        ]:
+            if sec and sec not in candidates:
+                candidates.append(sec)
 
-        # Standard HMAC SHA256 fallback
+        if not candidates:
+            logger.error("Cannot verify webhook signature: No webhook or key secrets configured.")
+            return False
+
         import hmac
         import hashlib
-        try:
-            expected = hmac.new(webhook_secret.encode("utf-8"), payload_body, hashlib.sha256).hexdigest()
-            return hmac.compare_digest(expected.strip(), signature_header.strip())
-        except Exception as e:
-            logger.error(f"HMAC webhook verification failed: {e}")
-            return False
+
+        body_str = payload_body.decode("utf-8") if isinstance(payload_body, bytes) else str(payload_body)
+        body_bytes = payload_body if isinstance(payload_body, bytes) else str(payload_body).encode("utf-8")
+
+        client = cls.get_client()
+
+        for secret in candidates:
+            # 1. Official Razorpay client utility
+            if client:
+                try:
+                    client.utility.verify_webhook_signature(body_str, signature_header, secret)
+                    return True
+                except Exception:
+                    pass
+
+            # 2. Standard HMAC SHA-256 fallback
+            try:
+                expected = hmac.new(secret.encode("utf-8"), body_bytes, hashlib.sha256).hexdigest()
+                if hmac.compare_digest(expected.strip(), signature_header.strip()):
+                    return True
+            except Exception:
+                pass
+
+        logger.error("Razorpay webhook signature verification failed with all candidate secrets.")
+        return False
 
     @classmethod
     async def process_refund(cls, payment_id: str, amount: float, notes: Optional[Dict[str, Any]] = None) -> bool:

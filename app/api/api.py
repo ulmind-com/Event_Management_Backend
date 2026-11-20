@@ -1,4 +1,5 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, BackgroundTasks, Header
+from typing import Optional
 from app.api.routes import (
     auth, profile, activities, registrations, bookings, merchandise, rewards,
     admin_auth, admin_cms, admin_checkin, admin_competitions, public, payments,
@@ -78,3 +79,26 @@ api_router.include_router(realtime.router, prefix="/realtime", tags=["realtime"]
 api_router.include_router(user_vip.router, tags=["vip-passes"])
 api_router.include_router(vip_webhooks.router, tags=["vip-webhooks"])
 api_router.include_router(admin_vip.router, prefix="/admin", tags=["admin-vip"])
+
+# ── Direct Razorpay Webhook Under /api ──
+@api_router.post("/razorpay/webhook", status_code=200, tags=["razorpay-webhook"])
+async def api_razorpay_webhook_post(
+    request: Request,
+    bg_tasks: BackgroundTasks,
+    x_razorpay_signature: Optional[str] = Header(None)
+):
+    """
+    Direct Razorpay webhook endpoint under /api: https://<domain>/api/razorpay/webhook
+    """
+    return await payments.handle_razorpay_booking_webhook(
+        request=request,
+        bg_tasks=bg_tasks,
+        x_razorpay_signature=x_razorpay_signature
+    )
+
+@api_router.get("/razorpay/webhook", status_code=200, tags=["razorpay-webhook"])
+async def api_razorpay_webhook_status():
+    """
+    Health check / ping endpoint for Razorpay webhook under /api.
+    """
+    return await payments.razorpay_webhook_status()

@@ -2166,7 +2166,91 @@
         }
       }
     },
+    "/api/payments/razorpay/webhook": {
+      "get": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Razorpay Webhook Status",
+        "description": "Health check and status endpoint for the Razorpay Webhook.",
+        "operationId": "razorpay_webhook_status_api_payments_razorpay_webhook_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Handle Razorpay Booking Webhook",
+        "description": "Authoritative server-to-server webhook endpoint for Razorpay payment notifications.",
+        "operationId": "handle_razorpay_booking_webhook_api_payments_razorpay_webhook_post",
+        "parameters": [
+          {
+            "name": "x-razorpay-signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Razorpay-Signature"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/payments/webhook": {
+      "get": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Razorpay Webhook Status",
+        "description": "Health check and status endpoint for the Razorpay Webhook.",
+        "operationId": "razorpay_webhook_status_api_payments_webhook_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "payments"
@@ -29756,6 +29840,72 @@
         ]
       }
     },
+    "/api/razorpay/webhook": {
+      "post": {
+        "tags": [
+          "razorpay-webhook"
+        ],
+        "summary": "Api Razorpay Webhook Post",
+        "description": "Direct Razorpay webhook endpoint under /api: https://<domain>/api/razorpay/webhook",
+        "operationId": "api_razorpay_webhook_post_api_razorpay_webhook_post",
+        "parameters": [
+          {
+            "name": "x-razorpay-signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Razorpay-Signature"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "razorpay-webhook"
+        ],
+        "summary": "Api Razorpay Webhook Status",
+        "description": "Health check / ping endpoint for Razorpay webhook under /api.",
+        "operationId": "api_razorpay_webhook_status_api_razorpay_webhook_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/": {
       "get": {
         "tags": [
@@ -29763,6 +29913,72 @@
         ],
         "summary": "Root",
         "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/razorpay/webhook": {
+      "post": {
+        "tags": [
+          "razorpay-webhook"
+        ],
+        "summary": "Root Razorpay Webhook",
+        "description": "Direct root Razorpay webhook endpoint: https://<domain>/razorpay/webhook",
+        "operationId": "root_razorpay_webhook_razorpay_webhook_post",
+        "parameters": [
+          {
+            "name": "x-razorpay-signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Razorpay-Signature"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "razorpay-webhook"
+        ],
+        "summary": "Root Razorpay Webhook Status",
+        "description": "Health check / ping endpoint for Razorpay webhook URL.",
+        "operationId": "root_razorpay_webhook_status_razorpay_webhook_get",
         "responses": {
           "200": {
             "description": "Successful Response",

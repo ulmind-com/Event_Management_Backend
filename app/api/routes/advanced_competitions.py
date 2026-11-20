@@ -51,13 +51,29 @@ def safe_object_id(id_str: str) -> Optional[ObjectId]:
         return None
 
 
-def extract_fee(comp_dict: Optional[dict], fallback_fee: float = 0.0) -> float:
-    """Safely extracts the fee/price from a competition dictionary without crashing on None."""
+def extract_fee(comp_dict: Optional[dict], fallback_fee: float = 0.0, category_name: Optional[str] = None) -> float:
+    """Safely extracts the fee/price from a competition dictionary without crashing on None, with category-wise price support."""
     if not comp_dict:
         return max(0.0, float(fallback_fee or 0.0))
+
+    # 1. If category_name is provided, check matching category's price first
+    if category_name and isinstance(comp_dict.get("categories"), list):
+        c_clean = str(category_name).strip().lower()
+        for cat in comp_dict["categories"]:
+            if isinstance(cat, dict) and str(cat.get("name") or "").strip().lower() == c_clean:
+                for k in ("price", "fee", "entry_fee", "participation_fee"):
+                    v = cat.get(k)
+                    if v is not None and v != "":
+                        try:
+                            return max(0.0, float(v))
+                        except (ValueError, TypeError):
+                            pass
+                break
+
+    # 2. Check top-level fee keys
     for k in ("participation_fee", "fee", "entry_fee", "price"):
         v = comp_dict.get(k)
-        if v is not None:
+        if v is not None and v != "":
             try:
                 f_val = float(v)
                 return max(0.0, f_val)
@@ -628,7 +644,7 @@ async def register_competition(
         if is_already_confirmed:
             raise HTTPException(status_code=409, detail="Already registered and confirmed for this competition.")
 
-        fee = extract_fee(comp, existing.get("fee", 0.0))
+        fee = extract_fee(comp, existing.get("fee", 0.0), category_name=selected_category)
         reg_ref = (
             existing.get("registration_reference")
             or existing.get("order_reference")
@@ -732,7 +748,7 @@ async def register_competition(
             "reference": reg_ref
         }
 
-    fee = extract_fee(comp, 0.0)
+    fee = extract_fee(comp, 0.0, category_name=selected_category)
     reg_ref = f"CRG-{uuid.uuid4().hex[:10].upper()}"
 
     doc = {

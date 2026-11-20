@@ -197,8 +197,15 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
             else:
                 price = float(activity.get("price", 0.0))
     elif req.activity_type == "competition":
+        cats = activity.get("categories", [])
         category_name = req.category or activity.get("category", "General")
-        price = float(activity.get("entry_fee", activity.get("price", 0.0)))
+        matched_cat = None
+        if category_name and cats:
+            matched_cat = next((c for c in cats if isinstance(c, dict) and c.get("name", "").strip().lower() == category_name.strip().lower()), None)
+        if matched_cat and matched_cat.get("price") is not None:
+            price = float(matched_cat.get("price"))
+        else:
+            price = float(activity.get("entry_fee", activity.get("participation_fee", activity.get("price", 0.0))))
     else:
         price = float(activity.get("price", 0.0))
 

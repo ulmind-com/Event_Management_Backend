@@ -664,3 +664,158 @@ async def test_category_age_limit_dob_calculation_and_direct_participation():
         assert reg_nodob["category"] == "Junior"
         assert reg_nodob["age"] == 13
         assert reg_nodob["date_of_birth"] == "2013-05-15"
+
+
+@pytest.mark.asyncio
+async def test_competition_category_wise_pricing_flow():
+    """
+    Scenario: Category-wise pricing support.
+    1. Admin creates competition with custom category prices:
+       - Sub-Junior: ₹100
+       - Senior: ₹350
+       - Open: ₹0 (Free)
+       - Default competition fee: ₹200
+    2. Admin verifies competition returned with category-specific prices.
+    3. Admin updates category prices (e.g. Sub-Junior to ₹150).
+    4. Competitor registers for Open (Free): instant confirmation with fee=0.
+    5. Competitor registers for Sub-Junior (₹150): pending payment with fee=150.
+    6. Competitor registers for Senior (₹350): pending payment with fee=350.
+    """
+    admin_email = f"admin_price_{int(datetime.now().timestamp())}@test.com"
+    comp_title = f"Price Test Championship {int(datetime.now().timestamp())}"
+
+    # Setup admin
+    await admin_collection.insert_one({
+        "email": admin_email,
+        "password_hash": get_password_hash("adminpass123"),
+        "role": "super_admin",
+        "created_at": datetime.now(timezone.utc),
+    })
+    admin_token = create_access_token({"sub": admin_email, "type": "admin", "role": "super_admin"})
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        now = datetime.now(timezone.utc)
+        payload = {
+            "title": comp_title,
+            "description": "Category pricing competition",
+            "participation_fee": 200.0,
+            "categories": [
+                {"name": "Sub-Junior", "min_age": 3, "max_age": 7, "price": 100.0, "description": "3-7 yrs"},
+                {"name": "Senior", "min_age": 15, "max_age": 30, "price": 350.0, "description": "15-30 yrs"},
+                {"name": "Open", "min_age": None, "max_age": None, "price": 0.0, "description": "All ages"},
+            ],
+            "start_date": (now - timedelta(days=1)).isoformat(),
+            "end_date": (now + timedelta(days=30)).isoformat(),
+            "registration_start_date": (now - timedelta(days=1)).isoformat(),
+            "submission_deadline": (now + timedelta(days=25)).isoformat(),
+            "is_published": True,
+            "judge_scoring_enabled": True,
+            "audience_voting_enabled": False,
+        }
+
+        # 1. Create competition
+        res = await ac.post("/api/admin/advanced-competitions/", json=payload, headers=admin_headers)
+        assert res.status_code == 200, f"Expected 200: {res.text}"
+        comp_data = res.json()
+        comp_id = comp_data["_id"]
+
+        stored = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+        assert stored is not None
+        cats = stored["categories"]
+        sub_jr = next(c for c in cats if c["name"] == "Sub-Junior")
+        assert sub_jr["price"] == 100.0
+        senior = next(c for c in cats if c["name"] == "Senior")
+        assert senior["price"] == 350.0
+        open_cat = next(c for c in cats if c["name"] == "Open")
+        assert open_cat["price"] == 0.0
+
+        # 2. Admin updates category prices (Sub-Junior to ₹150)
+        up_res = await ac.put(f"/api/admin/advanced-competitions/{comp_id}", json={
+            "categories": [
+                {"name": "Sub-Junior", "min_age": 3, "max_age": 7, "price": 150.0},
+                {"name": "Senior", "min_age": 15, "max_age": 30, "price": 350.0},
+                {"name": "Open", "min_age": None, "max_age": None, "price": 0.0},
+            ]
+        }, headers=admin_headers)
+        assert up_res.status_code == 200
+
+        stored = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+        sub_jr = next(c for c in stored["categories"] if c["name"] == "Sub-Junior")
+        assert sub_jr["price"] == 150.0
+
+        # 3. Competitor 1 registers for Open (Price: 0.0 -> instant confirmation)
+        u_open = f"user_open_{int(datetime.now().timestamp())}@test.com"
+        await user_collection.insert_one({
+            "email": u_open,
+            "name": "Open User",
+            "phone_number": "9876543210",
+            "date_of_birth": "2000-01-01",
+            "address": "123 Street",
+            "parent_phone_number": "9876543211",
+            "role": "USER",
+            "registration_complete": True,
+        })
+        tok_open = create_access_token({"sub": u_open, "email": u_open, "role": "USER"})
+        h_open = {"Authorization": f"Bearer {tok_open}"}
+
+        reg_open = await ac.post(
+            f"/api/v1/competitions/{comp_id}/register",
+            json={"rules_accepted": True, "category": "Open"},
+            headers=h_open
+        )
+        assert reg_open.status_code == 200
+        assert reg_open.json()["status"] == "CONFIRMED"
+        reg_open_doc = await competition_registration_collection.find_one({"competition_id": comp_id, "user_email": u_open})
+        assert reg_open_doc["fee"] == 0.0
+
+        # 4. Competitor 2 registers for Sub-Junior (Price: 150.0 -> pending payment)
+        u_sub = f"user_sub_{int(datetime.now().timestamp())}@test.com"
+        await user_collection.insert_one({
+            "email": u_sub,
+            "name": "SubJr User",
+            "phone_number": "9876543212",
+            "address": "123 Street",
+            "date_of_birth": "2020-01-01",
+            "parent_phone_number": "9876543211",
+            "role": "USER",
+            "registration_complete": True,
+        })
+        tok_sub = create_access_token({"sub": u_sub, "email": u_sub, "role": "USER"})
+        h_sub = {"Authorization": f"Bearer {tok_sub}"}
+
+        reg_sub = await ac.post(
+            f"/api/v1/competitions/{comp_id}/register",
+            json={"rules_accepted": True, "category": "Sub-Junior"},
+            headers=h_sub
+        )
+        assert reg_sub.status_code == 200
+        assert reg_sub.json()["status"] == "PENDING"
+        reg_sub_doc = await competition_registration_collection.find_one({"competition_id": comp_id, "user_email": u_sub})
+        assert reg_sub_doc["fee"] == 150.0
+
+        # 5. Competitor 3 registers for Senior (Price: 350.0 -> pending payment)
+        u_sen = f"user_sen_{int(datetime.now().timestamp())}@test.com"
+        await user_collection.insert_one({
+            "email": u_sen,
+            "name": "Senior User",
+            "phone_number": "9876543213",
+            "address": "123 Street",
+            "date_of_birth": "2005-01-01",
+            "parent_phone_number": "9876543211",
+            "role": "USER",
+            "registration_complete": True,
+        })
+        tok_sen = create_access_token({"sub": u_sen, "email": u_sen, "role": "USER"})
+        h_sen = {"Authorization": f"Bearer {tok_sen}"}
+
+        reg_sen = await ac.post(
+            f"/api/v1/competitions/{comp_id}/register",
+            json={"rules_accepted": True, "category": "Senior"},
+            headers=h_sen
+        )
+        assert reg_sen.status_code == 200
+        assert reg_sen.json()["status"] == "PENDING"
+        reg_sen_doc = await competition_registration_collection.find_one({"competition_id": comp_id, "user_email": u_sen})
+        assert reg_sen_doc["fee"] == 350.0
+

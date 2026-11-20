@@ -57,23 +57,37 @@ def normalize_competition_categories(comp_dict: dict) -> dict:
     normalized_cats = []
 
     for cat in raw_categories:
+        raw_price = None
         if isinstance(cat, dict):
             c_name = str(cat.get("name") or "").strip()
             min_a = cat.get("min_age")
             max_a = cat.get("max_age")
             age_lim = cat.get("age_limit")
+            raw_price = cat.get("price") if cat.get("price") is not None else cat.get("entry_fee")
+            if raw_price is None:
+                raw_price = cat.get("fee") if cat.get("fee") is not None else cat.get("participation_fee")
             desc = cat.get("description")
         elif hasattr(cat, "name"):
             c_name = str(getattr(cat, "name") or "").strip()
             min_a = getattr(cat, "min_age", None)
             max_a = getattr(cat, "max_age", None)
             age_lim = getattr(cat, "age_limit", None)
+            raw_price = getattr(cat, "price", None)
+            if raw_price is None:
+                raw_price = getattr(cat, "entry_fee", None) or getattr(cat, "fee", None) or getattr(cat, "participation_fee", None)
             desc = getattr(cat, "description", None)
         else:
             continue
 
         if not c_name:
             continue
+
+        parsed_price = None
+        if raw_price is not None and raw_price is not False and raw_price != "":
+            try:
+                parsed_price = max(0.0, float(raw_price))
+            except (ValueError, TypeError):
+                parsed_price = None
 
         if min_a == "" or min_a is False:
             min_a = None
@@ -131,6 +145,7 @@ def normalize_competition_categories(comp_dict: dict) -> dict:
             "min_age": min_a,
             "max_age": max_a,
             "age_limit": age_lim,
+            "price": parsed_price,
             "description": desc,
         })
 

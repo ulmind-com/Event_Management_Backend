@@ -104,6 +104,7 @@ class CompetitionCategory(BaseModel):
     min_age: Optional[int] = Field(None, ge=0, description="Minimum age allowed for this category")
     max_age: Optional[int] = Field(None, ge=0, description="Maximum age allowed for this category")
     age_limit: Optional[str] = Field(None, description="Formatted age limit string, e.g. '12-15' or '12-15 years'")
+    price: Optional[float] = Field(None, ge=0, description="Category-specific entry fee / price (INR)")
     description: Optional[str] = Field(None, description="Optional description of this category")
 
     @model_validator(mode="before")
@@ -115,6 +116,20 @@ class CompetitionCategory(BaseModel):
             age_lim = data.get("age_limit")
             c_name = str(data.get("name") or "").strip()
             desc = data.get("description")
+
+            # Parse category-specific price/fee if provided under aliases
+            raw_p = data.get("price")
+            if raw_p is None:
+                raw_p = data.get("entry_fee") if data.get("entry_fee") is not None else data.get("fee")
+                if raw_p is None:
+                    raw_p = data.get("participation_fee")
+            if raw_p is not None and raw_p is not False and raw_p != "":
+                try:
+                    data["price"] = max(0.0, float(raw_p))
+                except (ValueError, TypeError):
+                    data["price"] = None
+            elif raw_p == "" or raw_p is False:
+                data["price"] = None
 
             if min_a == "" or min_a is False:
                 min_a = None

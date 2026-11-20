@@ -73,6 +73,7 @@ async def update_website_settings(data: WebsiteSettingsUpdate, admin=Depends(get
     )
     await log_admin_action(admin["email"], "update", "website_settings")
     FastCache.delete("homepage")
+    FastCache.delete("public_settings")
     doc = await website_settings_collection.find_one({"_type": "settings"})
     return clean(doc)
 

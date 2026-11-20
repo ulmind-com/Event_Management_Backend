@@ -46,8 +46,10 @@ class WebsiteSettingsUpdate(BaseModel):
     live_stage_label: Optional[str] = None
     gallery_section: Optional[Dict[str, Any]] = None
     homepage_sections: Optional[List[Dict[str, Any]]] = None
+    user_login_image_url: Optional[str] = None
+    admin_login_image_url: Optional[str] = None
 
-    @field_validator("logo_url", "favicon_url", mode="before")
+    @field_validator("logo_url", "favicon_url", "user_login_image_url", "admin_login_image_url", mode="before")
     @classmethod
     def validate_cms_urls(cls, v):
         return check_no_fake_cloudinary(v)

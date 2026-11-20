@@ -310,6 +310,7 @@ class CompetitionStageService:
         c_str = str(comp_id).strip()
         comp = await cls.get_competition_or_404(c_str)
         c_matches = cls._build_comp_matches(c_str, comp)
+        is_offline = bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE")
         live_stage = comp.get("live_stage") or {}
         curr_performer = live_stage.get("current_performer")
         prev_performer = live_stage.get("previous_performer")
@@ -586,6 +587,8 @@ class CompetitionStageService:
                 comp_categories.append(p_cat.strip())
 
         lineup_completed = sum(1 for p in lineup_participants if p.get("stage_status") == "COMPLETED")
+        active_lineup = all_present_group if present_count > 0 else lineup_participants
+        active_total = present_count if present_count > 0 else len(lineup_participants)
 
         return {
             "competition_id": c_str,
@@ -597,7 +600,7 @@ class CompetitionStageService:
             "has_active_performer": bool(curr_performer),
             "current_performer": curr_performer,
             "previous_performer": prev_performer,
-            "total_participants": len(lineup_participants),
+            "total_participants": active_total,
             "present_count": present_count,
             "absent_count": absent_count,
             "waiting_count": absent_count,
@@ -606,12 +609,12 @@ class CompetitionStageService:
             "waiting_list": waiting_list,
             "completed_performances": lineup_completed,
             "completed_count": lineup_completed,
-            "remaining_performances": max(0, len(lineup_participants) - lineup_completed),
-            "remaining_count": max(0, len(lineup_participants) - lineup_completed),
+            "remaining_performances": max(0, active_total - lineup_completed),
+            "remaining_count": max(0, active_total - lineup_completed),
             "categories": comp_categories,
-            "participants": lineup_participants,
+            "participants": active_lineup,
             "all_participants": lineup_participants,
-            "lineup": lineup_participants,
+            "lineup": active_lineup,
             "updated_at": live_stage.get("updated_at")
         }
 
@@ -636,6 +639,7 @@ class CompetitionStageService:
         clean_id = str(identifier).strip()
 
         c_matches = cls._build_comp_matches(c_str, comp)
+        is_offline = bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE")
 
         # Build registration lookup query
         reg_or: List[Dict[str, Any]] = [
@@ -756,8 +760,9 @@ class CompetitionStageService:
                 or usr.get("kyc_status") == "VERIFIED"
             )
         )
-        is_perf_present = bool(reg.get("is_present", False) or reg.get("attendance_status") == "PRESENT")
-        perf_attendance_status = reg.get("attendance_status", "PRESENT" if is_perf_present else "ABSENT")
+        # Current performer is actively on stage — guaranteed present
+        is_perf_present = True
+        perf_attendance_status = "PRESENT"
 
         new_performer = {
             "registration_id": reg_id,
@@ -791,12 +796,18 @@ class CompetitionStageService:
         }
 
         # Update current registration in DB
+        update_doc: Dict[str, Any] = {
+            "stage_status": "ON_STAGE",
+            "stage_started_at": now
+        }
+        if is_offline or reg.get("is_present"):
+            update_doc["is_present"] = True
+            update_doc["attendance_status"] = "PRESENT"
+            update_doc["attended_at"] = reg.get("attended_at") or now
+
         await competition_registration_collection.update_one(
             {"_id": reg["_id"]},
-            {"$set": {
-                "stage_status": "ON_STAGE",
-                "stage_started_at": now
-            }}
+            {"$set": update_doc}
         )
 
         # Update competition live_stage
@@ -856,6 +867,7 @@ class CompetitionStageService:
         c_str = str(comp_id).strip()
         comp = await cls.get_competition_or_404(c_str)
         c_matches = cls._build_comp_matches(c_str, comp)
+        is_offline = bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE")
         live_stage = comp.get("live_stage") or {}
         curr_performer = live_stage.get("current_performer")
         current_email = (curr_performer.get("user_email") or "").lower().strip() if curr_performer else ""
@@ -883,7 +895,12 @@ class CompetitionStageService:
             "competition_id": {"$in": c_matches},
             "$or": [{"is_present": True}, {"attendance_status": "PRESENT"}]
         })
-        if is_offline or present_count > 0:
+        remaining_present_count = await competition_registration_collection.count_documents({
+            "competition_id": {"$in": c_matches},
+            "$or": [{"is_present": True}, {"attendance_status": "PRESENT"}],
+            "stage_status": {"$nin": ["COMPLETED", "ON_STAGE", "SKIPPED"]}
+        })
+        if is_offline or remaining_present_count > 0:
             and_clauses.append({"$or": [{"is_present": True}, {"attendance_status": "PRESENT"}]})
 
         if and_clauses:
@@ -950,6 +967,7 @@ class CompetitionStageService:
         c_str = str(comp_id).strip()
         comp = await cls.get_competition_or_404(c_str)
         c_matches = cls._build_comp_matches(c_str, comp)
+        is_offline = bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE")
         live_stage = comp.get("live_stage") or {}
         curr_performer = live_stage.get("current_performer")
 
@@ -1198,6 +1216,7 @@ class CompetitionStageService:
         c_str = str(comp_id).strip()
         comp = await cls.get_competition_or_404(c_str)
         c_matches = cls._build_comp_matches(c_str, comp)
+        is_offline = bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE")
         live_stage = comp.get("live_stage") or {}
         curr = live_stage.get("current_performer")
         prev = live_stage.get("previous_performer")
@@ -1421,6 +1440,9 @@ class CompetitionStageService:
             if c_name and isinstance(c_name, str) and c_name.strip() and c_name.strip() not in public_categories:
                 public_categories.append(c_name.strip())
 
+        public_lineup = all_present_group if len(all_present_group) > 0 else effective_lineup
+        public_total = len(all_present_group) if len(all_present_group) > 0 else len(effective_lineup)
+
         return {
             "competition_id": c_str,
             "competition_title": comp.get("title", "Competition"),
@@ -1430,13 +1452,13 @@ class CompetitionStageService:
             "has_active_performer": bool(public_curr),
             "current_performer": public_curr,
             "previous_performer": public_prev,
-            "total_participants": len(effective_lineup),
+            "total_participants": public_total,
             "all_registered_count": len(lineup),
-            "present_count": len(present_lineup),
+            "present_count": len(all_present_group),
             "final_present_lineup": present_lineup,
             "completed_count": sum(1 for p in effective_lineup if p.get("stage_status") == "COMPLETED"),
             "categories": public_categories,
-            "lineup": effective_lineup,
+            "lineup": public_lineup,
             "updated_at": live_stage.get("updated_at")
         }
 

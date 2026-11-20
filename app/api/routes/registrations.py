@@ -197,8 +197,41 @@ async def register_activity(req: RegistrationReq, current_user: dict = Depends(g
             else:
                 price = float(activity.get("price", 0.0))
     elif req.activity_type == "competition":
-        category_name = req.category or activity.get("category", "General")
-        price = float(activity.get("entry_fee", activity.get("price", 0.0)))
+        comp_cats = activity.get("categories", [])
+        if req.category and req.category.strip():
+            matched_cat = next(
+                (c for c in comp_cats if isinstance(c, dict) and c.get("name", "").strip().lower() == req.category.strip().lower()),
+                None
+            )
+            if matched_cat:
+                category_name = matched_cat.get("name")
+                cat_p = matched_cat.get("price") if matched_cat.get("price") is not None else (
+                    matched_cat.get("entry_fee") if matched_cat.get("entry_fee") is not None else (
+                        matched_cat.get("fee") if matched_cat.get("fee") is not None else matched_cat.get("participation_fee")
+                    )
+                )
+                if cat_p is not None:
+                    price = float(cat_p)
+                else:
+                    price = float(activity.get("participation_fee", activity.get("entry_fee", activity.get("price", 0.0))))
+            else:
+                category_name = req.category.strip()
+                price = float(activity.get("participation_fee", activity.get("entry_fee", activity.get("price", 0.0))))
+        else:
+            category_name = activity.get("category") or (comp_cats[0].get("name") if comp_cats and isinstance(comp_cats[0], dict) else "General")
+            if comp_cats and isinstance(comp_cats[0], dict):
+                first_cat = comp_cats[0]
+                cat_p = first_cat.get("price") if first_cat.get("price") is not None else (
+                    first_cat.get("entry_fee") if first_cat.get("entry_fee") is not None else (
+                        first_cat.get("fee") if first_cat.get("fee") is not None else first_cat.get("participation_fee")
+                    )
+                )
+                if cat_p is not None:
+                    price = float(cat_p)
+                else:
+                    price = float(activity.get("participation_fee", activity.get("entry_fee", activity.get("price", 0.0))))
+            else:
+                price = float(activity.get("participation_fee", activity.get("entry_fee", activity.get("price", 0.0))))
     else:
         price = float(activity.get("price", 0.0))
 

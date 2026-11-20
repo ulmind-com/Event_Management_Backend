@@ -105,11 +105,31 @@ class CompetitionCategory(BaseModel):
     max_age: Optional[int] = Field(None, ge=0, description="Maximum age allowed for this category")
     age_limit: Optional[str] = Field(None, description="Formatted age limit string, e.g. '12-15' or '12-15 years'")
     description: Optional[str] = Field(None, description="Optional description of this category")
+    price: Optional[float] = Field(None, ge=0.0, description="Category-specific entry fee / price")
+    entry_fee: Optional[float] = Field(None, ge=0.0, description="Category-specific entry fee (alias for price)")
+    fee: Optional[float] = Field(None, ge=0.0, description="Category-specific fee (alias for price)")
+    participation_fee: Optional[float] = Field(None, ge=0.0, description="Category-specific participation fee (alias for price)")
 
     @model_validator(mode="before")
     @classmethod
     def populate_age_fields(cls, data: Any):
         if isinstance(data, dict):
+            # Resolve category price aliases
+            raw_p = data.get("price") if data.get("price") is not None else (
+                data.get("entry_fee") if data.get("entry_fee") is not None else (
+                    data.get("fee") if data.get("fee") is not None else data.get("participation_fee")
+                )
+            )
+            if raw_p is not None:
+                try:
+                    p_val = max(0.0, float(raw_p))
+                    data["price"] = p_val
+                    data["entry_fee"] = p_val
+                    data["fee"] = p_val
+                    data["participation_fee"] = p_val
+                except (ValueError, TypeError):
+                    pass
+
             min_a = data.get("min_age")
             max_a = data.get("max_age")
             age_lim = data.get("age_limit")

@@ -9049,7 +9049,7 @@
           "volunteer-checkin"
         ],
         "summary": "Check In Ticket",
-        "description": "Atomically checks in attendees on this ticket.\nSupports multi-person admissions (e.g. 3 people). Once all admitted, ticket is fully USED and invalid for reuse.\nRecords volunteer/admin identity and auto-collects cash if ticket is cash payment (or explicitly requested).",
+        "description": "Atomically checks in attendees on this ticket.\nSupports multi-person admissions (e.g. 3 people). Once all admitted, ticket is fully USED and invalid for reuse.\nStrictly verifies volunteer assignment against ticket event before admission.\nRecords volunteer/admin identity and auto-collects cash if ticket is cash payment (or explicitly requested).",
         "operationId": "check_in_ticket_api_volunteer_tickets_check_in_post",
         "requestBody": {
           "content": {
@@ -9086,6 +9086,59 @@
             "HTTPBearer": []
           }
         ]
+      }
+    },
+    "/api/volunteer/tickets/stats": {
+      "get": {
+        "tags": [
+          "volunteer-checkin"
+        ],
+        "summary": "Get Volunteer Shift Stats",
+        "description": "Returns live shift statistics for the logged in volunteer or admin:\n- total_checkins (admitted attendees)\n- online_checkins_count\n- cash_collected_count\n- total_cash_collected (\u20b9 amount)",
+        "operationId": "get_volunteer_shift_stats_api_volunteer_tickets_stats_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/volunteer/tickets/checkin-history": {
@@ -9291,6 +9344,31 @@
             }
           }
         }
+      }
+    },
+    "/api/volunteer/tickets/assigned-events": {
+      "get": {
+        "tags": [
+          "volunteer-checkin"
+        ],
+        "summary": "Get Volunteer Assigned Events",
+        "description": "Returns events assigned to the logged-in Volunteer (or all active events if Admin).",
+        "operationId": "get_volunteer_assigned_events_api_volunteer_tickets_assigned_events_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/api/admin/bootstrap": {
@@ -9749,6 +9827,250 @@
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/homepage-sections": {
+      "get": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Get Admin Homepage Sections",
+        "description": "Returns the full list of homepage sections (both built-in and custom) with order and enabled state.",
+        "operationId": "get_admin_homepage_sections_api_admin_homepage_sections_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Update Admin Homepage Sections",
+        "description": "Bulk update homepage sections order, visibility and config.",
+        "operationId": "update_admin_homepage_sections_api_admin_homepage_sections_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HomepageSectionsUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/homepage-sections/custom": {
+      "post": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Create Admin Custom Section",
+        "description": "Create a new custom homepage section (banner, cards grid, rich text, split media, CTA, etc.).",
+        "operationId": "create_admin_custom_section_api_admin_homepage_sections_custom_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCustomSectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/admin/homepage-sections/{section_id}": {
+      "put": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Update Admin Homepage Section",
+        "description": "Update visibility toggle, order, name or configuration of an individual section.",
+        "operationId": "update_admin_homepage_section_api_admin_homepage_sections__section_id__put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "section_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Section Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSectionItemRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Delete Admin Homepage Section",
+        "description": "Delete a custom section. Built-in sections cannot be deleted, but can be switched OFF.",
+        "operationId": "delete_admin_homepage_section_api_admin_homepage_sections__section_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "section_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Section Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/homepage-sections/reset-defaults": {
+      "post": {
+        "tags": [
+          "admin-cms",
+          "admin-cms"
+        ],
+        "summary": "Reset Admin Homepage Sections",
+        "description": "Reset all sections back to default built-in order and enable them.",
+        "operationId": "reset_admin_homepage_sections_api_admin_homepage_sections_reset_defaults_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           }
@@ -14423,6 +14745,316 @@
         }
       }
     },
+    "/api/admin/events/{event_id}/volunteers": {
+      "get": {
+        "tags": [
+          "admin-cms",
+          "admin-volunteers"
+        ],
+        "summary": "Cms Get Event Volunteers",
+        "description": "Retrieve all assigned and available volunteers for an event.",
+        "operationId": "cms_get_event_volunteers_api_admin_events__event_id__volunteers_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "admin-cms",
+          "admin-volunteers"
+        ],
+        "summary": "Cms Assign Event Volunteers",
+        "description": "Assign volunteers to an event and email them their credentials.",
+        "operationId": "cms_assign_event_volunteers_api_admin_events__event_id__volunteers_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/events/{event_id}/volunteers/{email}": {
+      "delete": {
+        "tags": [
+          "admin-cms",
+          "admin-volunteers"
+        ],
+        "summary": "Cms Remove Event Volunteer",
+        "description": "Unassign volunteer from an event.",
+        "operationId": "cms_remove_event_volunteer_api_admin_events__event_id__volunteers__email__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          },
+          {
+            "name": "email",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Email"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/events/{event_id}/volunteers/{email}/resend-credentials": {
+      "post": {
+        "tags": [
+          "admin-cms",
+          "admin-volunteers"
+        ],
+        "summary": "Cms Resend Event Volunteer Credentials",
+        "description": "Resend credentials and gate pass to an assigned volunteer.",
+        "operationId": "cms_resend_event_volunteer_credentials_api_admin_events__event_id__volunteers__email__resend_credentials_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          },
+          {
+            "name": "email",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Email"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/events/{event_id}/volunteers/report": {
+      "get": {
+        "tags": [
+          "admin-cms",
+          "admin-volunteers"
+        ],
+        "summary": "Cms Get Event Volunteer Report",
+        "description": "Retrieve complete volunteer-wise entry and cash collection audit report for an event.",
+        "operationId": "cms_get_event_volunteer_report_api_admin_events__event_id__volunteers_report_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/events/{event_id}/volunteer-report": {
+      "get": {
+        "tags": [
+          "admin-cms",
+          "admin-volunteers"
+        ],
+        "summary": "Cms Get Event Volunteer Report",
+        "description": "Retrieve complete volunteer-wise entry and cash collection audit report for an event.",
+        "operationId": "cms_get_event_volunteer_report_api_admin_events__event_id__volunteer_report_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/courses/": {
       "get": {
         "tags": [
@@ -17991,7 +18623,7 @@
           "admin-checkin"
         ],
         "summary": "Check In Ticket",
-        "description": "Atomically checks in attendees on this ticket.\nSupports multi-person admissions (e.g. 3 people). Once all admitted, ticket is fully USED and invalid for reuse.\nRecords volunteer/admin identity and auto-collects cash if ticket is cash payment (or explicitly requested).",
+        "description": "Atomically checks in attendees on this ticket.\nSupports multi-person admissions (e.g. 3 people). Once all admitted, ticket is fully USED and invalid for reuse.\nStrictly verifies volunteer assignment against ticket event before admission.\nRecords volunteer/admin identity and auto-collects cash if ticket is cash payment (or explicitly requested).",
         "operationId": "check_in_ticket_api_admin_tickets_check_in_post",
         "requestBody": {
           "content": {
@@ -18028,6 +18660,59 @@
             "HTTPBearer": []
           }
         ]
+      }
+    },
+    "/api/admin/tickets/stats": {
+      "get": {
+        "tags": [
+          "admin-checkin"
+        ],
+        "summary": "Get Volunteer Shift Stats",
+        "description": "Returns live shift statistics for the logged in volunteer or admin:\n- total_checkins (admitted attendees)\n- online_checkins_count\n- cash_collected_count\n- total_cash_collected (\u20b9 amount)",
+        "operationId": "get_volunteer_shift_stats_api_admin_tickets_stats_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/admin/tickets/checkin-history": {
@@ -18235,6 +18920,31 @@
         }
       }
     },
+    "/api/admin/tickets/assigned-events": {
+      "get": {
+        "tags": [
+          "admin-checkin"
+        ],
+        "summary": "Get Volunteer Assigned Events",
+        "description": "Returns events assigned to the logged-in Volunteer (or all active events if Admin).",
+        "operationId": "get_volunteer_assigned_events_api_admin_tickets_assigned_events_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/admin/checkin/verify": {
       "post": {
         "tags": [
@@ -18286,7 +18996,7 @@
           "admin-checkin"
         ],
         "summary": "Check In Ticket",
-        "description": "Atomically checks in attendees on this ticket.\nSupports multi-person admissions (e.g. 3 people). Once all admitted, ticket is fully USED and invalid for reuse.\nRecords volunteer/admin identity and auto-collects cash if ticket is cash payment (or explicitly requested).",
+        "description": "Atomically checks in attendees on this ticket.\nSupports multi-person admissions (e.g. 3 people). Once all admitted, ticket is fully USED and invalid for reuse.\nStrictly verifies volunteer assignment against ticket event before admission.\nRecords volunteer/admin identity and auto-collects cash if ticket is cash payment (or explicitly requested).",
         "operationId": "check_in_ticket_api_admin_checkin_check_in_post",
         "requestBody": {
           "content": {
@@ -18323,6 +19033,59 @@
             "HTTPBearer": []
           }
         ]
+      }
+    },
+    "/api/admin/checkin/stats": {
+      "get": {
+        "tags": [
+          "admin-checkin"
+        ],
+        "summary": "Get Volunteer Shift Stats",
+        "description": "Returns live shift statistics for the logged in volunteer or admin:\n- total_checkins (admitted attendees)\n- online_checkins_count\n- cash_collected_count\n- total_cash_collected (\u20b9 amount)",
+        "operationId": "get_volunteer_shift_stats_api_admin_checkin_stats_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/admin/checkin/checkin-history": {
@@ -18528,6 +19291,31 @@
             }
           }
         }
+      }
+    },
+    "/api/admin/checkin/assigned-events": {
+      "get": {
+        "tags": [
+          "admin-checkin"
+        ],
+        "summary": "Get Volunteer Assigned Events",
+        "description": "Returns events assigned to the logged-in Volunteer (or all active events if Admin).",
+        "operationId": "get_volunteer_assigned_events_api_admin_checkin_assigned_events_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/api/admin/advanced-competitions/": {
@@ -22010,7 +22798,7 @@
           "admin-volunteers"
         ],
         "summary": "List Volunteers",
-        "description": "List all volunteers with check-in and cash collection metrics.",
+        "description": "List all registered volunteers in the system with check-in and cash collection metrics.",
         "operationId": "list_volunteers_api_admin_volunteers__get",
         "responses": {
           "200": {
@@ -22033,7 +22821,7 @@
           "admin-volunteers"
         ],
         "summary": "Add Volunteer",
-        "description": "Add a new volunteer and send invitation email.",
+        "description": "Add or upgrade a volunteer, generate secure credentials and send invitation.",
         "operationId": "add_volunteer_api_admin_volunteers__post",
         "requestBody": {
           "content": {
@@ -22072,13 +22860,59 @@
         ]
       }
     },
+    "/api/admin/volunteers/{email}/checkins": {
+      "get": {
+        "tags": [
+          "admin-volunteers"
+        ],
+        "summary": "Get Volunteer Checkins",
+        "description": "Return all attendees and tickets scanned by this specific volunteer with cash details.",
+        "operationId": "get_volunteer_checkins_api_admin_volunteers__email__checkins_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "email",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Email"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/volunteers/{email}": {
       "delete": {
         "tags": [
           "admin-volunteers"
         ],
         "summary": "Remove Volunteer",
-        "description": "Remove volunteer role (demote to regular USER).",
+        "description": "Demote volunteer to regular user and unassign from all events.",
         "operationId": "remove_volunteer_api_admin_volunteers__email__delete",
         "security": [
           {
@@ -22086,6 +22920,308 @@
           }
         ],
         "parameters": [
+          {
+            "name": "email",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Email"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/volunteers/events/{event_id}": {
+      "get": {
+        "tags": [
+          "admin-volunteers"
+        ],
+        "summary": "Get Event Volunteers",
+        "description": "Get all assigned volunteers for an event plus available registered volunteers for selection.\nCross-checks assignments across other events and competitions to flag already-assigned volunteers.",
+        "operationId": "get_event_volunteers_api_admin_volunteers_events__event_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "admin-volunteers"
+        ],
+        "summary": "Assign Event Volunteers",
+        "description": "Assign multiple volunteers to an event, generate secure credentials, and email credentials + gate pass.",
+        "operationId": "assign_event_volunteers_api_admin_volunteers_events__event_id__post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignEventVolunteersReq"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/volunteers/events/{event_id}/volunteer-report": {
+      "get": {
+        "tags": [
+          "admin-volunteers"
+        ],
+        "summary": "Get Event Volunteer Report",
+        "description": "Returns the comprehensive volunteer-wise entry and cash collection audit report for an event.\nFor each volunteer assigned or who scanned tickets for this event:\n- total entries / admitted attendees\n- online payments count\n- cash payments count\n- total physical cash collected in INR\n- individual attendee tickets with seat numbers, payment status, cash amount, and timestamps.",
+        "operationId": "get_event_volunteer_report_api_admin_volunteers_events__event_id__volunteer_report_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/volunteers/events/{event_id}/report": {
+      "get": {
+        "tags": [
+          "admin-volunteers"
+        ],
+        "summary": "Get Event Volunteer Report",
+        "description": "Returns the comprehensive volunteer-wise entry and cash collection audit report for an event.\nFor each volunteer assigned or who scanned tickets for this event:\n- total entries / admitted attendees\n- online payments count\n- cash payments count\n- total physical cash collected in INR\n- individual attendee tickets with seat numbers, payment status, cash amount, and timestamps.",
+        "operationId": "get_event_volunteer_report_api_admin_volunteers_events__event_id__report_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/volunteers/events/{event_id}/{email}": {
+      "delete": {
+        "tags": [
+          "admin-volunteers"
+        ],
+        "summary": "Remove Event Volunteer",
+        "description": "Unassign a volunteer from a specific event or competition.",
+        "operationId": "remove_event_volunteer_api_admin_volunteers_events__event_id___email__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          },
+          {
+            "name": "email",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Email"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/volunteers/events/{event_id}/{email}/resend-credentials": {
+      "post": {
+        "tags": [
+          "admin-volunteers"
+        ],
+        "summary": "Resend Event Volunteer Credentials",
+        "description": "Generate fresh password credentials and re-email the volunteer for this event.",
+        "operationId": "resend_event_volunteer_credentials_api_admin_volunteers_events__event_id___email__resend_credentials_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          },
           {
             "name": "email",
             "in": "path",
@@ -23405,8 +24541,29 @@
           "public"
         ],
         "summary": "Get Homepage",
-        "description": "Returns ALL published, visible, eligible homepage content in a single structured response.",
+        "description": "Returns ALL published, visible, eligible homepage content in a single structured response with concurrency protection & in-memory caching.",
         "operationId": "get_homepage_api_v1_homepage_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/homepage-sections": {
+      "get": {
+        "tags": [
+          "public",
+          "public"
+        ],
+        "summary": "Get Public Homepage Sections",
+        "description": "Returns homepage sections with order, category and enabled state.",
+        "operationId": "get_public_homepage_sections_api_v1_homepage_sections_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -24054,8 +25211,29 @@
           "public"
         ],
         "summary": "Get Homepage",
-        "description": "Returns ALL published, visible, eligible homepage content in a single structured response.",
+        "description": "Returns ALL published, visible, eligible homepage content in a single structured response with concurrency protection & in-memory caching.",
         "operationId": "get_homepage_api_public_homepage_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/homepage-sections": {
+      "get": {
+        "tags": [
+          "public",
+          "public"
+        ],
+        "summary": "Get Public Homepage Sections",
+        "description": "Returns homepage sections with order, category and enabled state.",
+        "operationId": "get_public_homepage_sections_api_public_homepage_sections_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -25259,7 +26437,7 @@
           "public-competitions"
         ],
         "summary": "Provisional Leaderboard",
-        "description": "Returns the real-time provisional leaderboard calculated by the ranking service, supporting round and category filtering.",
+        "description": "Returns the real-time provisional leaderboard calculated by the ranking service, supporting round and category filtering with high-speed in-memory caching.",
         "operationId": "provisional_leaderboard_api_v1_competitions__comp_id__leaderboard_get",
         "parameters": [
           {
@@ -25889,7 +27067,7 @@
           "public-competitions"
         ],
         "summary": "Provisional Leaderboard",
-        "description": "Returns the real-time provisional leaderboard calculated by the ranking service, supporting round and category filtering.",
+        "description": "Returns the real-time provisional leaderboard calculated by the ranking service, supporting round and category filtering with high-speed in-memory caching.",
         "operationId": "provisional_leaderboard_api_public_competitions__comp_id__leaderboard_get",
         "parameters": [
           {
@@ -26725,6 +27903,57 @@
               "type": "string",
               "title": "Verification Token"
             }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/realtime/stream": {
+      "get": {
+        "tags": [
+          "realtime"
+        ],
+        "summary": "Realtime Sse Stream",
+        "description": "High-performance Server-Sent Events (SSE) stream.\nClients subscribe with native browser EventSource:\nconst es = new EventSource('/api/realtime/stream?channels=admin:events,event:<eventId>');",
+        "operationId": "realtime_sse_stream_api_realtime_stream_get",
+        "parameters": [
+          {
+            "name": "channels",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated channel topics to subscribe to",
+              "default": "admin:all,admin:events,*",
+              "title": "Channels"
+            },
+            "description": "Comma-separated channel topics to subscribe to"
           }
         ],
         "responses": {
@@ -29316,6 +30545,70 @@
         ],
         "title": "ApprovalToggle"
       },
+      "AssignEventVolunteersReq": {
+        "properties": {
+          "volunteer_emails": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "email"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volunteer Emails",
+            "default": []
+          },
+          "assignments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/VolunteerAssignmentItem"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignments",
+            "default": []
+          },
+          "new_volunteers": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SingleVolunteerInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Volunteers",
+            "default": []
+          },
+          "default_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Role",
+            "default": "Gate 1"
+          }
+        },
+        "type": "object",
+        "title": "AssignEventVolunteersReq"
+      },
       "AttendanceUpdateReq": {
         "properties": {
           "is_present": {
@@ -30782,6 +32075,58 @@
             ],
             "title": "Description",
             "description": "Optional description of this category"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price",
+            "description": "Category-specific entry fee / price"
+          },
+          "entry_fee": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Fee",
+            "description": "Category-specific entry fee (alias for price)"
+          },
+          "fee": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fee",
+            "description": "Category-specific fee (alias for price)"
+          },
+          "participation_fee": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Participation Fee",
+            "description": "Category-specific participation fee (alias for price)"
           }
         },
         "type": "object",
@@ -32544,6 +33889,81 @@
         "type": "object",
         "title": "CourseUpdate"
       },
+      "CreateCustomSectionRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "section_type": {
+            "type": "string",
+            "title": "Section Type",
+            "default": "custom_banner"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category",
+            "default": "Custom Sections"
+          },
+          "badge": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Badge",
+            "default": "Custom"
+          },
+          "is_enabled": {
+            "type": "boolean",
+            "title": "Is Enabled",
+            "default": true
+          },
+          "display_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Order"
+          },
+          "config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Config",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "CreateCustomSectionRequest"
+      },
       "DeviceListResponse": {
         "properties": {
           "devices": {
@@ -33510,6 +34930,94 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HomepageSectionItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category",
+            "default": "General"
+          },
+          "section_type": {
+            "type": "string",
+            "title": "Section Type",
+            "default": "builtin"
+          },
+          "is_enabled": {
+            "type": "boolean",
+            "title": "Is Enabled",
+            "default": true
+          },
+          "display_order": {
+            "type": "integer",
+            "title": "Display Order",
+            "default": 1
+          },
+          "badge": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Badge"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "HomepageSectionItem"
+      },
+      "HomepageSectionsUpdateRequest": {
+        "properties": {
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/HomepageSectionItem"
+            },
+            "type": "array",
+            "title": "Sections"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sections"
+        ],
+        "title": "HomepageSectionsUpdateRequest"
       },
       "ImportantLinkCreate": {
         "properties": {
@@ -35383,7 +36891,14 @@
       "RazorpayVerifyReq": {
         "properties": {
           "booking_id": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Booking Id",
             "description": "Booking MongoDB ID or booking_reference"
           },
@@ -35405,7 +36920,6 @@
         },
         "type": "object",
         "required": [
-          "booking_id",
           "razorpay_order_id",
           "razorpay_payment_id",
           "razorpay_signature"
@@ -35924,6 +37438,65 @@
           "postal_code"
         ],
         "title": "ShippingAddress"
+      },
+      "SingleVolunteerInput": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role",
+            "default": "Gate 1"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "SingleVolunteerInput"
       },
       "SocialMediaLinks": {
         "properties": {
@@ -36466,6 +38039,17 @@
             ],
             "title": "Admit Count"
           },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
           "collect_cash": {
             "anyOf": [
               {
@@ -36659,6 +38243,90 @@
           "unread_count"
         ],
         "title": "UnreadCountResponse"
+      },
+      "UpdateSectionItemRequest": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "is_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Enabled"
+          },
+          "display_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Order"
+          },
+          "badge": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Badge"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
+          }
+        },
+        "type": "object",
+        "title": "UpdateSectionItemRequest"
       },
       "UserLoginReq": {
         "properties": {
@@ -37379,12 +39047,83 @@
         ],
         "title": "VisibilityToggle"
       },
+      "VolunteerAssignmentItem": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role",
+            "default": "Gate 1"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "VolunteerAssignmentItem"
+      },
       "VolunteerCreateReq": {
         "properties": {
           "email": {
             "type": "string",
             "format": "email",
             "title": "Email"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          },
+          "role_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role Title",
+            "default": "Gate 1"
           }
         },
         "type": "object",
@@ -37700,6 +39439,21 @@
               }
             ],
             "title": "Gallery Section"
+          },
+          "homepage_sections": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Homepage Sections"
           }
         },
         "type": "object",

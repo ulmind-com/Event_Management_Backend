@@ -24,6 +24,7 @@ otp_collection = db["otps"]
 # ── Activity Collections ──
 event_collection = db["events"]
 ticket_collection = db["tickets"]
+seat_hold_collection = db["seat_holds"]
 competition_collection = db["competitions"]
 course_collection = db["courses"]
 merchandise_collection = db["merchandise"]

@@ -19,6 +19,7 @@ from app.core.database import (
     audience_vote_collection,
     judge_assignment_collection,
     ticket_collection,
+    seat_hold_collection,
 )
 
 logger = logging.getLogger(__name__)
@@ -185,6 +186,15 @@ async def init_core_database_indexes():
         # 13. Payment Recovery Queue (Fast indexing for background reconciliation worker)
         await payment_recovery_collection.create_index([("status", 1), ("recovered_at", -1)], background=True)
         await payment_recovery_collection.create_index([("reference", 1)], background=True)
+
+        # 14. Seat Holds (BookMyShow-style 5-minute atomic holds with auto-expiring TTL)
+        await seat_hold_collection.create_index(
+            [("event_id", 1), ("seat_id", 1)],
+            unique=True,
+            background=True
+        )
+        await seat_hold_collection.create_index([("hold_token", 1)], background=True)
+        await seat_hold_collection.create_index([("expires_at", 1)], expireAfterSeconds=0, background=True)
 
         logger.info("High-performance core database indexes initialized successfully.")
     except Exception as e:

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Header
 from typing import Optional, List, Dict, Any
 from bson import ObjectId
 from app.api.deps import get_current_user
-from app.core.database import booking_collection, ticket_collection, event_collection, issued_ticket_collection
+from app.core.database import booking_collection, ticket_collection, event_collection, issued_ticket_collection, seat_hold_collection
 from app.schemas.booking import BookingCreateReq, BookingResponse, BookingStatus, PaymentStatus
 from app.services.payment import PaymentService
 from app.services.ticket import TicketService
@@ -424,11 +424,48 @@ async def create_booking(
 
         booking_ref = f"BKG-{uuid.uuid4().hex[:10].upper()}"
         now_utc = datetime.now(timezone.utc)
-        expires_at = now_utc + timedelta(minutes=15)
+        expires_at = now_utc + timedelta(minutes=5)
 
         payment_method = (getattr(req, "payment_method", None) or "ONLINE").strip().upper()
         if payment_method not in ["ONLINE", "CASH", "OFFLINE"]:
             payment_method = "ONLINE"
+
+        requested_seats = [str(s).strip().upper() for s in (getattr(req, "seats", None) or []) if str(s).strip()]
+        if requested_seats:
+            # Check for conflict with other confirmed bookings or unexpired pending bookings
+            booked_seat_conflict = await booking_collection.find_one({
+                "event_id": str(e_id),
+                "seats": {"$in": requested_seats},
+                "$or": [
+                    {"booking_status": "CONFIRMED"},
+                    {
+                        "booking_status": "PENDING",
+                        "$or": [
+                            {"expires_at": {"$gt": now_utc}},
+                            {"expires_at": {"$exists": False}}
+                        ]
+                    }
+                ]
+            })
+            if booked_seat_conflict:
+                conflicted = [s for s in (booked_seat_conflict.get("seats") or []) if s in requested_seats]
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Seat(s) {', '.join(conflicted) if conflicted else 'selected'} are already booked."
+                )
+
+            # Check if held by another user in seat_holds
+            other_hold = await seat_hold_collection.find_one({
+                "event_id": str(e_id),
+                "seat_id": {"$in": requested_seats},
+                "user_email": {"$ne": user_email},
+                "expires_at": {"$gt": now_utc}
+            })
+            if other_hold and other_hold.get("user_email"):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Seat {other_hold.get('seat_id')} is currently reserved by another attendee."
+                )
 
         booking = {
             "booking_reference": booking_ref,
@@ -442,7 +479,7 @@ async def create_booking(
             "user_name": current_user.get("name") or current_user.get("full_name") or "Attendee",
             "user_phone": current_user.get("phone_number") or current_user.get("phone") or "",
             "holder_names": req.holder_names or [],
-            "seats": getattr(req, "seats", None) or [],
+            "seats": requested_seats,
             "quantity": total_quantity,
             "unit_price": unit_price,
             "total_amount": total_amount,
@@ -501,6 +538,15 @@ async def create_booking(
                     )
 
         # ── Post-Commit Operations ──
+        if requested_seats:
+            try:
+                await seat_hold_collection.delete_many({
+                    "event_id": str(e_id),
+                    "seat_id": {"$in": requested_seats}
+                })
+            except Exception:
+                pass
+
         response_data = {
             "booking_id": str(booking_oid),
             "_id": str(booking_oid),

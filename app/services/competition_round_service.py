@@ -516,9 +516,6 @@ class CompetitionRoundService:
             if k and str(k).strip() not in all_cats:
                 all_cats.append(str(k).strip())
 
-        if not all_cats:
-            all_cats = ["Sub-Junior", "Junior", "Senior"]
-
         target_lb = leaderboard
         if category and category.strip() and category.strip().upper() != "ALL":
             c_clean = category.strip().lower()

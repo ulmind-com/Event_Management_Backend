@@ -1,10 +1,21 @@
 from fastapi import APIRouter, Query, HTTPException
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 import re
+import uuid
+from pydantic import BaseModel, Field
 from bson import ObjectId
 from app.core.cache import FastCache
-from app.core.database import event_collection, ticket_collection, competition_collection, course_collection, merchandise_collection, booking_collection, issued_ticket_collection
+from app.core.database import (
+    event_collection,
+    ticket_collection,
+    competition_collection,
+    course_collection,
+    merchandise_collection,
+    booking_collection,
+    issued_ticket_collection,
+    seat_hold_collection,
+)
 from app.services.ticket import TicketService
 from app.services.competition_lifecycle import evaluate_competition_registration_status
 from app.services.competition_submission_config import enrich_competition_submission_config
@@ -97,59 +108,221 @@ async def get_event_by_id(event_id: str):
     ShareService.enrich_event(ev)
     return ev
 
+class SeatHoldRequest(BaseModel):
+    seats: List[str] = Field(default_factory=list)
+    hold_token: Optional[str] = None
+    user_email: Optional[str] = None
+
+class SeatReleaseRequest(BaseModel):
+    hold_token: str
+    seats: Optional[List[str]] = None
+
 @router.get("/events/{event_id}/booked-seats")
-async def get_event_booked_seats(event_id: str):
+async def get_event_booked_seats(event_id: str, hold_token: Optional[str] = None):
     """
-    Returns the real-time set of occupied/booked seats for an event so
-    the BookMyShow-style visual seating arena disables them.
+    Returns the real-time set of occupied/booked/held seats for an event so
+    the BookMyShow-style visual seating arena disables them for concurrent users.
+    If hold_token is supplied, seats held by that caller are excluded so the caller
+    can see and manage their own selected seats.
     """
     clean_eid = str(event_id).strip()
     ev_match = [clean_eid]
     if ObjectId.is_valid(clean_eid):
         ev_match.append(ObjectId(clean_eid))
 
-    # 1. Fetch confirmed or cash-pending bookings
+    now_utc = datetime.now(timezone.utc)
+
+    # 1. Fetch confirmed bookings or active pending bookings that have NOT expired
     bookings = await booking_collection.find({
         "event_id": {"$in": ev_match},
-        "booking_status": {"$in": ["CONFIRMED", "PENDING"]}
-    }).to_list(length=1000)
+        "$or": [
+            {"booking_status": "CONFIRMED"},
+            {
+                "booking_status": "PENDING",
+                "$or": [
+                    {"expires_at": {"$gt": now_utc}},
+                    {"expires_at": {"$exists": False}}
+                ]
+            }
+        ]
+    }).to_list(length=2000)
 
     booked_seats = set()
-    total_qty_sold = 0
-
     for b in bookings:
         s_list = b.get("seats") or b.get("selected_seats") or []
         for s in s_list:
-            booked_seats.add(str(s).strip().upper())
-        total_qty_sold += int(b.get("quantity") or 1)
+            if s:
+                booked_seats.add(str(s).strip().upper())
 
-    # 2. Check issued tickets
-    tix = await issued_ticket_collection.find({"event_id": {"$in": ev_match}}).to_list(length=1000)
+    # 2. Check issued tickets (excluding cancelled)
+    tix = await issued_ticket_collection.find({
+        "event_id": {"$in": ev_match},
+        "status": {"$ne": "CANCELLED"}
+    }).to_list(length=2000)
     for t in tix:
-        seat = t.get("seat") or t.get("seat_number")
-        if seat:
-            booked_seats.add(str(seat).strip().upper())
+        s_list = t.get("seats") or []
+        for s in s_list:
+            if s:
+                booked_seats.add(str(s).strip().upper())
+        single_seat = t.get("seat") or t.get("seat_number")
+        if single_seat:
+            booked_seats.add(str(single_seat).strip().upper())
 
-    # 3. Deterministic realistic seeding if older test bookings didn't specify seat codes
-    ev = await event_collection.find_one({"_id": ObjectId(clean_eid)}) if ObjectId.is_valid(clean_eid) else await event_collection.find_one({"_id": clean_eid})
-    reg_count = int(ev.get("registered_count") or 0) if ev else 0
-    target_count = max(len(booked_seats), total_qty_sold, reg_count)
+    # 3. Check active seat holds (held by other users, excluding caller's hold_token)
+    hold_query: Dict[str, Any] = {
+        "event_id": {"$in": ev_match},
+        "expires_at": {"$gt": now_utc}
+    }
+    if hold_token and str(hold_token).strip():
+        hold_query["hold_token"] = {"$ne": str(hold_token).strip()}
 
-    row_letters = ["A", "B", "C", "D", "E", "F", "G", "H", "J", "K"]
-    r_idx = 0
-    c_idx = 1
-    while len(booked_seats) < target_count and r_idx < len(row_letters):
-        seat_code = f"{row_letters[r_idx]}-{str(c_idx).zfill(2)}"
-        booked_seats.add(seat_code)
-        c_idx += 1
-        if c_idx > 16:
-            c_idx = 1
-            r_idx += 1
+    active_holds = await seat_hold_collection.find(hold_query).to_list(length=2000)
+    for h in active_holds:
+        s = h.get("seat_id")
+        if s:
+            booked_seats.add(str(s).strip().upper())
 
     return {
         "event_id": clean_eid,
         "booked_seats": sorted(list(booked_seats)),
         "count": len(booked_seats)
+    }
+
+@router.post("/events/{event_id}/hold-seats")
+async def hold_event_seats(event_id: str, req: SeatHoldRequest):
+    """
+    BookMyShow-style temporary seat reservation.
+    Holds selected seats for 5 minutes (300 seconds) to prevent double-booking.
+    """
+    clean_eid = str(event_id).strip()
+    ev_match = [clean_eid]
+    if ObjectId.is_valid(clean_eid):
+        ev_match.append(ObjectId(clean_eid))
+
+    now_utc = datetime.now(timezone.utc)
+    hold_token = (req.hold_token or "").strip() or str(uuid.uuid4())
+    req_seats = [str(s).strip().upper() for s in req.seats if str(s).strip()]
+
+    # If seats list is empty, release all previous holds for this token
+    if not req_seats:
+        await seat_hold_collection.delete_many({
+            "event_id": {"$in": ev_match},
+            "hold_token": hold_token
+        })
+        return {
+            "success": True,
+            "hold_token": hold_token,
+            "held_seats": [],
+            "expires_in": 0
+        }
+
+    if len(req_seats) > 10:
+        raise HTTPException(status_code=400, detail="Maximum 10 seats can be selected per booking.")
+
+    # 1. Check if any requested seat is in CONFIRMED bookings or active unexpired PENDING bookings
+    conflict_booking = await booking_collection.find_one({
+        "event_id": {"$in": ev_match},
+        "seats": {"$in": req_seats},
+        "$or": [
+            {"booking_status": "CONFIRMED"},
+            {
+                "booking_status": "PENDING",
+                "$or": [
+                    {"expires_at": {"$gt": now_utc}},
+                    {"expires_at": {"$exists": False}}
+                ]
+            }
+        ]
+    })
+    if conflict_booking:
+        conflicted = [s for s in (conflict_booking.get("seats") or []) if s in req_seats]
+        conflict_msg = f"Seat(s) {', '.join(conflicted) if conflicted else 'selected'} have already been booked."
+        raise HTTPException(status_code=409, detail=conflict_msg)
+
+    # 2. Check if any requested seat is in active issued tickets
+    conflict_ticket = await issued_ticket_collection.find_one({
+        "event_id": {"$in": ev_match},
+        "status": {"$ne": "CANCELLED"},
+        "$or": [
+            {"seats": {"$in": req_seats}},
+            {"seat": {"$in": req_seats}}
+        ]
+    })
+    if conflict_ticket:
+        raise HTTPException(status_code=409, detail="One or more selected seats have already been issued.")
+
+    # 3. Check if any requested seat is currently held by ANOTHER attendee
+    other_hold = await seat_hold_collection.find_one({
+        "event_id": {"$in": ev_match},
+        "seat_id": {"$in": req_seats},
+        "hold_token": {"$ne": hold_token},
+        "expires_at": {"$gt": now_utc}
+    })
+    if other_hold:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Seat {other_hold.get('seat_id')} is currently reserved by another attendee. Please choose another seat."
+        )
+
+    # 4. Atomic 5-minute hold (300 seconds)
+    expires_at = now_utc + timedelta(seconds=300)
+
+    # Remove any seats this hold_token previously held that are not in the new req_seats
+    await seat_hold_collection.delete_many({
+        "event_id": {"$in": ev_match},
+        "hold_token": hold_token,
+        "seat_id": {"$nin": req_seats}
+    })
+
+    # Upsert holds for all requested seats
+    for seat in req_seats:
+        await seat_hold_collection.update_one(
+            {"event_id": clean_eid, "seat_id": seat},
+            {
+                "$set": {
+                    "event_id": clean_eid,
+                    "seat_id": seat,
+                    "hold_token": hold_token,
+                    "user_email": req.user_email,
+                    "expires_at": expires_at,
+                    "updated_at": now_utc
+                },
+                "$setOnInsert": {
+                    "created_at": now_utc
+                }
+            },
+            upsert=True
+        )
+
+    return {
+        "success": True,
+        "hold_token": hold_token,
+        "held_seats": req_seats,
+        "expires_in": 300,
+        "expires_at": expires_at.isoformat()
+    }
+
+@router.post("/events/{event_id}/release-seats")
+async def release_event_seats(event_id: str, req: SeatReleaseRequest):
+    """
+    Releases held seats for a given hold_token.
+    """
+    clean_eid = str(event_id).strip()
+    ev_match = [clean_eid]
+    if ObjectId.is_valid(clean_eid):
+        ev_match.append(ObjectId(clean_eid))
+
+    query: Dict[str, Any] = {
+        "event_id": {"$in": ev_match},
+        "hold_token": req.hold_token.strip()
+    }
+    if req.seats:
+        query["seat_id"] = {"$in": [str(s).strip().upper() for s in req.seats]}
+
+    res = await seat_hold_collection.delete_many(query)
+    return {
+        "success": True,
+        "released_count": res.deleted_count
     }
 
 @router.get("/tickets")

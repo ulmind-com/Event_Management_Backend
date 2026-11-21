@@ -1,6 +1,7 @@
 from app.services.expiry_worker import ExpiryWorker
 from app.services.notification_scheduler import NotificationSchedulerWorker
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks, Header
+from typing import Optional
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -54,6 +55,30 @@ app.include_router(api_router, prefix="/api")
 @app.get("/", tags=["root"])
 def root():
     return {"message": "Upgrade Talents India API is running", "docs": "/docs"}
+
+@app.post("/razorpay/webhook", status_code=200, tags=["razorpay-webhook"])
+async def root_razorpay_webhook(
+    request: Request,
+    bg_tasks: BackgroundTasks,
+    x_razorpay_signature: Optional[str] = Header(None)
+):
+    """
+    Direct root Razorpay webhook endpoint: https://<domain>/razorpay/webhook
+    """
+    from app.api.routes.payments import handle_razorpay_booking_webhook
+    return await handle_razorpay_booking_webhook(
+        request=request,
+        bg_tasks=bg_tasks,
+        x_razorpay_signature=x_razorpay_signature
+    )
+
+@app.get("/razorpay/webhook", status_code=200, tags=["razorpay-webhook"])
+async def root_razorpay_webhook_status():
+    """
+    Health check / ping endpoint for Razorpay webhook URL.
+    """
+    from app.api.routes.payments import razorpay_webhook_status
+    return await razorpay_webhook_status()
 
 @app.on_event("startup")
 async def startup_event():

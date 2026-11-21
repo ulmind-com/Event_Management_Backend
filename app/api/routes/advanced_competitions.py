@@ -52,33 +52,40 @@ def safe_object_id(id_str: str) -> Optional[ObjectId]:
 
 
 def extract_fee(comp_dict: Optional[dict], fallback_fee: float = 0.0, category_name: Optional[str] = None) -> float:
-    """Safely extracts the fee/price from a competition dictionary without crashing on None, with category-wise price support."""
+    """
+    Safely extracts the fee/price from a competition dictionary.
+    First checks if the matched category has a category-specific price/entry_fee/fee/participation_fee.
+    Falls back to competition-level fee fields.
+    """
     if not comp_dict:
         return max(0.0, float(fallback_fee or 0.0))
 
-    # 1. If category_name is provided, check matching category's price first
-    if category_name and isinstance(comp_dict.get("categories"), list):
-        c_clean = str(category_name).strip().lower()
-        for cat in comp_dict["categories"]:
-            if isinstance(cat, dict) and str(cat.get("name") or "").strip().lower() == c_clean:
-                for k in ("price", "fee", "entry_fee", "participation_fee"):
-                    v = cat.get(k)
-                    if v is not None and v != "":
-                        try:
-                            return max(0.0, float(v))
-                        except (ValueError, TypeError):
-                            pass
-                break
+    # 1. Check category-specific price if category_name is provided
+    if category_name and comp_dict.get("categories"):
+        cat_clean = str(category_name).strip().lower()
+        matched_cat = next(
+            (c for c in comp_dict.get("categories", [])
+             if isinstance(c, dict) and str(c.get("name") or "").strip().lower() == cat_clean),
+            None
+        )
+        if matched_cat:
+            for k in ("price", "entry_fee", "fee", "participation_fee"):
+                v = matched_cat.get(k)
+                if v is not None:
+                    try:
+                        return max(0.0, float(v))
+                    except (ValueError, TypeError):
+                        continue
 
-    # 2. Check top-level fee keys
+    # 2. Fall back to competition-level fee
     for k in ("participation_fee", "fee", "entry_fee", "price"):
         v = comp_dict.get(k)
-        if v is not None and v != "":
+        if v is not None:
             try:
-                f_val = float(v)
-                return max(0.0, f_val)
+                return max(0.0, float(v))
             except (ValueError, TypeError):
                 continue
+
     return max(0.0, float(fallback_fee or 0.0))
 
 
@@ -666,6 +673,9 @@ async def register_competition(
                     "payment_status_display": "SUCCESS",
                     "payment_method": pay_method,
                     "category": selected_category,
+                    "fee": fee,
+                    "price": fee,
+                    "entry_fee": fee,
                     "date_of_birth": resolved_dob,
                     "age": calc_age,
                     "eligibility_status": "ELIGIBLE",
@@ -690,6 +700,9 @@ async def register_competition(
                     "payment_status_display": "PENDING",
                     "payment_method": "CASH",
                     "category": selected_category,
+                    "fee": fee,
+                    "price": fee,
+                    "entry_fee": fee,
                     "date_of_birth": resolved_dob,
                     "age": calc_age,
                     "eligibility_status": "ELIGIBLE",
@@ -720,6 +733,9 @@ async def register_competition(
             {"_id": existing["_id"]},
             {"$set": {
                 "category": selected_category,
+                "fee": fee,
+                "price": fee,
+                "entry_fee": fee,
                 "date_of_birth": resolved_dob,
                 "age": calc_age,
                 "eligibility_status": "ELIGIBLE"
@@ -771,6 +787,8 @@ async def register_competition(
         "eligibility_status": "ELIGIBLE",
         "rules_accepted": is_rules_accepted,
         "fee": fee,
+        "price": fee,
+        "entry_fee": fee,
         "payment_method": pay_method,
         "registered_at": datetime.now(timezone.utc)
     }

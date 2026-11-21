@@ -226,7 +226,21 @@ async def create_razorpay_order_for_booking(
     return payment_info
 
 
+@router.get("/webhook", status_code=status.HTTP_200_OK)
+@router.get("/razorpay/webhook", status_code=status.HTTP_200_OK)
+async def razorpay_webhook_status():
+    """
+    Health check and status endpoint for the Razorpay Webhook.
+    """
+    return {
+        "status": "active",
+        "service": "razorpay-webhook",
+        "message": "Razorpay webhook endpoint is ready and accepting POST events"
+    }
+
+
 @router.post("/webhook", status_code=status.HTTP_200_OK)
+@router.post("/razorpay/webhook", status_code=status.HTTP_200_OK)
 async def handle_razorpay_booking_webhook(
     request: Request,
     bg_tasks: BackgroundTasks,
@@ -236,10 +250,16 @@ async def handle_razorpay_booking_webhook(
     Authoritative server-to-server webhook endpoint for Razorpay payment notifications.
     """
     raw_body = await request.body()
-    if not x_razorpay_signature:
+    signature = (
+        x_razorpay_signature
+        or request.headers.get("x-razorpay-signature")
+        or request.headers.get("X-Razorpay-Signature")
+        or request.headers.get("x-signature")
+    )
+    if not signature:
         raise HTTPException(status_code=400, detail="Missing X-Razorpay-Signature header")
 
-    is_valid = PaymentService.verify_webhook_signature(raw_body, x_razorpay_signature)
+    is_valid = PaymentService.verify_webhook_signature(raw_body, signature)
     if not is_valid:
         raise HTTPException(status_code=400, detail="Invalid Razorpay webhook signature")
 
@@ -255,7 +275,13 @@ async def handle_razorpay_booking_webhook(
     if event in ["payment.captured", "order.paid"]:
         payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
         notes = payment_entity.get("notes", {})
-        booking_ref = notes.get("booking_reference") or notes.get("order_reference") or payment_entity.get("description")
+        booking_ref = (
+            notes.get("booking_reference")
+            or notes.get("order_reference")
+            or notes.get("order_number")
+            or notes.get("registration_reference")
+            or payment_entity.get("description")
+        )
         payment_id = payment_entity.get("id")
         order_id = payment_entity.get("order_id")
 
@@ -305,7 +331,38 @@ async def handle_razorpay_booking_webhook(
                     await WalletService.commit_reserved_coins(booking_ref)
                     logger.info(f"Webhook confirmed activity registration {booking_ref}")
 
-            # 3. Check Event Ticket Bookings
+            # 3. Check VIP Pass Bookings
+            elif booking_ref.startswith("VIP-") or notes.get("type") == "vip_pass_booking":
+                try:
+                    from app.services.vip_service import VIPService
+                    await VIPService.confirm_payment_and_issue_pass(
+                        booking_reference=booking_ref,
+                        payment_reference=payment_id,
+                        provider_order_id=order_id,
+                        amount_paid=float(payment_entity.get("amount", 0)) / 100.0,
+                        currency=payment_entity.get("currency", "INR")
+                    )
+                    logger.info(f"Webhook confirmed VIP pass booking {booking_ref}")
+                except Exception as e:
+                    logger.error(f"Error confirming VIP pass booking {booking_ref} via webhook: {e}")
+
+            # 4. Check Merchandise Orders
+            elif booking_ref.startswith("MERCH-") or notes.get("type") == "merchandise_order":
+                try:
+                    from app.services.merchandise_service import MerchandiseService
+                    await MerchandiseService.confirm_order_payment(
+                        order_number=booking_ref,
+                        payment_reference=payment_id,
+                        provider_order_id=order_id,
+                        amount=float(payment_entity.get("amount", 0)) / 100.0,
+                        currency=payment_entity.get("currency", "INR"),
+                        payment_provider="RAZORPAY"
+                    )
+                    logger.info(f"Webhook confirmed merchandise order {booking_ref}")
+                except Exception as e:
+                    logger.error(f"Error confirming merchandise order {booking_ref} via webhook: {e}")
+
+            # 5. Check Event Ticket Bookings
             else:
                 booking = await booking_collection.find_one({"booking_reference": booking_ref})
                 if booking:

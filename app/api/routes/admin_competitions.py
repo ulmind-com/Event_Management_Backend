@@ -46,14 +46,30 @@ from app.schemas.round import RoundsConfigureReq, RoundUpdateReq, AdvanceContest
 from app.services.share_service import ShareService
 from datetime import datetime, timezone
 
-def normalize_competition_categories(comp_dict: dict) -> dict:
+def normalize_competition_categories(comp_dict: dict, default_fee: Optional[float] = None) -> dict:
     """
-    Ensures categories list is populated, normalized with age_limit strings,
+    Ensures categories list is populated, normalized with age_limit strings and category-specific pricing,
     and backwards compatible with category string.
     Supports open-age categories (when min and max age are blank/omitted)
     without forcing hardcoded age constraints.
     """
     raw_categories = comp_dict.get("categories") or []
+    if default_fee is not None:
+        try:
+            comp_default_fee = max(0.0, float(default_fee))
+        except (ValueError, TypeError):
+            comp_default_fee = 0.0
+    else:
+        raw_comp_fee = (
+            comp_dict.get("participation_fee")
+            if comp_dict.get("participation_fee") is not None
+            else (comp_dict.get("entry_fee") if comp_dict.get("entry_fee") is not None else (comp_dict.get("fee") if comp_dict.get("fee") is not None else comp_dict.get("price")))
+        )
+        try:
+            comp_default_fee = max(0.0, float(raw_comp_fee)) if raw_comp_fee is not None else 0.0
+        except (ValueError, TypeError):
+            comp_default_fee = 0.0
+
     normalized_cats = []
 
     for cat in raw_categories:
@@ -67,6 +83,11 @@ def normalize_competition_categories(comp_dict: dict) -> dict:
             if raw_price is None:
                 raw_price = cat.get("fee") if cat.get("fee") is not None else cat.get("participation_fee")
             desc = cat.get("description")
+            raw_cat_price = cat.get("price") if cat.get("price") is not None else (
+                cat.get("entry_fee") if cat.get("entry_fee") is not None else (
+                    cat.get("fee") if cat.get("fee") is not None else cat.get("participation_fee")
+                )
+            )
         elif hasattr(cat, "name"):
             c_name = str(getattr(cat, "name") or "").strip()
             min_a = getattr(cat, "min_age", None)
@@ -76,18 +97,26 @@ def normalize_competition_categories(comp_dict: dict) -> dict:
             if raw_price is None:
                 raw_price = getattr(cat, "entry_fee", None) or getattr(cat, "fee", None) or getattr(cat, "participation_fee", None)
             desc = getattr(cat, "description", None)
+            raw_cat_price = getattr(cat, "price", None)
+            if raw_cat_price is None:
+                raw_cat_price = getattr(cat, "entry_fee", None)
+            if raw_cat_price is None:
+                raw_cat_price = getattr(cat, "fee", None)
+            if raw_cat_price is None:
+                raw_cat_price = getattr(cat, "participation_fee", None)
         else:
             continue
 
         if not c_name:
             continue
 
-        parsed_price = None
-        if raw_price is not None and raw_price is not False and raw_price != "":
+        if raw_cat_price is not None:
             try:
-                parsed_price = max(0.0, float(raw_price))
+                cat_price = max(0.0, float(raw_cat_price))
             except (ValueError, TypeError):
-                parsed_price = None
+                cat_price = comp_default_fee
+        else:
+            cat_price = comp_default_fee
 
         if min_a == "" or min_a is False:
             min_a = None
@@ -147,6 +176,10 @@ def normalize_competition_categories(comp_dict: dict) -> dict:
             "age_limit": age_lim,
             "price": parsed_price,
             "description": desc,
+            "price": cat_price,
+            "entry_fee": cat_price,
+            "fee": cat_price,
+            "participation_fee": cat_price,
         })
 
     # If categories was not provided, but category string exists
@@ -176,6 +209,10 @@ def normalize_competition_categories(comp_dict: dict) -> dict:
             "max_age": max_a,
             "age_limit": age_lim,
             "description": None,
+            "price": comp_default_fee,
+            "entry_fee": comp_default_fee,
+            "fee": comp_default_fee,
+            "participation_fee": comp_default_fee,
         })
 
     comp_dict["categories"] = normalized_cats
@@ -451,7 +488,13 @@ async def update_competition(comp_id: str, req: CompetitionUpdateReq, admin: dic
 
     # Handle categories normalization
     if "categories" in update_data:
-        normalize_competition_categories(update_data)
+        existing_comp = await competition_collection.find_one({"_id": c_id})
+        cur_default_fee = float(
+            update_data.get("participation_fee")
+            if update_data.get("participation_fee") is not None
+            else (existing_comp.get("participation_fee", 0.0) if existing_comp else 0.0)
+        )
+        normalize_competition_categories(update_data, default_fee=cur_default_fee)
 
     # Handle submission field toggles / formats update
     submission_keys = [

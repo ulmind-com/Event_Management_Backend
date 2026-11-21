@@ -385,13 +385,27 @@ class CompetitionStageService:
             sub = sub_map.get(em, {})
             user_scores = score_map.get(em, []) or (score_map.get(str(sub.get("_id")), []) if sub else [])
 
+            # Prioritize current verified profile name from user_collection so names are 100% consistent across all tabs
             name = (
-                r.get("user_name")
-                or usr.get("full_name")
+                usr.get("full_name")
                 or usr.get("name")
+                or r.get("user_name")
                 or r.get("participant_name")
                 or (em.split("@")[0] if em else "Participant")
             )
+            # Synchronize registration doc if profile name was updated
+            if usr and (usr.get("full_name") or usr.get("name")):
+                latest_u_name = usr.get("full_name") or usr.get("name")
+                if latest_u_name and r.get("user_name") != latest_u_name:
+                    try:
+                        asyncio.create_task(
+                            competition_registration_collection.update_one(
+                                {"_id": r["_id"]},
+                                {"$set": {"user_name": latest_u_name}}
+                            )
+                        )
+                    except Exception:
+                        pass
             photo = (
                 usr.get("profile_photo")
                 or usr.get("photo_url")
@@ -586,9 +600,21 @@ class CompetitionStageService:
             if p_cat and isinstance(p_cat, str) and p_cat.strip() and p_cat.strip() not in comp_categories:
                 comp_categories.append(p_cat.strip())
 
-        lineup_completed = sum(1 for p in lineup_participants if p.get("stage_status") == "COMPLETED")
-        active_lineup = all_present_group if present_count > 0 else lineup_participants
-        active_total = present_count if present_count > 0 else len(lineup_participants)
+        lineup_completed = sum(1 for p in all_present_group if p.get("stage_status") == "COMPLETED")
+        if present_count > 0:
+            active_lineup = all_present_group
+            active_total = present_count
+        elif is_offline:
+            active_lineup = []
+            active_total = 0
+        else:
+            active_lineup = lineup_participants
+            active_total = len(lineup_participants)
+
+        # Sequentialize contiguous order 1..N across the active admin lineup
+        for seq_idx, p in enumerate(active_lineup, start=1):
+            p["stage_order"] = seq_idx
+            p["order"] = seq_idx
 
         return {
             "competition_id": c_str,
@@ -677,9 +703,9 @@ class CompetitionStageService:
         # Fetch User Profile details
         usr = await user_collection.find_one({"email": user_email}) if user_email else None
         user_name = (
-            reg.get("user_name")
-            or (usr.get("full_name") if usr else None)
+            (usr.get("full_name") if usr else None)
             or (usr.get("name") if usr else None)
+            or reg.get("user_name")
             or reg.get("participant_name")
             or (user_email.split("@")[0] if user_email else "Participant")
         )
@@ -1300,9 +1326,9 @@ class CompetitionStageService:
             em = (r.get("user_email") or r.get("email") or "").strip().lower()
             usr = users_map.get(em, {})
             name = (
-                r.get("user_name")
-                or usr.get("full_name")
+                usr.get("full_name")
                 or usr.get("name")
+                or r.get("user_name")
                 or r.get("participant_name")
                 or (em.split("@")[0].title() if em else f"Participant #{idx+1}")
             )
@@ -1440,8 +1466,22 @@ class CompetitionStageService:
             if c_name and isinstance(c_name, str) and c_name.strip() and c_name.strip() not in public_categories:
                 public_categories.append(c_name.strip())
 
-        public_lineup = all_present_group if len(all_present_group) > 0 else effective_lineup
-        public_total = len(all_present_group) if len(all_present_group) > 0 else len(effective_lineup)
+        if len(all_present_group) > 0:
+            public_lineup = all_present_group
+            public_total = len(all_present_group)
+        elif is_offline:
+            public_lineup = []
+            public_total = 0
+        else:
+            public_lineup = effective_lineup
+            public_total = len(effective_lineup)
+
+        # Sequentialize contiguous order 1..N across the active public lineup
+        for seq_idx, item in enumerate(public_lineup, start=1):
+            item["order"] = seq_idx
+            item["stage_order"] = seq_idx
+            if public_curr and public_curr.get("user_email") and (item.get("user_email") or "").lower() == (public_curr.get("user_email") or "").lower():
+                public_curr["stage_order"] = seq_idx
 
         return {
             "competition_id": c_str,
@@ -1456,7 +1496,7 @@ class CompetitionStageService:
             "all_registered_count": len(lineup),
             "present_count": len(all_present_group),
             "final_present_lineup": present_lineup,
-            "completed_count": sum(1 for p in effective_lineup if p.get("stage_status") == "COMPLETED"),
+            "completed_count": sum(1 for p in all_present_group if p.get("stage_status") == "COMPLETED"),
             "categories": public_categories,
             "lineup": public_lineup,
             "updated_at": live_stage.get("updated_at")

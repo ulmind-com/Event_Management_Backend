@@ -1676,7 +1676,7 @@ async def list_competition_participants(
             "competition_id": str(comp_id),
             "user_id": str(usr.get("_id")) if usr.get("_id") else (r.get("user_id") or ""),
             "user_email": email,
-            "user_name": usr.get("name") or usr.get("full_name") or r.get("user_name") or "Participant",
+            "user_name": usr.get("full_name") or usr.get("name") or r.get("user_name") or "Participant",
             "user_phone": usr.get("phone_number") or usr.get("phone") or r.get("user_phone") or "",
             "date_of_birth": usr.get("date_of_birth") or usr.get("dob") or r.get("date_of_birth") or "",
             "age": usr.get("age") or r.get("age"),

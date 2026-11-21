@@ -174,7 +174,6 @@ def normalize_competition_categories(comp_dict: dict, default_fee: Optional[floa
             "min_age": min_a,
             "max_age": max_a,
             "age_limit": age_lim,
-            "price": parsed_price,
             "description": desc,
             "price": cat_price,
             "entry_fee": cat_price,

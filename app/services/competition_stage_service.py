@@ -503,6 +503,7 @@ class CompetitionStageService:
         active_emails = {p.get("user_email") for p in active_on_stage if p.get("user_email")}
         active_ids = {p.get("registration_id") for p in active_on_stage if p.get("registration_id")}
 
+        # 1. Group A: Completed performers (strictly in the order they were called to stage)
         completed_performers = [
             p for p in participants_list
             if p.get("stage_status") == "COMPLETED"
@@ -510,6 +511,9 @@ class CompetitionStageService:
             and p.get("registration_id") not in active_ids
         ]
         completed_performers.sort(key=lambda p: (
+            p.get("stage_performance_number") or p.get("performance_order") or float('inf'),
+            cls._parse_ts(p.get("stage_started_at")),
+            cls._parse_ts(p.get("stage_completed_at")),
             cls._parse_ts(p.get("attended_at")),
             cls._parse_ts(p.get("registered_at"))
         ))
@@ -517,7 +521,7 @@ class CompetitionStageService:
         handled_emails = active_emails | {p.get("user_email") for p in completed_performers if p.get("user_email")}
         handled_ids = active_ids | {p.get("registration_id") for p in completed_performers if p.get("registration_id")}
 
-        # Confirmed present performers awaiting stage (1st present = 1st, 2nd present = 2nd)
+        # 2. Group B: Confirmed present performers awaiting stage (sorted by arrival time)
         present_list = [
             p for p in participants_list
             if p.get("is_present")
@@ -531,11 +535,15 @@ class CompetitionStageService:
         ))
 
         # Assign venue_entry_number to all present participants based on arrival time
-        all_present_group = active_on_stage + completed_performers + present_list
-        for v_idx, p in enumerate(all_present_group, start=1):
+        all_present = [p for p in participants_list if p.get("is_present")]
+        all_present.sort(key=lambda p: cls._parse_ts(p.get("attended_at")))
+        for v_idx, p in enumerate(all_present, start=1):
             p["venue_entry_number"] = v_idx
 
-        # Waiting registered participants (not yet marked present at the venue)
+        # Completed performers first (#1..#C), then active on-stage performer (#C+1), then waiting present (#C+2..)
+        all_present_group = completed_performers + active_on_stage + present_list
+
+        # 3. Group C: Waiting registered participants (not yet marked present at the venue)
         waiting_list = [
             p for p in participants_list
             if not p.get("is_present")
@@ -543,19 +551,28 @@ class CompetitionStageService:
             and p.get("registration_id") not in handled_ids
         ]
         waiting_list.sort(key=lambda p: (
-            cls._parse_ts(p.get("registered_at")),
-            p.get("stage_order") if (p.get("stage_order") and p.get("stage_order") > 0) else float('inf')
+            p.get("stage_order") if (p.get("stage_order") and p.get("stage_order") > 0) else float('inf'),
+            cls._parse_ts(p.get("registered_at"))
         ))
         for p in waiting_list:
             p["venue_entry_number"] = None
             p["attendance_status"] = "WAITING_CHECKIN"
 
-        # The complete running lineup includes ALL participants:
-        # Present participants at the top in chronological order of arrival,
-        # followed by waiting participants in registration order.
-        lineup_participants = all_present_group + waiting_list
+        # The authoritative running lineup includes ALL participants:
+        # Completed (in historical performance order 1st, 2nd, ...)
+        # + Active Performer (currently on stage right now)
+        # + Upcoming Present (next up at venue)
+        # + Upcoming Unchecked (waiting check-in in registration order)
+        lineup_participants = completed_performers + active_on_stage + present_list + waiting_list
         for seq_idx, p in enumerate(lineup_participants, start=1):
             p["stage_order"] = seq_idx
+            p["order"] = seq_idx
+            if curr_performer and (
+                (curr_performer.get("user_email") and (p.get("user_email") or "").lower() == (curr_performer.get("user_email") or "").lower())
+                or (curr_performer.get("registration_id") and str(p.get("registration_id")) == str(curr_performer.get("registration_id")))
+            ):
+                curr_performer["stage_order"] = seq_idx
+                curr_performer["order"] = seq_idx
 
         present_count = len(all_present_group)
         absent_count = len(waiting_list)
@@ -775,6 +792,16 @@ class CompetitionStageService:
             }}
         )
 
+        # Dynamic performance sequence number:
+        # Whoever is sent to stage gets the next performance number (1st called = 1, 2nd called = 2, etc.)
+        # Even if participant was originally #5 or #50 in registration, sending them to stage moves them to #current!
+        completed_count = await competition_registration_collection.count_documents({
+            "competition_id": {"$in": c_matches},
+            "stage_status": "COMPLETED",
+            "_id": {"$ne": reg["_id"]}
+        })
+        perf_seq = completed_count + 1
+
         # Build new performer details
         is_user_verified = bool(
             usr and (
@@ -793,7 +820,10 @@ class CompetitionStageService:
         new_performer = {
             "registration_id": reg_id,
             "registration_reference": reg_ref,
-            "stage_order": reg.get("stage_order"),
+            "stage_order": perf_seq,
+            "order": perf_seq,
+            "performance_order": perf_seq,
+            "stage_performance_number": perf_seq,
             "user_email": user_email,
             "user_name": user_name,
             "full_name": user_name,
@@ -824,12 +854,14 @@ class CompetitionStageService:
         # Update current registration in DB
         update_doc: Dict[str, Any] = {
             "stage_status": "ON_STAGE",
-            "stage_started_at": now
+            "stage_started_at": now,
+            "stage_performance_number": perf_seq,
+            "performance_order": perf_seq,
+            "stage_order": perf_seq,
+            "is_present": True,
+            "attendance_status": "PRESENT",
+            "attended_at": reg.get("attended_at") or now
         }
-        if is_offline or reg.get("is_present"):
-            update_doc["is_present"] = True
-            update_doc["attendance_status"] = "PRESENT"
-            update_doc["attended_at"] = reg.get("attended_at") or now
 
         await competition_registration_collection.update_one(
             {"_id": reg["_id"]},
@@ -1390,6 +1422,7 @@ class CompetitionStageService:
         active_emails = {p.get("user_email") for p in active_on_stage if p.get("user_email")}
         active_ids = {p.get("registration_id") for p in active_on_stage if p.get("registration_id")}
 
+        # 1. Group A: Completed performers (strictly in the order they were called to stage)
         completed_performers = [
             p for p in lineup
             if p.get("stage_status") == "COMPLETED"
@@ -1397,6 +1430,9 @@ class CompetitionStageService:
             and p.get("registration_id") not in active_ids
         ]
         completed_performers.sort(key=lambda p: (
+            p.get("stage_performance_number") or p.get("performance_order") or float('inf'),
+            cls._parse_ts(p.get("stage_started_at")),
+            cls._parse_ts(p.get("stage_completed_at")),
             cls._parse_ts(p.get("attended_at")),
             cls._parse_ts(p.get("registered_at"))
         ))
@@ -1404,7 +1440,7 @@ class CompetitionStageService:
         handled_emails = active_emails | {p.get("user_email") for p in completed_performers if p.get("user_email")}
         handled_ids = active_ids | {p.get("registration_id") for p in completed_performers if p.get("registration_id")}
 
-        # Confirmed present performers awaiting stage (1st present = 1st, 2nd present = 2nd)
+        # 2. Group B: Confirmed present performers awaiting stage (sorted by arrival time)
         present_lineup = [
             p for p in lineup
             if p.get("is_present")
@@ -1417,12 +1453,12 @@ class CompetitionStageService:
             cls._parse_ts(p.get("registered_at"))
         ))
 
-        # Assign venue_entry_number to all present participants based on arrival time
-        all_present_group = active_on_stage + completed_performers + present_lineup
+        # Completed performers first (#1..#C), then active on-stage performer (#C+1), then waiting present (#C+2..)
+        all_present_group = completed_performers + active_on_stage + present_lineup
         for v_idx, p in enumerate(all_present_group, start=1):
             p["venue_entry_number"] = v_idx
 
-        # Waiting registered participants (not yet marked present at the venue)
+        # 3. Group C: Waiting registered participants (not yet marked present at the venue)
         waiting_lineup = [
             p for p in lineup
             if not p.get("is_present")
@@ -1431,17 +1467,19 @@ class CompetitionStageService:
         ]
         # Preserve original registration queue sequence
         waiting_lineup.sort(key=lambda p: (
-            cls._parse_ts(p.get("registered_at")),
-            p.get("order") if (p.get("order") and p.get("order") > 0) else float('inf')
+            p.get("order") if (p.get("order") and p.get("order") > 0) else float('inf'),
+            cls._parse_ts(p.get("registered_at"))
         ))
         for p in waiting_lineup:
             p["venue_entry_number"] = None
             p["attendance_status"] = "WAITING_CHECKIN"
 
         # The effective running lineup includes ALL participants:
-        # Present participants at the top in chronological order of arrival,
-        # followed by waiting participants in registration order.
-        effective_lineup = all_present_group + waiting_lineup
+        # Completed (in historical performance order 1st, 2nd, ...)
+        # + Active Performer (currently on stage right now)
+        # + Upcoming Present (next up at venue)
+        # + Upcoming Unchecked (waiting check-in in registration order)
+        effective_lineup = completed_performers + active_on_stage + present_lineup + waiting_lineup
 
         # Sequentialize contiguous order 1..N across the entire competition queue
         for seq_idx, item in enumerate(effective_lineup, start=1):

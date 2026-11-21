@@ -558,13 +558,21 @@ class CompetitionStageService:
             p["venue_entry_number"] = None
             p["attendance_status"] = "WAITING_CHECKIN"
 
-        # The authoritative running lineup includes ALL participants:
-        # Completed (in historical performance order 1st, 2nd, ...)
-        # + Active Performer (currently on stage right now)
-        # + Upcoming Present (next up at venue)
-        # + Upcoming Unchecked (waiting check-in in registration order)
+        all_present_group = completed_performers + active_on_stage + present_list
         lineup_participants = completed_performers + active_on_stage + present_list + waiting_list
-        for seq_idx, p in enumerate(lineup_participants, start=1):
+        is_offline_comp = bool(comp.get("is_offline", False) or str(comp.get("event_mode", "")).upper() == "OFFLINE")
+
+        # When attendance is active or competition is offline, the live stage queue ONLY contains confirmed attendees.
+        # Otherwise for purely online competitions with no check-in, all registered contestants are eligible.
+        if is_offline_comp or len(all_present_group) > 0:
+            active_lineup = all_present_group
+            active_total = len(all_present_group)
+        else:
+            active_lineup = lineup_participants
+            active_total = len(lineup_participants)
+
+        # Sequentialize contiguous order 1..N across the active stage lineup
+        for seq_idx, p in enumerate(active_lineup, start=1):
             p["stage_order"] = seq_idx
             p["order"] = seq_idx
             if curr_performer and (
@@ -612,26 +620,12 @@ class CompetitionStageService:
                 c_name = c.strip()
                 if c_name and c_name not in comp_categories:
                     comp_categories.append(c_name)
-        for p in participants_list:
+        for p in active_lineup:
             p_cat = p.get("category")
             if p_cat and isinstance(p_cat, str) and p_cat.strip() and p_cat.strip() not in comp_categories:
                 comp_categories.append(p_cat.strip())
 
         lineup_completed = sum(1 for p in all_present_group if p.get("stage_status") == "COMPLETED")
-        if present_count > 0:
-            active_lineup = all_present_group
-            active_total = present_count
-        elif is_offline:
-            active_lineup = []
-            active_total = 0
-        else:
-            active_lineup = lineup_participants
-            active_total = len(lineup_participants)
-
-        # Sequentialize contiguous order 1..N across the active admin lineup
-        for seq_idx, p in enumerate(active_lineup, start=1):
-            p["stage_order"] = seq_idx
-            p["order"] = seq_idx
 
         return {
             "competition_id": c_str,
@@ -647,7 +641,7 @@ class CompetitionStageService:
             "present_count": present_count,
             "absent_count": absent_count,
             "waiting_count": absent_count,
-            "all_registered_count": len(lineup_participants),
+            "all_registered_count": len(participants_list),
             "final_present_list": present_list,
             "waiting_list": waiting_list,
             "completed_performances": lineup_completed,
@@ -1474,16 +1468,19 @@ class CompetitionStageService:
             p["venue_entry_number"] = None
             p["attendance_status"] = "WAITING_CHECKIN"
 
-        # The effective running lineup includes ALL participants:
-        # Completed (in historical performance order 1st, 2nd, ...)
-        # + Active Performer (currently on stage right now)
-        # + Upcoming Present (next up at venue)
-        # + Upcoming Unchecked (waiting check-in in registration order)
-        effective_lineup = completed_performers + active_on_stage + present_lineup + waiting_lineup
+        # When attendance is active or competition is offline, the public stage queue ONLY contains confirmed attendees.
+        # Otherwise for purely online competitions with no check-in, all registered contestants are eligible.
+        if is_offline or len(all_present_group) > 0:
+            public_lineup = all_present_group
+            public_total = len(all_present_group)
+        else:
+            public_lineup = completed_performers + active_on_stage + present_lineup + waiting_lineup
+            public_total = len(public_lineup)
 
-        # Sequentialize contiguous order 1..N across the entire competition queue
-        for seq_idx, item in enumerate(effective_lineup, start=1):
+        # Sequentialize contiguous order 1..N across the active public lineup
+        for seq_idx, item in enumerate(public_lineup, start=1):
             item["order"] = seq_idx
+            item["stage_order"] = seq_idx
             if public_curr and public_curr.get("user_email") and (item.get("user_email") or "").lower() == (public_curr.get("user_email") or "").lower():
                 public_curr["stage_order"] = seq_idx
 
@@ -1499,27 +1496,10 @@ class CompetitionStageService:
                 c_name = c.strip()
                 if c_name and c_name not in public_categories:
                     public_categories.append(c_name)
-        for p in effective_lineup:
+        for p in public_lineup:
             c_name = p.get("category")
             if c_name and isinstance(c_name, str) and c_name.strip() and c_name.strip() not in public_categories:
                 public_categories.append(c_name.strip())
-
-        if len(all_present_group) > 0:
-            public_lineup = all_present_group
-            public_total = len(all_present_group)
-        elif is_offline:
-            public_lineup = []
-            public_total = 0
-        else:
-            public_lineup = effective_lineup
-            public_total = len(effective_lineup)
-
-        # Sequentialize contiguous order 1..N across the active public lineup
-        for seq_idx, item in enumerate(public_lineup, start=1):
-            item["order"] = seq_idx
-            item["stage_order"] = seq_idx
-            if public_curr and public_curr.get("user_email") and (item.get("user_email") or "").lower() == (public_curr.get("user_email") or "").lower():
-                public_curr["stage_order"] = seq_idx
 
         return {
             "competition_id": c_str,

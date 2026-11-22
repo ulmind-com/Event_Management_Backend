@@ -61,8 +61,34 @@ async def notif_test_context():
 
     # Seed users
     await user_collection.insert_many([
-        {"email": user1_email, "name": "User One", "registration_complete": True, "role": "USER"},
-        {"email": user2_email, "name": "User Two", "registration_complete": True, "role": "USER"},
+        {
+            "email": user1_email,
+            "name": "User One",
+            "phone_number": "9876543210",
+            "phone": "+919876543210",
+            "parent_phone_number": "9876543211",
+            "date_of_birth": "2000-01-01",
+            "dob": "2000-01-01",
+            "address": "123 Notification Test St",
+            "registration_complete": True,
+            "is_profile_completed": True,
+            "profile_completed": True,
+            "role": "USER"
+        },
+        {
+            "email": user2_email,
+            "name": "User Two",
+            "phone_number": "9876543212",
+            "phone": "+919876543212",
+            "parent_phone_number": "9876543213",
+            "date_of_birth": "2001-02-02",
+            "dob": "2001-02-02",
+            "address": "456 Notification Test Ave",
+            "registration_complete": True,
+            "is_profile_completed": True,
+            "profile_completed": True,
+            "role": "USER"
+        },
     ])
     await admin_collection.insert_one({
         "email": admin_email,

@@ -294,7 +294,7 @@ async def submit_audience_vote(comp_id: str, req: VoteReq, user: dict = Depends(
     if not comp.get("audience_voting_enabled"):
         raise HTTPException(status_code=400, detail="Audience voting is not enabled for this competition.")
         
-    if comp.get("voting_status", "OPEN") != "OPEN":
+    if not comp.get("audience_voting_enabled") and comp.get("voting_status", "OPEN") != "OPEN":
         raise HTTPException(status_code=400, detail="Voting is currently closed.")
 
     comp_id_str = str(comp["_id"])

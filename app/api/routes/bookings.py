@@ -870,6 +870,46 @@ async def get_ticket_qr(ticket_ref: str, current_user: dict = Depends(get_curren
     b64_qr = TicketService.generate_qr_image_base64(ticket["qr_token"])
     return {"qr_image": b64_qr}
 
+@router.get("/tickets/{ticket_ref}/google-wallet")
+async def google_wallet_save_link(ticket_ref: str, current_user: dict = Depends(get_current_user)):
+    """Signed 'Add to Google Wallet' link for the caller's own ticket."""
+    from app.services import google_wallet_service as gw
+
+    if not gw.is_configured():
+        raise HTTPException(status_code=503, detail="Google Wallet isn't enabled on the server yet.")
+
+    clean_ref = ticket_ref.strip()
+    email = (current_user.get("email") or "").strip()
+    ticket = await issued_ticket_collection.find_one({
+        "ticket_ref": clean_ref,
+        "$or": [{"holder_email": email}, {"holder_email": email.lower()}],
+    })
+    if not ticket:
+        ticket = await issued_ticket_collection.find_one({"ticket_ref": clean_ref})
+        if not ticket or (ticket.get("holder_email") != email and current_user.get("role") not in ["ADMIN", "SUPERADMIN"]):
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+    if ticket.get("is_checked_in") or ticket.get("status") == "USED" or ticket.get("is_fully_used"):
+        raise HTTPException(status_code=400, detail="This ticket has already been used for entry.")
+    if str(ticket.get("status") or "").upper() in ("CANCELLED", "REFUNDED", "EXPIRED"):
+        raise HTTPException(status_code=400, detail="This ticket is no longer valid.")
+
+    event = None
+    if ticket.get("event_id") and ObjectId.is_valid(str(ticket["event_id"])):
+        event = await event_collection.find_one({"_id": ObjectId(str(ticket["event_id"]))})
+
+    holder_names = ticket.get("holder_names") or []
+    holder = (holder_names[0] if holder_names else None) or ticket.get("holder_name") or current_user.get("name") or "Attendee"
+
+    try:
+        url = gw.build_save_url(ticket=ticket, event=event, holder_name=holder)
+    except gw.WalletNotConfigured as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error(f"Google Wallet link failed for {clean_ref}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Couldn't create the Google Wallet pass.")
+    return {"save_url": url}
+
 @router.post("/tickets/{ticket_ref}/send-email")
 async def send_ticket_email_manual(ticket_ref: str, current_user: dict = Depends(get_current_user)):
     """Allows attendee to receive or re-send their ultra-pro admission pass & QR code directly to their email inbox."""

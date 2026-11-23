@@ -256,6 +256,8 @@ class CompetitionCreateReq(BaseModel):
     score_visible_for_public: Optional[bool] = None
     results_published: Optional[bool] = None
     result_status: Optional[str] = None
+    voting_status: Optional[str] = None
+    judging_status: Optional[str] = None
 
     @field_validator("image_url", "card_image_url", "banner_url", "banner_image_url", "share_image_url", mode="before")
     @classmethod
@@ -313,6 +315,8 @@ class CompetitionUpdateReq(BaseModel):
     score_visible_for_public: Optional[bool] = None
     results_published: Optional[bool] = None
     result_status: Optional[str] = None
+    voting_status: Optional[str] = None
+    judging_status: Optional[str] = None
 
     @field_validator("image_url", "card_image_url", "banner_url", "banner_image_url", "share_image_url", mode="before")
     @classmethod

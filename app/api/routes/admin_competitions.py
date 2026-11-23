@@ -545,10 +545,21 @@ async def update_competition(comp_id: str, req: CompetitionUpdateReq, admin: dic
                     cats[0]["age_limit"] = "Open for all ages"
                 update_data["categories"] = cats
         
-    if "audience_voting_enabled" in update_data:
-        update_data["voting_status"] = "OPEN" if update_data["audience_voting_enabled"] else "CLOSED"
-    if "judge_scoring_enabled" in update_data:
+    if "judging_status" in update_data and update_data["judging_status"]:
+        status_val = update_data["judging_status"].strip().upper()
+        update_data["judging_status"] = status_val
+        if status_val == "OPEN":
+            update_data["judge_scoring_enabled"] = True
+    elif "judge_scoring_enabled" in update_data:
         update_data["judging_status"] = "OPEN" if update_data["judge_scoring_enabled"] else "CLOSED"
+
+    if "voting_status" in update_data and update_data["voting_status"]:
+        status_val = update_data["voting_status"].strip().upper()
+        update_data["voting_status"] = status_val
+        if status_val == "OPEN":
+            update_data["audience_voting_enabled"] = True
+    elif "audience_voting_enabled" in update_data:
+        update_data["voting_status"] = "OPEN" if update_data["audience_voting_enabled"] else "CLOSED"
     if "is_registration_open" in update_data:
         if update_data["is_registration_open"] is False:
             update_data["registration_status"] = "CLOSED"
@@ -1039,6 +1050,12 @@ async def open_judging_session(comp_id: str, pin: str = None, admin: dict = Depe
 
     clean_pin = pin.strip() if (pin and str(pin).strip()) else None
 
+    if ObjectId.is_valid(clean_cid):
+        await competition_collection.update_one(
+            {"_id": ObjectId(clean_cid)},
+            {"$set": {"judging_status": "OPEN", "judge_scoring_enabled": True}}
+        )
+
     existing = await judging_session_collection.find_one({"competition_id": {"$in": comp_matches}, "status": "OPEN"})
     if existing:
         if clean_pin:
@@ -1046,8 +1063,8 @@ async def open_judging_session(comp_id: str, pin: str = None, admin: dict = Depe
                 {"_id": existing["_id"]},
                 {"$set": {"pin": clean_pin, "updated_at": datetime.now(timezone.utc)}}
             )
-            return {"message": f"Judging session is active. PIN updated to {clean_pin}.", "pin_required": True}
-        return {"message": "Judging session is already active.", "pin_required": bool(existing.get("pin"))}
+            return {"message": f"Judging session is active. PIN updated to {clean_pin}.", "pin_required": True, "judging_status": "OPEN"}
+        return {"message": "Judging session is already active.", "pin_required": bool(existing.get("pin")), "judging_status": "OPEN"}
     
     doc = {
         "competition_id": clean_cid,
@@ -1058,7 +1075,7 @@ async def open_judging_session(comp_id: str, pin: str = None, admin: dict = Depe
         "opened_at": datetime.now(timezone.utc)
     }
     await judging_session_collection.insert_one(doc)
-    return {"message": "Live judging session opened successfully.", "pin_required": bool(clean_pin)}
+    return {"message": "Live judging session opened successfully.", "pin_required": bool(clean_pin), "judging_status": "OPEN"}
 
 @router.post("/{comp_id}/session/close")
 async def close_judging_session(comp_id: str, admin: dict = Depends(get_current_admin)):
@@ -1069,12 +1086,16 @@ async def close_judging_session(comp_id: str, admin: dict = Depends(get_current_
     comp_matches = [clean_cid]
     if ObjectId.is_valid(clean_cid):
         comp_matches.append(ObjectId(clean_cid))
+        await competition_collection.update_one(
+            {"_id": ObjectId(clean_cid)},
+            {"$set": {"judging_status": "CLOSED"}}
+        )
 
     await judging_session_collection.update_many(
         {"competition_id": {"$in": comp_matches}, "status": "OPEN"},
         {"$set": {"status": "CLOSED", "closed_at": datetime.now(timezone.utc)}}
     )
-    return {"message": "Live judging session closed successfully."}
+    return {"message": "Live judging session closed successfully.", "judging_status": "CLOSED"}
 
 # ══════════════════════════════════════════════
 # ADMIN: JUDGING PROGRESS DASHBOARD
@@ -1119,7 +1140,20 @@ async def judging_progress(comp_id: str, admin: dict = Depends(get_current_admin
             "completion_pct": round((scored + skipped) / total_subs * 100, 1) if total_subs > 0 else 0
         })
     
+    from app.core.database import judging_session_collection
+    active_session = await judging_session_collection.find_one({"competition_id": {"$in": comp_matches}, "status": "OPEN"})
+    session_active = bool(active_session)
+    session_pin_required = bool(active_session.get("pin")) if active_session else False
+
+    comp_doc = await competition_collection.find_one({"_id": ObjectId(str(comp_id)) if ObjectId.is_valid(str(comp_id)) else str(comp_id)})
+    judging_status = comp_doc.get("judging_status", "OPEN" if comp_doc.get("judge_scoring_enabled") else "CLOSED") if comp_doc else "OPEN"
+    voting_status = comp_doc.get("voting_status", "OPEN" if comp_doc.get("audience_voting_enabled") else "CLOSED") if comp_doc else "OPEN"
+
     return {
+        "session_active": session_active,
+        "session_pin_required": session_pin_required,
+        "judging_status": judging_status,
+        "voting_status": voting_status,
         "total_judges": total_judges,
         "total_contestants": total_subs,
         "total_scores_submitted": total_scores,
@@ -1348,25 +1382,41 @@ async def get_competition_registration_admin_status(
     }
 
 
+@router.post("/{comp_id}/voting/open")
+async def open_audience_voting(comp_id: str, admin: dict = Depends(get_current_admin)):
+    comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp: raise HTTPException(status_code=404, detail="Competition not found")
+    await competition_collection.update_one(
+        {"_id": ObjectId(comp_id)},
+        {"$set": {"voting_status": "OPEN", "audience_voting_enabled": True}}
+    )
+    return {"message": "Audience voting opened successfully.", "voting_status": "OPEN"}
+
 @router.post("/{comp_id}/voting/close")
 async def close_audience_voting(comp_id: str, admin: dict = Depends(get_current_admin)):
     comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
     if not comp: raise HTTPException(status_code=404, detail="Competition not found")
-    if not comp.get("audience_voting_enabled"):
-        raise HTTPException(status_code=400, detail="Audience voting is not enabled for this competition.")
         
     await competition_collection.update_one({"_id": ObjectId(comp_id)}, {"$set": {"voting_status": "CLOSED"}})
-    return {"message": "Audience voting closed successfully."}
+    return {"message": "Audience voting closed successfully.", "voting_status": "CLOSED"}
+
+@router.post("/{comp_id}/judging/open")
+async def open_judge_scoring(comp_id: str, admin: dict = Depends(get_current_admin)):
+    comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
+    if not comp: raise HTTPException(status_code=404, detail="Competition not found")
+    await competition_collection.update_one(
+        {"_id": ObjectId(comp_id)},
+        {"$set": {"judging_status": "OPEN", "judge_scoring_enabled": True}}
+    )
+    return {"message": "Judge scoring opened successfully.", "judging_status": "OPEN"}
 
 @router.post("/{comp_id}/judging/close")
 async def close_judge_scoring(comp_id: str, admin: dict = Depends(get_current_admin)):
     comp = await competition_collection.find_one({"_id": ObjectId(comp_id)})
     if not comp: raise HTTPException(status_code=404, detail="Competition not found")
-    if not comp.get("judge_scoring_enabled"):
-        raise HTTPException(status_code=400, detail="Judge scoring is not enabled for this competition.")
         
     await competition_collection.update_one({"_id": ObjectId(comp_id)}, {"$set": {"judging_status": "CLOSED"}})
-    return {"message": "Judge scoring closed successfully."}
+    return {"message": "Judge scoring closed successfully.", "judging_status": "CLOSED"}
 
 @router.post("/{comp_id}/finalization/start")
 async def start_finalization(comp_id: str, admin: dict = Depends(get_current_admin)):

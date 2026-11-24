@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from bson import ObjectId
 from app.core.cache import FastCache
 from app.core.database import (
+    user_collection,
     event_collection,
     ticket_collection,
     competition_collection,
@@ -187,6 +188,47 @@ async def get_event_booked_seats(event_id: str, hold_token: Optional[str] = None
         "booked_seats": sorted(list(booked_seats)),
         "count": len(booked_seats)
     }
+
+@router.get("/events/{event_id}/booked-by")
+async def get_event_booked_by(event_id: str, limit: int = Query(3, ge=1, le=8)):
+    """
+    Social proof for an event page: how many people have a confirmed booking,
+    and the most recent few by first name + profile photo only (no emails,
+    surnames or contact details leave the server).
+    """
+    clean_eid = str(event_id).strip()
+    ev_match: List[Any] = [clean_eid]
+    if ObjectId.is_valid(clean_eid):
+        ev_match.append(ObjectId(clean_eid))
+
+    pipeline = [
+        {"$match": {"event_id": {"$in": ev_match}, "booking_status": "CONFIRMED", "user_email": {"$nin": [None, ""]}}},
+        {"$sort": {"created_at": -1}},
+        {"$group": {"_id": {"$toLower": "$user_email"}, "name": {"$first": "$user_name"}, "at": {"$first": "$created_at"}}},
+        {"$sort": {"at": -1}},
+        {"$facet": {"total": [{"$count": "n"}], "recent": [{"$limit": limit}]}},
+    ]
+    res = await booking_collection.aggregate(pipeline).to_list(length=1)
+    facet = res[0] if res else {}
+    total = (facet.get("total") or [{}])[0].get("n", 0) if facet.get("total") else 0
+    recent = facet.get("recent") or []
+
+    emails = [r["_id"] for r in recent]
+    photos: Dict[str, Optional[str]] = {}
+    if emails:
+        async for u in user_collection.find(
+            {"email": {"$in": emails}},
+            {"email": 1, "profile_photo": 1, "name": 1, "full_name": 1},
+        ):
+            photos[str(u.get("email", "")).lower()] = u.get("profile_photo") or None
+
+    people = []
+    for r in recent:
+        full = str(r.get("name") or "").strip()
+        first = full.split()[0] if full else "Someone"
+        people.append({"first_name": first[:24], "avatar_url": photos.get(r["_id"])})
+
+    return {"event_id": clean_eid, "count": int(total), "people": people}
 
 @router.post("/events/{event_id}/hold-seats")
 async def hold_event_seats(event_id: str, req: SeatHoldRequest):

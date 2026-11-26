@@ -110,17 +110,16 @@ def _add_competition_live_status(comp: dict, now: datetime) -> dict:
     audience_voting_enabled = bool(comp.get("audience_voting_enabled"))
     judge_scoring_enabled = bool(comp.get("judge_scoring_enabled"))
 
-    # Compute dynamic phase
+    # Compute dynamic phase (active voting / judging takes priority over scheduled dates)
     if start and end:
-        if now < start:
-            comp["live_phase"] = "UPCOMING"
-        elif now > end:
-            if (audience_voting_enabled and voting_status == "OPEN") or (judge_scoring_enabled and judging_status == "OPEN"):
-                comp["live_phase"] = "VOTING" if voting_status == "OPEN" else "JUDGING"
-            else:
-                comp["live_phase"] = "ENDED"
-        else:
+        if start <= now <= end:
             comp["live_phase"] = "LIVE"
+        elif (audience_voting_enabled and voting_status == "OPEN") or (judge_scoring_enabled and judging_status == "OPEN"):
+            comp["live_phase"] = "VOTING" if (audience_voting_enabled and voting_status == "OPEN") else "JUDGING"
+        elif now < start:
+            comp["live_phase"] = "UPCOMING"
+        else:
+            comp["live_phase"] = "ENDED"
     elif audience_voting_enabled and voting_status == "OPEN":
         comp["live_phase"] = "VOTING"
     elif judge_scoring_enabled and judging_status == "OPEN":
@@ -186,19 +185,23 @@ def _build_live_competition_query(
         query["audience_voting_enabled"] = True
         query["voting_status"] = "OPEN"
     elif voting_open is False:
-        query["$or"] = [
-            {"audience_voting_enabled": False},
-            {"voting_status": {"$ne": "OPEN"}},
-        ]
+        query["$and"].append({
+            "$or": [
+                {"audience_voting_enabled": False},
+                {"voting_status": {"$ne": "OPEN"}},
+            ]
+        })
 
     if judging_open is True:
         query["judge_scoring_enabled"] = True
         query["judging_status"] = "OPEN"
     elif judging_open is False:
-        query["$or"] = [
-            {"judge_scoring_enabled": False},
-            {"judging_status": {"$ne": "OPEN"}},
-        ]
+        query["$and"].append({
+            "$or": [
+                {"judge_scoring_enabled": False},
+                {"judging_status": {"$ne": "OPEN"}},
+            ]
+        })
 
     return query
 
@@ -411,17 +414,24 @@ async def get_live_competition_detail(comp_id: str):
     _strip_private(comp, PRIVATE_COMP_FIELDS)
     _add_competition_live_status(comp, now)
 
-    # Check if upcoming or ended
+    # Check if upcoming or ended (allow access whenever voting/judging is active or enabled, matching /live/feed)
     start = _parse_to_utc(comp.get("start_date"))
     end = _parse_to_utc(comp.get("end_date"))
     voting_status = str(comp.get("voting_status") or "").upper()
     judging_status = str(comp.get("judging_status") or "").upper()
+    has_active_flow = (
+        voting_status == "OPEN"
+        or judging_status == "OPEN"
+        or bool(comp.get("audience_voting_enabled"))
+        or bool(comp.get("judge_scoring_enabled"))
+    )
 
     if start and now < start:
-        raise HTTPException(
-            status_code=404,
-            detail="This competition has not started yet."
-        )
+        if not has_active_flow:
+            raise HTTPException(
+                status_code=404,
+                detail="This competition has not started yet."
+            )
 
     if end and now > end:
         # If voting or judging is still actively open, allow access
@@ -534,9 +544,16 @@ async def get_live_summary():
     """
     now = datetime.now(timezone.utc)
 
-    live_events_count = await live_event_collection.count_documents(
+    live_events_raw = await live_event_collection.find(
         {"is_published": True, "is_visible": True}
-    )
+    ).to_list(length=100)
+    live_events_count = 0
+    for le in live_events_raw:
+        sched_start = _parse_to_utc(le.get("scheduled_start") or le.get("start_time"))
+        sched_end = _parse_to_utc(le.get("scheduled_end") or le.get("end_time"))
+        if sched_start and sched_end and not (sched_start <= now <= sched_end):
+            continue
+        live_events_count += 1
 
     comp_query = _build_live_competition_query(now)
     live_competitions_count = await competition_collection.count_documents(comp_query)
